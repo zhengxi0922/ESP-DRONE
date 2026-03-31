@@ -1,0 +1,14 @@
+# ESP-IDF
+/firmware/build/
+/firmware/sdkconfig
+/firmware/sdkconfig.old
+/firmware/dependencies.lock
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db

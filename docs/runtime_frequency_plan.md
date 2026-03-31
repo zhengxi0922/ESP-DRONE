@@ -1,0 +1,45 @@
+# Runtime Frequency Plan
+
+## Default Targets
+
+- Motor output scheduling: `1000 Hz`
+- IMU UART default return rate: `200 Hz`
+- IMU UART optional high rate: `250 Hz`
+- Estimator update: on fresh IMU samples only
+- Rate PID: on fresh IMU samples only
+- Angle PID: `125 Hz`
+- USB CDC telemetry: `200 Hz`
+- UDP telemetry: `100 Hz`
+
+## Why The Control Path Is Event-Driven
+
+The IMU only uploads at up to `250 Hz`. Re-running the full estimator and rate loop at `1000 Hz` with stale data would not improve observability and would make timing semantics ambiguous.
+
+The rewrite therefore separates:
+
+- a `1 kHz` output and supervision scheduler
+- a fresh-sample estimator/rate-update path
+
+## Flight-Control Task Contract
+
+The `flight_control_task` runs at `1 kHz`, but:
+
+- estimator updates only when a new IMU sample arrives
+- rate PID updates only when a new IMU sample arrives
+- angle PID updates at a lower fixed rate
+- motor output shaping, kills, saturations, slew limits and loop timing run every tick
+
+## Sample-Staleness Policy
+
+When no new IMU sample is available:
+
+- update `imu_age_us`
+- keep safety and timeout checks running
+- keep the last control outputs
+- keep output scheduling running
+
+When no new IMU sample is available, the firmware must not:
+
+- recompute the full estimator
+- integrate a new virtual attitude sample
+- pretend a new rate measurement exists
