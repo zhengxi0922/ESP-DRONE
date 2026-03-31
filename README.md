@@ -69,10 +69,21 @@ The repository currently contains:
 
 - Stage 1 design documents
 - Stage 2 firmware skeleton and bottom-layer components
-- Baseline safety state handling for `arm / disarm / kill` and core failsafe checks
+- Baseline safety shell for `arm / disarm / kill`, state ownership, and a small set of hard stop triggers
 - Python CLI protocol, transport and basic command surface
 
-Later stages will add estimator, controller, mixer, safety, telemetry compatibility and the full CLI surface.
+Still pending in later stages:
+
+- Full safety / failsafe logic with RC gesture arming, link supervision, richer fault classification, telemetry reason reporting, and final policy refinement
+- Estimator, controller, mixer, telemetry compatibility and the full CLI surface
+
+## Stage-2 Console Rule
+
+Stage 2 locks the debug transport split as follows:
+
+- `UART0` is reserved for the `ATK-MS901M` IMU only
+- Application console, debug log and CLI transport must use `USB CDC` only
+- `sdkconfig.defaults` must keep UART console disabled so no application console traffic leaks onto the IMU UART
 
 ## Acknowledgements
 

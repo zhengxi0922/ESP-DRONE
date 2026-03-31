@@ -1,0 +1,27 @@
+idf_component_register(
+    SRC_DIRS
+        "."
+        "board"
+        "params"
+        "motor"
+        "imu"
+        "led_status"
+        "console"
+        "safety"
+    INCLUDE_DIRS
+        "."
+        "board"
+        "params"
+        "motor"
+        "imu"
+        "led_status"
+        "console"
+        "safety"
+    REQUIRES
+        nvs_flash
+        esp_timer
+        esp_adc
+        esp_driver_gpio
+        esp_driver_uart
+        esp_driver_ledc
+)

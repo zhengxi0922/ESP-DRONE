@@ -12,3 +12,6 @@ __pycache__/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Local reference materials
+/ATK-IMU901模块资料（新资料）/
