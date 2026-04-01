@@ -14,13 +14,13 @@ This document records the single-axis rate-loop bring-up stage only.
 - Firmware support for single-axis `rate-test` is implemented.
 - Telemetry now exposes `gyro_x/y/z`, `roll/pitch/yaw`, `rate_setpoint_*`, `rate_pid_p/i/d_*`, `pid_out_*`, `motor1..motor4`, `imu_age_us`, `loop_dt_us`, `arm_state`, `control_mode`, `failsafe_reason`.
 - Host build and host-side direction tests pass.
-- Hardware observations are still pending because the aircraft is not currently connected to this workstation.
+- On `2026-04-01`, this workstation reported `no ports found` for `python -m serial.tools.list_ports -v`. No real bench measurement was captured in this session, so the table below remains a blocked execution record rather than a completed hardware result set.
 
 ## Attitude Source Used In This Stage
 
 - The minimal rate loop uses the mapped gyro path as its primary feedback input.
 - In `direct` mode, attitude/quaternion fields come from the `ATK-MS901M` output after the project mapping step.
-- In `raw` mode, the future attitude source is documented in [raw_mode_attitude_plan.md](/D:/0Work/Codex/ESP-drone/docs/raw_mode_attitude_plan.md), but that estimator is not yet enabled for angle mode.
+- In `raw` mode, the future attitude source is documented in [raw_mode_attitude_plan.md](./raw_mode_attitude_plan.md), but that estimator is not yet enabled for angle mode.
 - Because this stage is rate-only, the main direction gate is still: physical motion -> mapped gyro sign -> rate PID sign -> mixer direction.
 
 ## Common Procedure
@@ -35,9 +35,9 @@ This document records the single-axis rate-loop bring-up stage only.
 
 | Axis under test | Physical action | CLI command | Main gyro field to watch | Main setpoint field | Main PID fields to watch | Expected motor direction | Actual observed result | Status |
 |---|---|---|---|---|---|---|---|---|
-| X-axis physical rotation -> project pitch-rate | Rotate nose up / nose down about body `+X` | `rate-test pitch 30` and `rate-test pitch -30` | `gyro_x` positive for nose-up rate, negative for nose-down rate | `rate_setpoint_pitch` | `rate_pid_p_pitch`, `rate_pid_i_pitch`, `rate_pid_d_pitch`, `pid_out_pitch` | `+pitch`: `M3/M4` above `M1/M2`; `-pitch`: `M1/M2` above `M3/M4` | Hardware pending | Pending |
-| Y-axis physical rotation -> project roll-rate | Rotate right side down / left side down about body `+Y` naming convention | `rate-test roll 30` and `rate-test roll -30` | `gyro_y` negative for `+roll`, positive for `-roll` | `rate_setpoint_roll` | `rate_pid_p_roll`, `rate_pid_i_roll`, `rate_pid_d_roll`, `pid_out_roll` | `+roll`: `M1/M4` above `M2/M3`; `-roll`: `M2/M3` above `M1/M4` | Hardware pending | Pending |
-| Z-axis physical rotation -> project yaw-rate | Rotate nose right / nose left in yaw | `rate-test yaw 30` and `rate-test yaw -30` | `gyro_z` negative for `+yaw`, positive for `-yaw` | `rate_setpoint_yaw` | `rate_pid_p_yaw`, `rate_pid_i_yaw`, `rate_pid_d_yaw`, `pid_out_yaw` | `+yaw`: `M1/M3` above `M2/M4`; `-yaw`: `M2/M4` above `M1/M3` | Hardware pending | Pending |
+| X-axis physical rotation -> project pitch-rate | Rotate nose up / nose down about body `+X` | `rate-test pitch 30` and `rate-test pitch -30` | `gyro_x` positive for nose-up rate, negative for nose-down rate | `rate_setpoint_pitch` | `rate_pid_p_pitch`, `rate_pid_i_pitch`, `rate_pid_d_pitch`, `pid_out_pitch` | `+pitch`: `M3/M4` above `M1/M2`; `-pitch`: `M1/M2` above `M3/M4` | Not executed in this session because no USB CDC port was available | Blocked |
+| Y-axis physical rotation -> project roll-rate | Rotate right side down / left side down about body `+Y` naming convention | `rate-test roll 30` and `rate-test roll -30` | `gyro_y` negative for `+roll`, positive for `-roll` | `rate_setpoint_roll` | `rate_pid_p_roll`, `rate_pid_i_roll`, `rate_pid_d_roll`, `pid_out_roll` | `+roll`: `M1/M4` above `M2/M3`; `-roll`: `M2/M3` above `M1/M4` | Not executed in this session because no USB CDC port was available | Blocked |
+| Z-axis physical rotation -> project yaw-rate | Rotate nose right / nose left in yaw | `rate-test yaw 30` and `rate-test yaw -30` | `gyro_z` negative for `+yaw`, positive for `-yaw` | `rate_setpoint_yaw` | `rate_pid_p_yaw`, `rate_pid_i_yaw`, `rate_pid_d_yaw`, `pid_out_yaw` | `+yaw`: `M1/M3` above `M2/M4`; `-yaw`: `M2/M4` above `M1/M3` | Not executed in this session because no USB CDC port was available | Blocked |
 
 ## Software-Verified Baseline
 

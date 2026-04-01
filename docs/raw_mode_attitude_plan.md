@@ -30,7 +30,7 @@ Reason:
 - Optional high-rate mode remains `250 Hz`.
 - The estimator will not run at `1 kHz` without fresh IMU data.
 
-This keeps the estimator aligned with [runtime_frequency_plan.md](/D:/0Work/Codex/ESP-drone/docs/runtime_frequency_plan.md).
+This keeps the estimator aligned with [runtime_frequency_plan.md](./runtime_frequency_plan.md).
 
 ## Inputs
 

@@ -58,7 +58,7 @@ For a clean checkout, set the target once before the first build:
 If you prefer the raw ESP-IDF shell flow, the firmware can still be built this way:
 
 ```powershell
-cd D:\0Work\Codex\ESP-drone\firmware
+cd firmware
 idf.py set-target esp32s3
 idf.py build
 ```
@@ -69,13 +69,22 @@ The repository currently contains:
 
 - Stage 1 design documents
 - Stage 2 firmware skeleton and bottom-layer components
+- Stage 2.5 bring-up code paths for `motor-test`, `axis-test`, `rate-test`, IMU mapping, mixer direction checks and structured telemetry
+- Minimal single-axis rate-loop skeleton: fresh-sample estimator update, rate PID, mixer, motor output and safety gating
 - Baseline safety shell for `arm / disarm / kill`, state ownership, and a small set of hard stop triggers
-- Python CLI protocol, transport and basic command surface
+- Python CLI protocol, transport, telemetry decode and basic command surface
+
+Current hardware validation status:
+
+- Host build and host-side direction tests pass
+- Real bench validation is still blocked until the aircraft enumerates on USB CDC and can be exercised on a restrained, prop-removed stand
 
 Still pending in later stages:
 
 - Full safety / failsafe logic with RC gesture arming, link supervision, richer fault classification, telemetry reason reporting, and final policy refinement
-- Estimator, controller, mixer, telemetry compatibility and the full CLI surface
+- Completed hardware bench validation for single-axis rate mode
+- DIRECT-mode angle outer loop and restrained bench angle validation
+- Legacy RC / UDP compatibility work and the full CLI surface
 
 ## Stage-2 Console Rule
 
