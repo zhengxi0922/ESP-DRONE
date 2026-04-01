@@ -1,5 +1,6 @@
 #include "imu.h"
 
+#include <math.h>
 #include <stdatomic.h>
 #include <string.h>
 
@@ -8,6 +9,10 @@
 
 #include "board_config.h"
 #include "params.h"
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #define IMU_FRAME_HEAD_LOW 0x55
 #define IMU_FRAME_HEAD_UPLOAD_HIGH 0x55
@@ -45,10 +50,9 @@ typedef struct {
     float roll_deg;
     float pitch_deg;
     float yaw_deg;
-    quatf_t quat;
-    vec3f_t gyro;
-    vec3f_t acc;
-    bool have_attitude;
+    quatf_t quat_module;
+    vec3f_t gyro_module;
+    vec3f_t acc_module;
     bool have_quat;
     bool have_gyro_acc;
 } partial_sample_t;
@@ -64,6 +68,10 @@ static _Atomic uint32_t s_consecutive_parse_errors;
 static _Atomic uint64_t s_last_frame_us;
 static bool s_initialized;
 
+typedef struct {
+    float m[3][3];
+} mat3f_t;
+
 static int16_t imu_read_s16_le(const uint8_t *data)
 {
     return (int16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8));
@@ -78,6 +86,257 @@ static float imu_norm_angle(float deg)
         deg += 360.0f;
     }
     return deg;
+}
+
+static float imu_deg_from_rad(float rad)
+{
+    return rad * (180.0f / (float)M_PI);
+}
+
+static bool imu_map_is_identity(void)
+{
+    const params_store_t *params = params_get();
+    return params->imu_map_x == BODY_AXIS_POS_X &&
+           params->imu_map_y == BODY_AXIS_POS_Y &&
+           params->imu_map_z == BODY_AXIS_POS_Z;
+}
+
+static float imu_select_axis_component(const vec3f_t *module_vec, body_axis_selector_t selector)
+{
+    switch (selector) {
+    case BODY_AXIS_POS_X:
+        return module_vec->x;
+    case BODY_AXIS_NEG_X:
+        return -module_vec->x;
+    case BODY_AXIS_POS_Y:
+        return module_vec->y;
+    case BODY_AXIS_NEG_Y:
+        return -module_vec->y;
+    case BODY_AXIS_POS_Z:
+        return module_vec->z;
+    case BODY_AXIS_NEG_Z:
+        return -module_vec->z;
+    default:
+        return 0.0f;
+    }
+}
+
+static vec3f_t imu_map_module_vec_to_body(const vec3f_t *module_vec)
+{
+    const params_store_t *params = params_get();
+    return (vec3f_t){
+        .x = imu_select_axis_component(module_vec, params->imu_map_x),
+        .y = imu_select_axis_component(module_vec, params->imu_map_y),
+        .z = imu_select_axis_component(module_vec, params->imu_map_z),
+    };
+}
+
+static void imu_fill_basis_row(float row[3], body_axis_selector_t selector)
+{
+    row[0] = 0.0f;
+    row[1] = 0.0f;
+    row[2] = 0.0f;
+    switch (selector) {
+    case BODY_AXIS_POS_X:
+        row[0] = 1.0f;
+        break;
+    case BODY_AXIS_NEG_X:
+        row[0] = -1.0f;
+        break;
+    case BODY_AXIS_POS_Y:
+        row[1] = 1.0f;
+        break;
+    case BODY_AXIS_NEG_Y:
+        row[1] = -1.0f;
+        break;
+    case BODY_AXIS_POS_Z:
+        row[2] = 1.0f;
+        break;
+    case BODY_AXIS_NEG_Z:
+        row[2] = -1.0f;
+        break;
+    }
+}
+
+static mat3f_t imu_module_to_body_basis_matrix(void)
+{
+    const params_store_t *params = params_get();
+    mat3f_t basis = {0};
+    imu_fill_basis_row(basis.m[0], params->imu_map_x);
+    imu_fill_basis_row(basis.m[1], params->imu_map_y);
+    imu_fill_basis_row(basis.m[2], params->imu_map_z);
+    return basis;
+}
+
+static mat3f_t imu_mat3_transpose(mat3f_t input)
+{
+    mat3f_t out = {0};
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            out.m[r][c] = input.m[c][r];
+        }
+    }
+    return out;
+}
+
+static mat3f_t imu_mat3_mul(mat3f_t a, mat3f_t b)
+{
+    mat3f_t out = {0};
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            float value = 0.0f;
+            for (int k = 0; k < 3; ++k) {
+                value += a.m[r][k] * b.m[k][c];
+            }
+            out.m[r][c] = value;
+        }
+    }
+    return out;
+}
+
+static quatf_t imu_quat_normalize(quatf_t q)
+{
+    const float norm = sqrtf(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
+    if (norm <= 1e-6f) {
+        return (quatf_t){1.0f, 0.0f, 0.0f, 0.0f};
+    }
+    return (quatf_t){
+        .w = q.w / norm,
+        .x = q.x / norm,
+        .y = q.y / norm,
+        .z = q.z / norm,
+    };
+}
+
+static mat3f_t imu_mat3_from_quat(quatf_t q)
+{
+    q = imu_quat_normalize(q);
+    const float ww = q.w * q.w;
+    const float xx = q.x * q.x;
+    const float yy = q.y * q.y;
+    const float zz = q.z * q.z;
+    const float wx = q.w * q.x;
+    const float wy = q.w * q.y;
+    const float wz = q.w * q.z;
+    const float xy = q.x * q.y;
+    const float xz = q.x * q.z;
+    const float yz = q.y * q.z;
+
+    return (mat3f_t){
+        .m = {
+            {ww + xx - yy - zz, 2.0f * (xy - wz), 2.0f * (xz + wy)},
+            {2.0f * (xy + wz), ww - xx + yy - zz, 2.0f * (yz - wx)},
+            {2.0f * (xz - wy), 2.0f * (yz + wx), ww - xx - yy + zz},
+        },
+    };
+}
+
+static quatf_t imu_quat_from_mat3(mat3f_t m)
+{
+    quatf_t q = {0};
+    const float trace = m.m[0][0] + m.m[1][1] + m.m[2][2];
+    if (trace > 0.0f) {
+        const float s = sqrtf(trace + 1.0f) * 2.0f;
+        q.w = 0.25f * s;
+        q.x = (m.m[2][1] - m.m[1][2]) / s;
+        q.y = (m.m[0][2] - m.m[2][0]) / s;
+        q.z = (m.m[1][0] - m.m[0][1]) / s;
+    } else if (m.m[0][0] > m.m[1][1] && m.m[0][0] > m.m[2][2]) {
+        const float s = sqrtf(1.0f + m.m[0][0] - m.m[1][1] - m.m[2][2]) * 2.0f;
+        q.w = (m.m[2][1] - m.m[1][2]) / s;
+        q.x = 0.25f * s;
+        q.y = (m.m[0][1] + m.m[1][0]) / s;
+        q.z = (m.m[0][2] + m.m[2][0]) / s;
+    } else if (m.m[1][1] > m.m[2][2]) {
+        const float s = sqrtf(1.0f + m.m[1][1] - m.m[0][0] - m.m[2][2]) * 2.0f;
+        q.w = (m.m[0][2] - m.m[2][0]) / s;
+        q.x = (m.m[0][1] + m.m[1][0]) / s;
+        q.y = 0.25f * s;
+        q.z = (m.m[1][2] + m.m[2][1]) / s;
+    } else {
+        const float s = sqrtf(1.0f + m.m[2][2] - m.m[0][0] - m.m[1][1]) * 2.0f;
+        q.w = (m.m[1][0] - m.m[0][1]) / s;
+        q.x = (m.m[0][2] + m.m[2][0]) / s;
+        q.y = (m.m[1][2] + m.m[2][1]) / s;
+        q.z = 0.25f * s;
+    }
+    return imu_quat_normalize(q);
+}
+
+static eulerf_t imu_project_euler_from_body_to_world(mat3f_t r_body_to_world)
+{
+    const float pitch = atan2f(r_body_to_world.m[2][1], r_body_to_world.m[2][2]);
+    float sin_theta = -r_body_to_world.m[2][0];
+    if (sin_theta > 1.0f) {
+        sin_theta = 1.0f;
+    } else if (sin_theta < -1.0f) {
+        sin_theta = -1.0f;
+    }
+    const float theta = asinf(sin_theta);
+    const float psi = atan2f(r_body_to_world.m[1][0], r_body_to_world.m[0][0]);
+
+    return (eulerf_t){
+        .roll_deg = imu_norm_angle(imu_deg_from_rad(-theta)),
+        .pitch_deg = imu_norm_angle(imu_deg_from_rad(pitch)),
+        .yaw_deg = imu_norm_angle(imu_deg_from_rad(-psi)),
+    };
+}
+
+static bool imu_map_module_quat_to_body(quatf_t module_quat, quatf_t *out_body_quat, eulerf_t *out_body_rpy)
+{
+    const mat3f_t body_from_module = imu_module_to_body_basis_matrix();
+    const mat3f_t module_from_body = imu_mat3_transpose(body_from_module);
+    const mat3f_t world_from_module = imu_mat3_from_quat(module_quat);
+    const mat3f_t world_from_body = imu_mat3_mul(world_from_module, module_from_body);
+
+    if (out_body_quat != NULL) {
+        *out_body_quat = imu_quat_from_mat3(world_from_body);
+    }
+    if (out_body_rpy != NULL) {
+        *out_body_rpy = imu_project_euler_from_body_to_world(world_from_body);
+    }
+    return true;
+}
+
+/*
+ * Single project truth for "ATK-MS901M module frame -> project body frame".
+ *
+ * All direction-sensitive IMU mapping flows through this function so that
+ * gyro/acc, quaternion and project attitude names stay aligned with
+ * docs/axis_truth_table.md.
+ */
+static void imu_map_partial_to_project_sample(const partial_sample_t *partial, imu_sample_t *out_sample)
+{
+    if (partial == NULL || out_sample == NULL) {
+        return;
+    }
+
+    out_sample->gyro_xyz_dps = imu_map_module_vec_to_body(&partial->gyro_module);
+    out_sample->acc_xyz_g = imu_map_module_vec_to_body(&partial->acc_module);
+    out_sample->has_gyro_acc = partial->have_gyro_acc;
+    out_sample->has_quaternion = false;
+    out_sample->has_attitude = false;
+
+    if (partial->have_quat) {
+        imu_map_module_quat_to_body(partial->quat_module, &out_sample->quat_wxyz, &out_sample->roll_pitch_yaw_deg);
+        out_sample->has_quaternion = true;
+        out_sample->has_attitude = true;
+        return;
+    }
+
+    if (!imu_map_is_identity()) {
+        return;
+    }
+
+    /*
+     * Direct attitude-frame sign conventions from the module are not trusted as
+     * a generic source of project roll/yaw names. This identity-map fallback is
+     * only a temporary bring-up aid when quaternion output is unavailable.
+     */
+    out_sample->roll_pitch_yaw_deg.roll_deg = imu_norm_angle(-partial->roll_deg);
+    out_sample->roll_pitch_yaw_deg.pitch_deg = imu_norm_angle(partial->pitch_deg);
+    out_sample->roll_pitch_yaw_deg.yaw_deg = imu_norm_angle(-partial->yaw_deg);
+    out_sample->has_attitude = true;
 }
 
 static uint8_t imu_return_rate_code_from_params(void)
@@ -141,26 +400,25 @@ static void imu_handle_completed_frame(uint8_t frame_id, const uint8_t *payload,
             s_partial.roll_deg = ((float)imu_read_s16_le(&payload[0]) / 32768.0f) * 180.0f;
             s_partial.pitch_deg = ((float)imu_read_s16_le(&payload[2]) / 32768.0f) * 180.0f;
             s_partial.yaw_deg = ((float)imu_read_s16_le(&payload[4]) / 32768.0f) * 180.0f;
-            s_partial.have_attitude = true;
         }
         break;
     case IMU_FRAME_QUATERNION:
         if (len >= 8) {
-            s_partial.quat.w = (float)imu_read_s16_le(&payload[0]) / 32768.0f;
-            s_partial.quat.x = (float)imu_read_s16_le(&payload[2]) / 32768.0f;
-            s_partial.quat.y = (float)imu_read_s16_le(&payload[4]) / 32768.0f;
-            s_partial.quat.z = (float)imu_read_s16_le(&payload[6]) / 32768.0f;
+            s_partial.quat_module.w = (float)imu_read_s16_le(&payload[0]) / 32768.0f;
+            s_partial.quat_module.x = (float)imu_read_s16_le(&payload[2]) / 32768.0f;
+            s_partial.quat_module.y = (float)imu_read_s16_le(&payload[4]) / 32768.0f;
+            s_partial.quat_module.z = (float)imu_read_s16_le(&payload[6]) / 32768.0f;
             s_partial.have_quat = true;
         }
         break;
     case IMU_FRAME_GYRO_ACC:
         if (len >= 12) {
-            s_partial.acc.x = ((float)imu_read_s16_le(&payload[0]) / 32768.0f) * 4.0f;
-            s_partial.acc.y = ((float)imu_read_s16_le(&payload[2]) / 32768.0f) * 4.0f;
-            s_partial.acc.z = ((float)imu_read_s16_le(&payload[4]) / 32768.0f) * 4.0f;
-            s_partial.gyro.x = ((float)imu_read_s16_le(&payload[6]) / 32768.0f) * 2000.0f;
-            s_partial.gyro.y = ((float)imu_read_s16_le(&payload[8]) / 32768.0f) * 2000.0f;
-            s_partial.gyro.z = ((float)imu_read_s16_le(&payload[10]) / 32768.0f) * 2000.0f;
+            s_partial.acc_module.x = ((float)imu_read_s16_le(&payload[0]) / 32768.0f) * 4.0f;
+            s_partial.acc_module.y = ((float)imu_read_s16_le(&payload[2]) / 32768.0f) * 4.0f;
+            s_partial.acc_module.z = ((float)imu_read_s16_le(&payload[4]) / 32768.0f) * 4.0f;
+            s_partial.gyro_module.x = ((float)imu_read_s16_le(&payload[6]) / 32768.0f) * 2000.0f;
+            s_partial.gyro_module.y = ((float)imu_read_s16_le(&payload[8]) / 32768.0f) * 2000.0f;
+            s_partial.gyro_module.z = ((float)imu_read_s16_le(&payload[10]) / 32768.0f) * 2000.0f;
             s_partial.have_gyro_acc = true;
         }
         break;
@@ -169,13 +427,7 @@ static void imu_handle_completed_frame(uint8_t frame_id, const uint8_t *payload,
         break;
     }
 
-    sample.gyro_xyz_dps = s_partial.gyro;
-    sample.acc_xyz_g = s_partial.acc;
-    sample.quat_wxyz = s_partial.have_quat ? s_partial.quat : sample.quat_wxyz;
-    sample.roll_pitch_yaw_deg.roll_deg = imu_norm_angle(s_partial.roll_deg);
-    sample.roll_pitch_yaw_deg.pitch_deg = imu_norm_angle(s_partial.pitch_deg);
-    sample.roll_pitch_yaw_deg.yaw_deg = imu_norm_angle(s_partial.yaw_deg);
-    sample.has_attitude = s_partial.have_attitude || s_partial.have_quat;
+    imu_map_partial_to_project_sample(&s_partial, &sample);
 
     const params_store_t *params = params_get();
     if (params->imu_mode == IMU_MODE_RAW && !s_partial.have_gyro_acc) {
@@ -330,7 +582,15 @@ void imu_service_rx(void)
     } else {
         const uint32_t age_us = (uint32_t)(now_us - last_frame_us);
         sample.update_age_us = age_us;
-        sample.health = (age_us > (params_get()->imu_timeout_ms * 1000u)) ? IMU_HEALTH_TIMEOUT : sample.health;
+        if (age_us > (params_get()->imu_timeout_ms * 1000u)) {
+            sample.health = IMU_HEALTH_TIMEOUT;
+        } else if (atomic_load(&s_consecutive_parse_errors) >= params_get()->imu_parse_error_limit) {
+            sample.health = IMU_HEALTH_PARSE_ERROR;
+        } else if (params_get()->imu_mode == IMU_MODE_DIRECT && !sample.has_quaternion) {
+            sample.health = IMU_HEALTH_DEGRADED;
+        } else {
+            sample.health = IMU_HEALTH_OK;
+        }
         s_samples[sample_index] = sample;
     }
 }

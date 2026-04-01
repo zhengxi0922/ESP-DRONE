@@ -43,6 +43,7 @@ static const param_descriptor_t s_param_descs[] = {
     {"motor_startup_boost_duty", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_startup_boost_duty)},
     {"motor_startup_boost_ms", PARAM_TYPE_U32, offsetof(params_store_t, motor_startup_boost_ms)},
     {"motor_slew_limit_per_tick", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_slew_limit_per_tick)},
+    {"bringup_test_base_duty", PARAM_TYPE_FLOAT, offsetof(params_store_t, bringup_test_base_duty)},
     {"rc_timeout_ms", PARAM_TYPE_U32, offsetof(params_store_t, rc_timeout_ms)},
     {"imu_timeout_ms", PARAM_TYPE_U32, offsetof(params_store_t, imu_timeout_ms)},
     {"imu_parse_error_limit", PARAM_TYPE_U32, offsetof(params_store_t, imu_parse_error_limit)},
@@ -68,6 +69,17 @@ static const param_descriptor_t s_param_descs[] = {
     {"motor_spin_is_cw1", PARAM_TYPE_BOOL, offsetof(params_store_t, motor_spin_is_cw[1])},
     {"motor_spin_is_cw2", PARAM_TYPE_BOOL, offsetof(params_store_t, motor_spin_is_cw[2])},
     {"motor_spin_is_cw3", PARAM_TYPE_BOOL, offsetof(params_store_t, motor_spin_is_cw[3])},
+    {"rate_kp_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_kp_roll)},
+    {"rate_ki_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_ki_roll)},
+    {"rate_kd_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_kd_roll)},
+    {"rate_kp_pitch", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_kp_pitch)},
+    {"rate_ki_pitch", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_ki_pitch)},
+    {"rate_kd_pitch", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_kd_pitch)},
+    {"rate_kp_yaw", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_kp_yaw)},
+    {"rate_ki_yaw", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_ki_yaw)},
+    {"rate_kd_yaw", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_kd_yaw)},
+    {"rate_integral_limit", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_integral_limit)},
+    {"rate_output_limit", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_output_limit)},
     {"log_event_text_enabled", PARAM_TYPE_BOOL, offsetof(params_store_t, log_event_text_enabled)},
 };
 
@@ -81,6 +93,7 @@ static void params_apply_defaults(params_store_t *store)
     store->motor_startup_boost_duty = 0.16f;
     store->motor_startup_boost_ms = 25;
     store->motor_slew_limit_per_tick = 0.03f;
+    store->bringup_test_base_duty = 0.15f;
 
     store->rc_timeout_ms = 300;
     store->imu_timeout_ms = 50;
@@ -111,6 +124,18 @@ static void params_apply_defaults(params_store_t *store)
     store->motor_spin_is_cw[1] = true;
     store->motor_spin_is_cw[2] = false;
     store->motor_spin_is_cw[3] = true;
+
+    store->rate_kp_roll = 0.0030f;
+    store->rate_ki_roll = 0.0f;
+    store->rate_kd_roll = 0.0f;
+    store->rate_kp_pitch = 0.0030f;
+    store->rate_ki_pitch = 0.0f;
+    store->rate_kd_pitch = 0.0f;
+    store->rate_kp_yaw = 0.0030f;
+    store->rate_ki_yaw = 0.0f;
+    store->rate_kd_yaw = 0.0f;
+    store->rate_integral_limit = 100.0f;
+    store->rate_output_limit = 0.20f;
 
     store->log_event_text_enabled = true;
 }

@@ -107,6 +107,21 @@ def cmd_motor_test(client: EspDroneClient, args) -> int:
     return client.motor_test(motor_index, float(args.duty))
 
 
+def axis_name_to_index(name: str) -> int:
+    names = {"roll": 0, "pitch": 1, "yaw": 2}
+    if name not in names:
+        raise SystemExit(f"unsupported axis {name}")
+    return names[name]
+
+
+def cmd_axis_test(client: EspDroneClient, args) -> int:
+    return client.axis_test(axis_name_to_index(args.axis), float(args.value))
+
+
+def cmd_rate_test(client: EspDroneClient, args) -> int:
+    return client.rate_test(axis_name_to_index(args.axis), float(args.value))
+
+
 def cmd_calib(client: EspDroneClient, args) -> int:
     cmd_id = CmdId.CALIB_GYRO if args.kind == "gyro" else CmdId.CALIB_LEVEL
     return client.command(cmd_id)
@@ -149,6 +164,14 @@ def build_parser() -> argparse.ArgumentParser:
     motor_p.add_argument("motor")
     motor_p.add_argument("duty")
 
+    axis_p = sub.add_parser("axis-test")
+    axis_p.add_argument("axis", choices=["roll", "pitch", "yaw"])
+    axis_p.add_argument("value")
+
+    rate_p = sub.add_parser("rate-test")
+    rate_p.add_argument("axis", choices=["roll", "pitch", "yaw"])
+    rate_p.add_argument("value")
+
     calib_p = sub.add_parser("calib")
     calib_p.add_argument("kind", choices=["gyro", "level"])
 
@@ -176,6 +199,8 @@ def main(argv: list[str] | None = None) -> int:
             "log": cmd_log,
             "dump-csv": cmd_dump_csv,
             "motor-test": cmd_motor_test,
+            "axis-test": cmd_axis_test,
+            "rate-test": cmd_rate_test,
             "calib": cmd_calib,
         }
         return int(dispatch[args.command](client, args) or 0)

@@ -9,9 +9,12 @@
 #include "esp_timer.h"
 
 #include "board_config.h"
+#include "controller.h"
 #include "console.h"
+#include "estimator.h"
 #include "imu.h"
 #include "led_status.h"
+#include "mixer.h"
 #include "motor.h"
 #include "params.h"
 #include "runtime_state.h"
@@ -24,6 +27,33 @@
 #define SERVICE_TASK_PRIO 10
 
 #define TASK_STACK_WORDS 4096
+
+static void flight_control_apply_led_state(const safety_status_t *safety_status,
+                                           const imu_sample_t *sample,
+                                           bool battery_initialized,
+                                           float battery_filtered_v)
+{
+    if (safety_status->arm_state == ARM_STATE_FAULT_LOCK) {
+        led_status_set_state(LED_STATE_FAULT_LOCK);
+    } else if (safety_status->arm_state == ARM_STATE_FAILSAFE) {
+        if (safety_status->failsafe_reason == FAILSAFE_REASON_RC_TIMEOUT) {
+            led_status_set_state(LED_STATE_RC_LOSS);
+        } else if (safety_status->failsafe_reason == FAILSAFE_REASON_IMU_TIMEOUT ||
+                   safety_status->failsafe_reason == FAILSAFE_REASON_IMU_PARSE) {
+            led_status_set_state(LED_STATE_IMU_ERROR);
+        } else {
+            led_status_set_state(LED_STATE_FAILSAFE);
+        }
+    } else if (battery_initialized && battery_filtered_v <= params_get()->battery_warn_v) {
+        led_status_set_state(LED_STATE_LOW_BAT);
+    } else if (safety_status->arm_state == ARM_STATE_ARMED && sample->health == IMU_HEALTH_OK) {
+        led_status_set_state(LED_STATE_ARMED_HEALTHY);
+    } else if (sample->health == IMU_HEALTH_INIT) {
+        led_status_set_state(LED_STATE_INIT_WAIT_IMU);
+    } else {
+        led_status_set_state(LED_STATE_DISARMED_READY);
+    }
+}
 
 static void imu_uart_rx_task(void *arg)
 {
@@ -44,6 +74,15 @@ static void flight_control_task(void *arg)
     float battery_filtered_v = 0.0f;
     bool battery_initialized = false;
     safety_status_t safety_status = {0};
+    estimator_state_t estimator_state = {0};
+    mixer_coeffs_t mixer_coeffs[MIXER_MOTOR_COUNT] = {0};
+    float command_outputs[MOTOR_COUNT] = {0};
+    uint32_t last_sample_seq = 0;
+    uint64_t last_rate_update_us = 0;
+    arm_state_t last_arm_state = ARM_STATE_DISARMED;
+    control_mode_t last_control_mode = CONTROL_MODE_IDLE;
+
+    mixer_build_coeffs(mixer_coeffs);
 
     while (1) {
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1));
@@ -78,8 +117,13 @@ static void flight_control_task(void *arg)
         }
 
         imu_sample_t sample = {0};
-        imu_get_latest(&sample, NULL);
+        uint32_t sample_seq = 0;
+        imu_get_latest(&sample, &sample_seq);
         const imu_stats_t imu_stats = imu_get_stats();
+        const bool fresh_sample = (sample_seq != 0u && sample_seq != last_sample_seq);
+        if (fresh_sample) {
+            last_sample_seq = sample_seq;
+        }
 
         safety_update(&(safety_inputs_t){
             .throttle_norm = 0.0f,
@@ -90,40 +134,71 @@ static void flight_control_task(void *arg)
             .loop_stats = runtime_state_get_loop_stats(),
         }, &safety_status);
 
-        if (safety_status.arm_state == ARM_STATE_FAULT_LOCK) {
-            led_status_set_state(LED_STATE_FAULT_LOCK);
-        } else if (safety_status.arm_state == ARM_STATE_FAILSAFE) {
-            if (safety_status.failsafe_reason == FAILSAFE_REASON_RC_TIMEOUT) {
-                led_status_set_state(LED_STATE_RC_LOSS);
-            } else if (safety_status.failsafe_reason == FAILSAFE_REASON_IMU_TIMEOUT ||
-                       safety_status.failsafe_reason == FAILSAFE_REASON_IMU_PARSE) {
-                led_status_set_state(LED_STATE_IMU_ERROR);
-            } else {
-                led_status_set_state(LED_STATE_FAILSAFE);
-            }
-        } else if (battery_initialized && battery_filtered_v <= params_get()->battery_warn_v) {
-            led_status_set_state(LED_STATE_LOW_BAT);
-        } else if (safety_status.arm_state == ARM_STATE_ARMED && sample.health == IMU_HEALTH_OK) {
-            led_status_set_state(LED_STATE_ARMED_HEALTHY);
-        } else if (sample.health == IMU_HEALTH_INIT) {
-            led_status_set_state(LED_STATE_INIT_WAIT_IMU);
-        } else {
-            led_status_set_state(LED_STATE_DISARMED_READY);
-        }
+        flight_control_apply_led_state(&safety_status, &sample, battery_initialized, battery_filtered_v);
         led_status_service((uint32_t)(now_us / 1000u));
+
+        const control_mode_t control_mode = runtime_state_get_control_mode();
+        if (safety_status.arm_state != last_arm_state || control_mode != last_control_mode) {
+            estimator_reset();
+            controller_reset();
+            memset(command_outputs, 0, sizeof(command_outputs));
+            last_rate_update_us = 0;
+            last_arm_state = safety_status.arm_state;
+            last_control_mode = control_mode;
+        }
 
         int test_motor = -1;
         float test_duty = 0.0f;
         runtime_state_get_motor_test(&test_motor, &test_duty);
-        if (safety_status.arm_state != ARM_STATE_ARMED) {
-            if (test_motor >= 0 && test_duty > 0.0f) {
-                motor_set_test_output((uint8_t)test_motor, test_duty);
-            } else {
-                motor_stop_all();
+        if (test_motor >= 0 && test_duty > 0.0f && safety_status.arm_state == ARM_STATE_DISARMED) {
+            motor_set_test_output((uint8_t)test_motor, test_duty);
+            continue;
+        }
+
+        if (control_mode == CONTROL_MODE_AXIS_TEST && safety_status.arm_state == ARM_STATE_DISARMED) {
+            const axis3f_t axis_request = runtime_state_get_axis_test_request();
+            mixer_mix(mixer_coeffs,
+                      &(mixer_input_t){
+                          .throttle = params_get()->bringup_test_base_duty,
+                          .axis = axis_request,
+                      },
+                      command_outputs);
+            motor_set_armed_outputs(command_outputs, false);
+            continue;
+        }
+
+        if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_RATE_TEST) {
+            if (fresh_sample && sample.has_gyro_acc) {
+                estimator_update_from_imu(&sample, &estimator_state);
+                const axis3f_t rate_setpoint = runtime_state_get_rate_setpoint_request();
+                if (last_rate_update_us != 0 && sample.timestamp_us > last_rate_update_us) {
+                    float controller_dt_s = (float)(sample.timestamp_us - last_rate_update_us) / 1000000.0f;
+                    if (controller_dt_s < 0.001f) {
+                        controller_dt_s = 0.001f;
+                    } else if (controller_dt_s > 0.050f) {
+                        controller_dt_s = 0.050f;
+                    }
+
+                    const rate_controller_status_t rate_status =
+                        controller_update_rate(&rate_setpoint, &estimator_state.rate_rpy_dps, controller_dt_s);
+                    mixer_mix(mixer_coeffs,
+                              &(mixer_input_t){
+                                  .throttle = params_get()->bringup_test_base_duty,
+                                  .axis = rate_status.output,
+                              },
+                              command_outputs);
+                }
+                last_rate_update_us = sample.timestamp_us;
             }
-        } else {
+            motor_set_armed_outputs(command_outputs, false);
+            continue;
+        }
+
+        if (safety_status.arm_state == ARM_STATE_ARMED) {
             float zeros[MOTOR_COUNT] = {0};
             motor_set_armed_outputs(zeros, false);
+        } else {
+            motor_stop_all();
         }
     }
 }
@@ -221,12 +296,23 @@ void app_main(void)
     runtime_state_init();
     params_init();
     safety_init();
+    estimator_init();
+    controller_init();
     board_battery_init();
     led_status_init();
     motor_init();
+    mixer_init();
     imu_init();
     console_init();
     runtime_state_set_motor_test(-1, 0.0f);
+    runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+    runtime_state_set_axis_test_request((axis3f_t){0});
+    runtime_state_set_rate_setpoint_request((axis3f_t){0});
+    if (!mixer_self_test()) {
+        runtime_state_set_arm_state(ARM_STATE_FAULT_LOCK);
+        runtime_state_set_failsafe_reason(FAILSAFE_REASON_NONE);
+        console_send_event_text("mixer self-test failed");
+    }
     console_send_event_text("esp-drone bottom-layer framework ready");
 
     xTaskCreatePinnedToCore(imu_uart_rx_task, "imu_uart_rx_task", TASK_STACK_WORDS, NULL, IMU_UART_RX_TASK_PRIO, NULL, 1);

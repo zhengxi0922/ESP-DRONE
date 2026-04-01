@@ -12,6 +12,7 @@
 #include "esp_system.h"
 
 #include "console_protocol.h"
+#include "controller.h"
 #include "imu.h"
 #include "motor.h"
 #include "params.h"
@@ -145,6 +146,27 @@ static void console_send_cmd_resp(uint8_t cmd_id, uint8_t status)
     console_send_frame(MSG_CMD_RESP, &resp, sizeof(resp));
 }
 
+static bool console_decode_axis_request(uint8_t axis_id, float value, axis3f_t *out_axis)
+{
+    if (out_axis == NULL) {
+        return false;
+    }
+    *out_axis = (axis3f_t){0};
+    switch (axis_id) {
+    case 0:
+        out_axis->roll = value;
+        return true;
+    case 1:
+        out_axis->pitch = value;
+        return true;
+    case 2:
+        out_axis->yaw = value;
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void console_send_param_value(const char *name)
 {
     uint8_t payload[128];
@@ -204,12 +226,18 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
     case CMD_DISARM:
         safety_request_disarm();
         runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
         motor_stop_all();
         console_send_cmd_resp(req.cmd_id, 0);
         break;
     case CMD_KILL:
         safety_request_kill();
         runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
         motor_stop_all();
         console_send_cmd_resp(req.cmd_id, 0);
         break;
@@ -231,10 +259,39 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
             runtime_state_set_motor_test(-1, 0.0f);
             motor_stop_all();
         } else {
+            runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+            runtime_state_set_axis_test_request((axis3f_t){0});
+            runtime_state_set_rate_setpoint_request((axis3f_t){0});
             runtime_state_set_motor_test(req.arg_u8, req.arg_f32);
         }
         console_send_cmd_resp(req.cmd_id, 0);
         break;
+    case CMD_AXIS_TEST: {
+        axis3f_t request = {0};
+        if (!console_decode_axis_request(req.arg_u8, req.arg_f32, &request)) {
+            console_send_cmd_resp(req.cmd_id, 1);
+            break;
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        runtime_state_set_axis_test_request(request);
+        runtime_state_set_control_mode((req.arg_f32 == 0.0f) ? CONTROL_MODE_IDLE : CONTROL_MODE_AXIS_TEST);
+        console_send_cmd_resp(req.cmd_id, 0);
+        break;
+    }
+    case CMD_RATE_TEST: {
+        axis3f_t request = {0};
+        if (!console_decode_axis_request(req.arg_u8, req.arg_f32, &request)) {
+            console_send_cmd_resp(req.cmd_id, 1);
+            break;
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request(request);
+        runtime_state_set_control_mode((req.arg_f32 == 0.0f) ? CONTROL_MODE_IDLE : CONTROL_MODE_RATE_TEST);
+        console_send_cmd_resp(req.cmd_id, 0);
+        break;
+    }
     case CMD_CALIB_GYRO:
     case CMD_CALIB_LEVEL:
     default:
@@ -465,6 +522,10 @@ void console_send_telemetry(const imu_sample_t *imu_sample, float battery_voltag
     float motor_outputs[MOTOR_COUNT] = {0};
     motor_get_outputs(motor_outputs);
     const loop_stats_t loop_stats = runtime_state_get_loop_stats();
+    const axis3f_t axis_test_request = runtime_state_get_axis_test_request();
+    const axis3f_t rate_setpoint_request = runtime_state_get_rate_setpoint_request();
+    const rate_controller_status_t rate_status = controller_get_last_rate_status();
+    const control_mode_t control_mode = runtime_state_get_control_mode();
 
     const console_telemetry_sample_t sample = {
         .timestamp_us = imu_sample->timestamp_us,
@@ -481,6 +542,15 @@ void console_send_telemetry(const imu_sample_t *imu_sample, float battery_voltag
         .roll_deg = imu_sample->roll_pitch_yaw_deg.roll_deg,
         .pitch_deg = imu_sample->roll_pitch_yaw_deg.pitch_deg,
         .yaw_deg = imu_sample->roll_pitch_yaw_deg.yaw_deg,
+        .setpoint_roll = axis_test_request.roll,
+        .setpoint_pitch = axis_test_request.pitch,
+        .setpoint_yaw = axis_test_request.yaw,
+        .rate_setpoint_roll = rate_setpoint_request.roll,
+        .rate_setpoint_pitch = rate_setpoint_request.pitch,
+        .rate_setpoint_yaw = rate_setpoint_request.yaw,
+        .pid_out_roll = rate_status.output.roll,
+        .pid_out_pitch = rate_status.output.pitch,
+        .pid_out_yaw = rate_status.output.yaw,
         .motor1 = motor_outputs[0],
         .motor2 = motor_outputs[1],
         .motor3 = motor_outputs[2],
@@ -493,6 +563,8 @@ void console_send_telemetry(const imu_sample_t *imu_sample, float battery_voltag
         .imu_health = (uint8_t)imu_sample->health,
         .arm_state = (uint8_t)runtime_state_get_arm_state(),
         .failsafe_reason = (uint8_t)runtime_state_get_failsafe_reason(),
+        .control_mode = (uint8_t)control_mode,
+        .reserved = {0, 0, 0},
     };
 
     console_send_frame(MSG_TELEMETRY_SAMPLE, &sample, sizeof(sample));

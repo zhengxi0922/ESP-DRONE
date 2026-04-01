@@ -31,6 +31,8 @@ typedef enum {
     CMD_MOTOR_TEST = 5,
     CMD_CALIB_GYRO = 6,
     CMD_CALIB_LEVEL = 7,
+    CMD_AXIS_TEST = 8,
+    CMD_RATE_TEST = 9,
 } console_cmd_id_t;
 
 typedef struct __attribute__((packed)) {
@@ -78,6 +80,15 @@ typedef struct __attribute__((packed)) {
     float roll_deg;
     float pitch_deg;
     float yaw_deg;
+    float setpoint_roll;
+    float setpoint_pitch;
+    float setpoint_yaw;
+    float rate_setpoint_roll;
+    float rate_setpoint_pitch;
+    float rate_setpoint_yaw;
+    float pid_out_roll;
+    float pid_out_pitch;
+    float pid_out_yaw;
     float motor1;
     float motor2;
     float motor3;
@@ -90,4 +101,6 @@ typedef struct __attribute__((packed)) {
     uint8_t imu_health;
     uint8_t arm_state;
     uint8_t failsafe_reason;
+    uint8_t control_mode;
+    uint8_t reserved[3];
 } console_telemetry_sample_t;

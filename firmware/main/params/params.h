@@ -42,6 +42,7 @@ typedef struct {
     float motor_startup_boost_duty;
     uint32_t motor_startup_boost_ms;
     float motor_slew_limit_per_tick;
+    float bringup_test_base_duty;
 
     uint32_t rc_timeout_ms;
     uint32_t imu_timeout_ms;
@@ -66,6 +67,18 @@ typedef struct {
 
     uint8_t motor_output_map[4];
     bool motor_spin_is_cw[4];
+
+    float rate_kp_roll;
+    float rate_ki_roll;
+    float rate_kd_roll;
+    float rate_kp_pitch;
+    float rate_ki_pitch;
+    float rate_kd_pitch;
+    float rate_kp_yaw;
+    float rate_ki_yaw;
+    float rate_kd_yaw;
+    float rate_integral_limit;
+    float rate_output_limit;
 
     bool log_event_text_enabled;
 } params_store_t;

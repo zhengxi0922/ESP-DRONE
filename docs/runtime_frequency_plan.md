@@ -7,7 +7,7 @@
 - IMU UART optional high rate: `250 Hz`
 - Estimator update: on fresh IMU samples only
 - Rate PID: on fresh IMU samples only
-- Angle PID: `125 Hz`
+- Angle PID: deferred until the bring-up gate is physically passed, then default `125 Hz`
 - USB CDC telemetry: `200 Hz`
 - UDP telemetry: `100 Hz`
 
@@ -26,8 +26,21 @@ The `flight_control_task` runs at `1 kHz`, but:
 
 - estimator updates only when a new IMU sample arrives
 - rate PID updates only when a new IMU sample arrives
-- angle PID updates at a lower fixed rate
+- angle PID is not part of the current minimal stage 3 gate
 - motor output shaping, kills, saturations, slew limits and loop timing run every tick
+
+## Minimal Stage 3 Scope
+
+Before any angle loop work, the allowed closed-loop path is only:
+
+- fresh IMU sample
+- estimator update
+- rate PID update
+- mixer update
+- motor output update
+- safety gating
+
+That path is exposed through the `rate-test` bring-up command and its telemetry fields. No angle outer loop is enabled in this stage.
 
 ## Sample-Staleness Policy
 

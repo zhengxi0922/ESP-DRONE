@@ -35,6 +35,14 @@ That means:
 - `gyro_y < 0` corresponds to positive roll-rate motion in this project
 - `gyro_z < 0` corresponds to positive yaw-rate motion in this project
 
+## Bring-Up Log Fields
+
+During stage 2.5 and the minimal stage 3 rate-loop work, the expected fields are:
+
+- Hand-move validation: `gyro_x/y/z`, then `roll_deg/pitch_deg/yaw_deg`
+- Disarmed direction check: `setpoint_roll/pitch/yaw` together with `motor1..motor4`
+- Minimal closed-loop rate check: `rate_setpoint_roll/pitch/yaw`, `pid_out_roll/pitch/yaw`, then `motor1..motor4`
+
 ## Truth Table
 
 | Physical action | Axis sign | Expected main log field changes | Motor trend |

@@ -33,6 +33,8 @@ class CmdId:
     MOTOR_TEST = 5
     CALIB_GYRO = 6
     CALIB_LEVEL = 7
+    AXIS_TEST = 8
+    RATE_TEST = 9
 
 
 @dataclass(slots=True)

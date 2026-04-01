@@ -18,3 +18,12 @@ bool runtime_state_get_stream_enabled(void);
 
 void runtime_state_set_motor_test(int logical_motor, float duty);
 void runtime_state_get_motor_test(int *out_logical_motor, float *out_duty);
+
+void runtime_state_set_control_mode(control_mode_t mode);
+control_mode_t runtime_state_get_control_mode(void);
+
+void runtime_state_set_axis_test_request(axis3f_t request);
+axis3f_t runtime_state_get_axis_test_request(void);
+
+void runtime_state_set_rate_setpoint_request(axis3f_t request);
+axis3f_t runtime_state_get_rate_setpoint_request(void);

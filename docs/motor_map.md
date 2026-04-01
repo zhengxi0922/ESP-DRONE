@@ -34,6 +34,14 @@ Viewed from above:
 | `+yaw` | `M1`, `M3` | `M2`, `M4` |
 | `-yaw` | `M2`, `M4` | `M1`, `M3` |
 
+## Bring-Up Validation Path
+
+- `motor-test m1..m4 <duty>` verifies logical motor order one channel at a time
+- `axis-test roll|pitch|yaw <value>` verifies open-loop mixer direction while disarmed
+- `rate-test roll|pitch|yaw <dps>` verifies the minimal fresh-sample rate loop while armed
+
+The first two checks are stage 2.5 gate items. The third check is the first allowed stage 3 control check after the bring-up gate is wired in.
+
 ## Implementation Rule
 
 The firmware must keep these concepts separate:

@@ -10,6 +10,12 @@ typedef struct {
 } vec3f_t;
 
 typedef struct {
+    float roll;
+    float pitch;
+    float yaw;
+} axis3f_t;
+
+typedef struct {
     float w;
     float x;
     float y;
@@ -74,6 +80,12 @@ typedef enum {
     LED_STATE_PARAM_SAVE = 9,
 } led_state_t;
 
+typedef enum {
+    CONTROL_MODE_IDLE = 0,
+    CONTROL_MODE_AXIS_TEST = 1,
+    CONTROL_MODE_RATE_TEST = 2,
+} control_mode_t;
+
 typedef struct {
     uint64_t timestamp_us;
     vec3f_t gyro_xyz_dps;
@@ -83,6 +95,8 @@ typedef struct {
     imu_health_t health;
     uint32_t update_age_us;
     bool has_attitude;
+    bool has_quaternion;
+    bool has_gyro_acc;
 } imu_sample_t;
 
 typedef struct {
