@@ -353,6 +353,10 @@ static void console_handle_param_set(const uint8_t *payload, size_t len)
     }
 
     if (!params_try_set(name, value, type)) {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "param set rejected: %s", name);
+        console_send_event_text(msg);
+        console_send_param_value(name);
         return;
     }
 
@@ -548,6 +552,15 @@ void console_send_telemetry(const imu_sample_t *imu_sample, float battery_voltag
         .rate_setpoint_roll = rate_setpoint_request.roll,
         .rate_setpoint_pitch = rate_setpoint_request.pitch,
         .rate_setpoint_yaw = rate_setpoint_request.yaw,
+        .rate_pid_p_roll = rate_status.p_term.roll,
+        .rate_pid_p_pitch = rate_status.p_term.pitch,
+        .rate_pid_p_yaw = rate_status.p_term.yaw,
+        .rate_pid_i_roll = rate_status.i_term.roll,
+        .rate_pid_i_pitch = rate_status.i_term.pitch,
+        .rate_pid_i_yaw = rate_status.i_term.yaw,
+        .rate_pid_d_roll = rate_status.d_term.roll,
+        .rate_pid_d_pitch = rate_status.d_term.pitch,
+        .rate_pid_d_yaw = rate_status.d_term.yaw,
         .pid_out_roll = rate_status.output.roll,
         .pid_out_pitch = rate_status.output.pitch,
         .pid_out_yaw = rate_status.output.yaw,

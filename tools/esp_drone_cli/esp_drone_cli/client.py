@@ -12,7 +12,7 @@ from .protocol.messages import CmdId, Frame, MsgType
 CMD_REQ_STRUCT = struct.Struct("<BBHf")
 CMD_RESP_STRUCT = struct.Struct("<BBH")
 HELLO_RESP_STRUCT = struct.Struct("<BBBBI")
-TELEMETRY_STRUCT = struct.Struct("<Q" + "f" * 27 + "III8B")
+TELEMETRY_STRUCT = struct.Struct("<Q" + "f" * 36 + "III8B")
 
 
 @dataclass(slots=True)
@@ -139,6 +139,9 @@ class EspDroneClient:
                 "roll_deg", "pitch_deg", "yaw_deg",
                 "setpoint_roll", "setpoint_pitch", "setpoint_yaw",
                 "rate_setpoint_roll", "rate_setpoint_pitch", "rate_setpoint_yaw",
+                "rate_pid_p_roll", "rate_pid_p_pitch", "rate_pid_p_yaw",
+                "rate_pid_i_roll", "rate_pid_i_pitch", "rate_pid_i_yaw",
+                "rate_pid_d_roll", "rate_pid_d_pitch", "rate_pid_d_yaw",
                 "pid_out_roll", "pid_out_pitch", "pid_out_yaw",
                 "motor1", "motor2", "motor3", "motor4",
                 "battery_voltage", "battery_adc_raw", "loop_dt_us", "imu_age_us",

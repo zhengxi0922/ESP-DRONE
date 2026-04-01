@@ -86,6 +86,15 @@ typedef struct __attribute__((packed)) {
     float rate_setpoint_roll;
     float rate_setpoint_pitch;
     float rate_setpoint_yaw;
+    float rate_pid_p_roll;
+    float rate_pid_p_pitch;
+    float rate_pid_p_yaw;
+    float rate_pid_i_roll;
+    float rate_pid_i_pitch;
+    float rate_pid_i_yaw;
+    float rate_pid_d_roll;
+    float rate_pid_d_pitch;
+    float rate_pid_d_yaw;
     float pid_out_roll;
     float pid_out_pitch;
     float pid_out_yaw;

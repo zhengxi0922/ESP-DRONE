@@ -11,6 +11,15 @@
 - USB CDC telemetry: `200 Hz`
 - UDP telemetry: `100 Hz`
 
+## Current Parameter Guardrails
+
+Stage 3 currently constrains the telemetry-rate parameters to:
+
+- `telemetry_usb_hz`: `1..200`
+- `telemetry_udp_hz`: `1..100`
+
+These limits match the current bring-up scope and keep the binary CDC/UDP telemetry load within the intended safe range for bench testing.
+
 ## Why The Control Path Is Event-Driven
 
 The IMU only uploads at up to `250 Hz`. Re-running the full estimator and rate loop at `1000 Hz` with stale data would not improve observability and would make timing semantics ambiguous.

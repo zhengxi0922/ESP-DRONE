@@ -140,6 +140,145 @@ static void params_apply_defaults(params_store_t *store)
     store->log_event_text_enabled = true;
 }
 
+static bool params_selector_is_valid(body_axis_selector_t selector)
+{
+    return selector >= BODY_AXIS_POS_X && selector <= BODY_AXIS_NEG_Z;
+}
+
+static int params_selector_abs_axis(body_axis_selector_t selector)
+{
+    switch (selector) {
+    case BODY_AXIS_POS_X:
+    case BODY_AXIS_NEG_X:
+        return 0;
+    case BODY_AXIS_POS_Y:
+    case BODY_AXIS_NEG_Y:
+        return 1;
+    case BODY_AXIS_POS_Z:
+    case BODY_AXIS_NEG_Z:
+        return 2;
+    default:
+        return -1;
+    }
+}
+
+static int params_selector_sign(body_axis_selector_t selector)
+{
+    switch (selector) {
+    case BODY_AXIS_POS_X:
+    case BODY_AXIS_POS_Y:
+    case BODY_AXIS_POS_Z:
+        return +1;
+    case BODY_AXIS_NEG_X:
+    case BODY_AXIS_NEG_Y:
+    case BODY_AXIS_NEG_Z:
+        return -1;
+    default:
+        return 0;
+    }
+}
+
+static bool params_validate_motor_output_map(const params_store_t *store)
+{
+    bool seen[4] = {0};
+    for (size_t i = 0; i < 4; ++i) {
+        const uint8_t value = store->motor_output_map[i];
+        if (value >= 4u || seen[value]) {
+            return false;
+        }
+        seen[value] = true;
+    }
+    return true;
+}
+
+static bool params_validate_imu_map(const params_store_t *store)
+{
+    const body_axis_selector_t selectors[3] = {
+        store->imu_map_x,
+        store->imu_map_y,
+        store->imu_map_z,
+    };
+    int matrix[3][3] = {{0}};
+
+    for (size_t row = 0; row < 3; ++row) {
+        if (!params_selector_is_valid(selectors[row])) {
+            return false;
+        }
+
+        const int axis = params_selector_abs_axis(selectors[row]);
+        const int sign = params_selector_sign(selectors[row]);
+        if (axis < 0 || sign == 0) {
+            return false;
+        }
+
+        for (size_t prev = 0; prev < row; ++prev) {
+            if (params_selector_abs_axis(selectors[prev]) == axis) {
+                return false;
+            }
+        }
+
+        matrix[row][axis] = sign;
+    }
+
+    const int det =
+        matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1]) -
+        matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0]) +
+        matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]);
+
+    return det == 1;
+}
+
+static bool params_validate_telemetry_rates(const params_store_t *store)
+{
+    return store->telemetry_usb_hz >= 1u &&
+           store->telemetry_usb_hz <= 200u &&
+           store->telemetry_udp_hz >= 1u &&
+           store->telemetry_udp_hz <= 100u;
+}
+
+static bool params_validate_battery_thresholds(const params_store_t *store)
+{
+    return store->battery_warn_v > 0.0f &&
+           store->battery_limit_v > 0.0f &&
+           store->battery_critical_v > 0.0f &&
+           store->battery_arm_v > 0.0f &&
+           store->battery_warn_v > store->battery_limit_v &&
+           store->battery_limit_v > store->battery_critical_v &&
+           store->battery_arm_v >= store->battery_limit_v &&
+           store->battery_arm_v <= store->battery_warn_v;
+}
+
+static bool params_validate_motor_duty_limits(const params_store_t *store)
+{
+    return store->motor_idle_duty >= 0.0f &&
+           store->motor_idle_duty <= 1.0f &&
+           store->motor_max_duty >= 0.0f &&
+           store->motor_max_duty <= 1.0f &&
+           store->motor_startup_boost_duty >= 0.0f &&
+           store->motor_startup_boost_duty <= 1.0f &&
+           store->bringup_test_base_duty >= 0.0f &&
+           store->bringup_test_base_duty <= 1.0f &&
+           store->motor_idle_duty <= store->motor_max_duty &&
+           store->motor_startup_boost_duty >= store->motor_idle_duty &&
+           store->motor_startup_boost_duty <= store->motor_max_duty &&
+           store->bringup_test_base_duty >= store->motor_idle_duty &&
+           store->bringup_test_base_duty <= store->motor_max_duty;
+}
+
+static bool params_validate_store(const params_store_t *store)
+{
+    if (store == NULL) {
+        return false;
+    }
+
+    return params_validate_motor_output_map(store) &&
+           params_validate_imu_map(store) &&
+           store->imu_return_rate_code <= 0x09u &&
+           params_validate_telemetry_rates(store) &&
+           params_validate_battery_thresholds(store) &&
+           params_validate_motor_duty_limits(store);
+}
+
 static bool params_try_load_from_nvs(params_store_t *store)
 {
     nvs_handle_t handle;
@@ -164,6 +303,9 @@ static bool params_try_load_from_nvs(params_store_t *store)
 
     const uint32_t crc = params_crc32(&blob.payload, sizeof(blob.payload));
     if (crc != blob.header.crc32) {
+        return false;
+    }
+    if (!params_validate_store(&blob.payload)) {
         return false;
     }
 
@@ -285,24 +427,32 @@ bool params_try_set(const char *name, param_value_t value, param_type_t type)
             continue;
         }
 
-        void *ptr = params_ptr_from_desc(desc);
+        params_store_t candidate = s_params;
+        void *ptr = ((uint8_t *)&candidate) + desc->offset;
         switch (desc->type) {
         case PARAM_TYPE_BOOL:
             *(bool *)ptr = value.b;
-            return true;
+            break;
         case PARAM_TYPE_U8:
             *(uint8_t *)ptr = value.u8;
-            return true;
+            break;
         case PARAM_TYPE_U32:
             *(uint32_t *)ptr = value.u32;
-            return true;
+            break;
         case PARAM_TYPE_I32:
             *(int32_t *)ptr = value.i32;
-            return true;
+            break;
         case PARAM_TYPE_FLOAT:
             *(float *)ptr = value.f32;
-            return true;
+            break;
         }
+
+        if (!params_validate_store(&candidate)) {
+            return false;
+        }
+
+        s_params = candidate;
+        return true;
     }
 
     return false;

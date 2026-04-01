@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 
+from esp_drone_cli.client import TELEMETRY_STRUCT
+
+
 MOTOR_LAYOUT = (
     {"name": "M1", "x": -1, "y": +1, "spin_is_cw": False},
     {"name": "M2", "x": +1, "y": +1, "spin_is_cw": True},
@@ -60,3 +63,7 @@ def test_mixer_positive_and_negative_pitch_direction():
 def test_mixer_positive_and_negative_yaw_direction():
     assert_higher(mix_axis_outputs(yaw=+0.05), ("M1", "M3"), ("M2", "M4"))
     assert_higher(mix_axis_outputs(yaw=-0.05), ("M2", "M4"), ("M1", "M3"))
+
+
+def test_telemetry_struct_matches_stage3_rate_bringup_payload():
+    assert TELEMETRY_STRUCT.size == 172
