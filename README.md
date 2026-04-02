@@ -92,6 +92,15 @@ Still pending in later stages:
 
 The Python tooling now uses a shared `core + cli + gui` structure documented in [python_tool_gui_refactor_plan.md](./docs/python_tool_gui_refactor_plan.md).
 
+Phase B ownership rule:
+
+- `esp_drone_cli.core.device_session.DeviceSession` is the only session / command owner
+- `esp_drone_cli.core.protocol.*` is the only protocol owner
+- `esp_drone_cli.core.transport.*` is the only transport owner
+- top-level `client.py`, `protocol/*`, and `transport/*` modules are compatibility shims only
+
+This is intentional. CLI and GUI must both call the same core session layer rather than maintain separate protocol stacks.
+
 ### Windows Install
 
 CLI only:

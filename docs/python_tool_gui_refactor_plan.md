@@ -11,6 +11,20 @@ Constraints:
 - GUI and CLI must reuse one protocol / transport / device-command implementation
 - GUI is only an interaction shell; automation and tests remain CLI-first
 
+## Phase B Status
+
+Phase B is now implemented in code.
+
+- `esp_drone_cli.core.device_session.DeviceSession` is the only session / command owner
+- `esp_drone_cli.core.protocol.*` is the only protocol owner
+- `esp_drone_cli.core.transport.*` is the only transport owner
+- `esp_drone_cli.core.models` is the only telemetry / parameter snapshot owner
+- CLI calls `DeviceSession` directly
+- GUI calls `DeviceSession` directly
+- old top-level `client.py`, `protocol/*`, and `transport/*` modules are compatibility shims only
+
+This means there is no second client implementation that owns command flow, framing, or transport behavior.
+
 ## Planned Package Layout
 
 ```text
@@ -74,6 +88,21 @@ The following are added without breaking existing commands:
 - CSV log export
 
 The central object is `DeviceSession`.
+
+## Single-Owner Table
+
+| Concern | Single owner |
+|---|---|
+| frame encode / decode | `esp_drone_cli.core.protocol.framing` |
+| protocol message ids / frame type | `esp_drone_cli.core.protocol.messages` |
+| serial transport | `esp_drone_cli.core.transport.serial_link` |
+| UDP transport | `esp_drone_cli.core.transport.udp_link` |
+| telemetry payload decode | `esp_drone_cli.core.models` |
+| parameter value encode / decode | `esp_drone_cli.core.models` |
+| JSON parameter snapshot import / export | `esp_drone_cli.core.device_session` |
+| device command flow | `esp_drone_cli.core.device_session` |
+| stream lifecycle | `esp_drone_cli.core.device_session` |
+| CSV log export | `esp_drone_cli.core.csv_log` + `esp_drone_cli.core.device_session` |
 
 ## DeviceSession Contract
 
@@ -172,3 +201,4 @@ Explicitly deferred:
 
 - The firmware does not yet implement every future protocol feature, so `send_rc()` will initially stay as a reserved core API surface.
 - PySide6 must stay optional; GUI import failures must not affect CLI startup.
+- Top-level compatibility modules must remain thin re-exports only. Any future business logic added there would reintroduce a forbidden dual-owner design.

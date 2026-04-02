@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+"""Compatibility shim for legacy imports.
+
+The session / command owner is now ``esp_drone_cli.core.device_session.DeviceSession``.
+This module intentionally keeps no independent protocol, transport, or command logic.
+"""
+
 from .core.device_session import DeviceSession
 from .core.models import ParamValue, TELEMETRY_CSV_FIELDS, TELEMETRY_STRUCT, decode_param_value
 
 
-class EspDroneClient(DeviceSession):
-    def __init__(self, transport) -> None:
-        super().__init__(transport=transport)
+EspDroneClient = DeviceSession
 
 
 __all__ = [

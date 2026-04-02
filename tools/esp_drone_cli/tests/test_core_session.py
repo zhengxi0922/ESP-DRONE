@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import builtins
+import importlib
 import importlib.util
 import json
 import queue
+import sys
 import time
 from pathlib import Path
 
@@ -95,7 +98,12 @@ def test_device_session_mock_roundtrip(tmp_path: Path):
     info = session.connect_transport(transport)
     assert info.protocol_version == 1
     assert session.arm() == 0
+    assert session.disarm() == 0
+    assert session.kill() == 0
+    session.start_stream()
+    session.stop_stream()
     assert session.get_param("demo").value == 2.5
+    assert session.set_param("demo", 4, "3.5").value == 3.5
 
     params = session.list_params(timeout=1.0)
     assert [item.name for item in params] == ["alpha", "beta"]
@@ -160,3 +168,52 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert args.serial == "COM7"
     assert args.command == "rate-test"
     assert args.axis == "yaw"
+
+
+def test_cli_import_does_not_require_pyside6(monkeypatch):
+    real_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name.startswith("PySide6"):
+            raise ModuleNotFoundError(name)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    sys.modules.pop("esp_drone_cli.cli.main", None)
+    module = importlib.import_module("esp_drone_cli.cli.main")
+    args = module.build_parser().parse_args(["--serial", "COM7", "connect"])
+    assert args.command == "connect"
+
+
+def test_gui_entry_reports_missing_pyside6_without_affecting_cli(monkeypatch):
+    real_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name.startswith("PySide6"):
+            raise ModuleNotFoundError(name)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    sys.modules.pop("esp_drone_cli.gui.main_window", None)
+    from esp_drone_cli import gui_main
+
+    assert gui_main.main([]) == 1
+
+    from esp_drone_cli.cli.main import build_parser
+
+    assert build_parser().prog == "esp-drone-cli"
+
+
+def test_compatibility_shims_resolve_to_core_owners():
+    from esp_drone_cli.client import DeviceSession as ShimDeviceSession
+    from esp_drone_cli.client import EspDroneClient
+    from esp_drone_cli.core.device_session import DeviceSession as CoreDeviceSession
+    from esp_drone_cli.protocol.messages import MsgType as ShimMsgType
+    from esp_drone_cli.core.protocol.messages import MsgType as CoreMsgType
+    from esp_drone_cli.transport.serial_link import SerialTransport as ShimSerialTransport
+    from esp_drone_cli.core.transport.serial_link import SerialTransport as CoreSerialTransport
+
+    assert ShimDeviceSession is CoreDeviceSession
+    assert EspDroneClient is CoreDeviceSession
+    assert ShimMsgType is CoreMsgType
+    assert ShimSerialTransport is CoreSerialTransport
