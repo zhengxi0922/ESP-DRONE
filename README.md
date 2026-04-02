@@ -72,7 +72,9 @@ The repository currently contains:
 - Stage 2.5 bring-up code paths for `motor-test`, `axis-test`, `rate-test`, IMU mapping, mixer direction checks and structured telemetry
 - Minimal single-axis rate-loop skeleton: fresh-sample estimator update, rate PID, mixer, motor output and safety gating
 - Baseline safety shell for `arm / disarm / kill`, state ownership, and a small set of hard stop triggers
-- Python CLI protocol, transport, telemetry decode and basic command surface
+- Shared Python tool core for protocol, transport, telemetry decode, parameter snapshots and device commands
+- CLI entrypoint for scripting and automation
+- Minimal PySide6 GUI shell for manual bench debugging on Windows
 
 Current hardware validation status:
 
@@ -85,6 +87,58 @@ Still pending in later stages:
 - Completed hardware bench validation for single-axis rate mode
 - DIRECT-mode angle outer loop and restrained bench angle validation
 - Legacy RC / UDP compatibility work and the full CLI surface
+
+## Python Tool Usage
+
+The Python tooling now uses a shared `core + cli + gui` structure documented in [python_tool_gui_refactor_plan.md](./docs/python_tool_gui_refactor_plan.md).
+
+### Windows Install
+
+CLI only:
+
+```powershell
+cd tools\esp_drone_cli
+pip install -e .
+```
+
+CLI + GUI:
+
+```powershell
+cd tools\esp_drone_cli
+pip install -e .[gui]
+```
+
+`PySide6` is an optional GUI dependency. If it is not installed, the CLI still works normally.
+
+### CLI Start
+
+Examples:
+
+```powershell
+python -m esp_drone_cli --serial COM7 connect
+python -m esp_drone_cli --serial COM7 arm
+python -m esp_drone_cli --serial COM7 dump-csv telemetry.csv --duration 5
+```
+
+The installed script entrypoint is also available:
+
+```powershell
+esp-drone-cli --serial COM7 connect
+```
+
+### GUI Start
+
+```powershell
+esp-drone-gui
+```
+
+or:
+
+```powershell
+python -m esp_drone_cli.gui_main
+```
+
+The GUI is intended for manual bench debugging. CLI remains the primary interface for automation and scripted tests.
 
 ## Stage-2 Console Rule
 

@@ -11,5 +11,11 @@ dependencies = [
   "pyserial>=3.5",
 ]
 
+[project.optional-dependencies]
+gui = [
+  "PySide6>=6.7",
+]
+
 [project.scripts]
 esp-drone-cli = "esp_drone_cli.__main__:main"
+esp-drone-gui = "esp_drone_cli.gui_main:main"
