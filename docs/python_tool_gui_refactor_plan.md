@@ -34,6 +34,15 @@ Phase C minimal GUI is now implemented on top of the same `DeviceSession`.
 - GUI currently supports connect / disconnect, stream control, telemetry table, parameter operations, `arm / disarm / kill / reboot`, `motor-test`, `calib`, `rate-test`, and CSV logging
 - GUI remains intentionally minimal; plotting and heavier desktop UX work are still deferred
 
+## Phase D Status
+
+Phase D focuses on closure rather than feature growth.
+
+- README now documents CLI vs GUI install and startup flows
+- dedicated GUI usage and manual checklist docs exist under `docs/`
+- smoke tests cover optional `PySide6`, basic GUI startup/close, and GUI-to-session action routing
+- core ownership remains unchanged: GUI and CLI still share one `DeviceSession`
+
 ## Planned Package Layout
 
 ```text

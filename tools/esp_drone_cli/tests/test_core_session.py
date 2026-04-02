@@ -159,6 +159,10 @@ class FakeSession:
         self.is_connected = False
         self._emit_connection()
 
+    def close(self) -> None:
+        self._record("close")
+        self.disconnect()
+
     def arm(self) -> int:
         self._record("arm")
         return 0
@@ -352,6 +356,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert ("connect_serial", ("COM9", 115200, 0.2), {}) in session.calls
     assert "Connected" in window.connection_status_label.text()
     assert window.params_table.rowCount() == 2
+    session.calls.clear()
 
     sample = TelemetrySample.from_payload(build_telemetry_payload())
     session.emit_telemetry(sample)
@@ -365,6 +370,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     window.stream_off_button.click()
     window.stream_rate_spin.setValue(150)
     window.apply_stream_rate_button.click()
+    window.refresh_params_button.click()
     window.arm_button.click()
     window.kill_button.click()
     window.disarm_button.click()
@@ -414,6 +420,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert "reboot" in call_names
     assert "set_param" in call_names
     assert ("set_param", ("telemetry_usb_hz", 2, "150"), {}) in session.calls
+    assert "list_params" in call_names
     assert "save_params" in call_names
     assert "reset_params" in call_names
     assert "export_params" in call_names
@@ -476,6 +483,26 @@ def test_cli_import_does_not_require_pyside6(monkeypatch):
     module = importlib.import_module("esp_drone_cli.cli.main")
     args = module.build_parser().parse_args(["--serial", "COM7", "connect"])
     assert args.command == "connect"
+
+
+def test_cli_main_runs_without_pyside6(monkeypatch):
+    real_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name.startswith("PySide6"):
+            raise ModuleNotFoundError(name)
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    sys.modules.pop("esp_drone_cli.cli.main", None)
+    module = importlib.import_module("esp_drone_cli.cli.main")
+    session = FakeSession()
+    monkeypatch.setattr(module, "connect_session_from_args", lambda args: session)
+
+    assert module.main(["--serial", "COM7", "arm"]) == 0
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "arm" in call_names
+    assert "close" in call_names
 
 
 def test_gui_entry_reports_missing_pyside6_without_affecting_cli(monkeypatch):

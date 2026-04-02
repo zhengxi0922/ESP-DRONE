@@ -90,6 +90,14 @@ Still pending in later stages:
 
 ## Python Tool Usage
 
+The Python tooling now supports both a script-first CLI and a minimal desktop GUI. They share the same `DeviceSession` core and do not maintain separate protocol stacks.
+
+Related docs:
+
+- [GUI refactor plan](./docs/python_tool_gui_refactor_plan.md)
+- [GUI usage guide](./docs/python_gui_usage.md)
+- [GUI manual checklist](./docs/python_gui_manual_checklist.md)
+
 The Python tooling now uses a shared `core + cli + gui` structure documented in [python_tool_gui_refactor_plan.md](./docs/python_tool_gui_refactor_plan.md).
 
 Phase B ownership rule:
@@ -110,6 +118,8 @@ cd tools\esp_drone_cli
 pip install -e .
 ```
 
+This installs the Python package with the CLI entrypoint only. It does not pull in the optional `PySide6` GUI dependency.
+
 CLI + GUI:
 
 ```powershell
@@ -117,7 +127,12 @@ cd tools\esp_drone_cli
 pip install -e .[gui]
 ```
 
-`PySide6` is an optional GUI dependency. If it is not installed, the CLI still works normally.
+This installs the same package plus the optional `PySide6` dependency required by the GUI.
+
+`PySide6` is optional. If it is not installed:
+
+- CLI still imports and runs normally
+- GUI startup fails fast with a clear error telling you to install `pip install -e .[gui]`
 
 ### CLI Start
 
