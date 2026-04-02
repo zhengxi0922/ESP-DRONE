@@ -9,8 +9,10 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from esp_drone_cli.core import DeviceSession
-from esp_drone_cli.core.models import HELLO_RESP_STRUCT, TELEMETRY_STRUCT
+from esp_drone_cli.core.models import HELLO_RESP_STRUCT, ParamSnapshot, ParamValue, TELEMETRY_STRUCT, TelemetrySample
 from esp_drone_cli.core.protocol.messages import CmdId, Frame, MsgType
 
 
@@ -92,6 +94,158 @@ class MockTransport:
         self.closed = True
 
 
+class FakeSession:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, tuple, dict]] = []
+        self.is_connected = False
+        self.last_log_path: Path | None = None
+        self._telemetry_callbacks = []
+        self._event_callbacks = []
+        self._connection_callbacks = []
+        self._params = [
+            ParamValue("alpha", 2, 42),
+            ParamValue("beta", 4, 1.5),
+        ]
+
+    def subscribe_telemetry(self, callback):
+        self._telemetry_callbacks.append(callback)
+        return len(self._telemetry_callbacks)
+
+    def subscribe_event_log(self, callback):
+        self._event_callbacks.append(callback)
+        return len(self._event_callbacks)
+
+    def subscribe_connection_state(self, callback):
+        self._connection_callbacks.append(callback)
+        return len(self._connection_callbacks)
+
+    def unsubscribe(self, _callback_id: int) -> None:
+        return None
+
+    def _record(self, name: str, *args, **kwargs):
+        self.calls.append((name, args, kwargs))
+
+    def _emit_connection(self, error: str | None = None) -> None:
+        payload = {
+            "connected": self.is_connected,
+            "device_info": "fake-device",
+            "error": error,
+        }
+        for callback in self._connection_callbacks:
+            callback(payload)
+
+    def emit_event(self, message: str) -> None:
+        for callback in self._event_callbacks:
+            callback(message)
+
+    def emit_telemetry(self, sample: TelemetrySample) -> None:
+        for callback in self._telemetry_callbacks:
+            callback(sample)
+
+    def connect_serial(self, port: str, baudrate: int = 115200, timeout: float = 0.2):
+        self._record("connect_serial", port, baudrate, timeout)
+        self.is_connected = True
+        self._emit_connection()
+        return "fake-device"
+
+    def connect_udp(self, host: str, port: int = 2391, timeout: float = 1.0):
+        self._record("connect_udp", host, port, timeout)
+        self.is_connected = True
+        self._emit_connection()
+        return "fake-device"
+
+    def disconnect(self, safe_stop_stream: bool = True) -> None:
+        self._record("disconnect", safe_stop_stream)
+        self.is_connected = False
+        self._emit_connection()
+
+    def arm(self) -> int:
+        self._record("arm")
+        return 0
+
+    def disarm(self) -> int:
+        self._record("disarm")
+        return 0
+
+    def kill(self) -> int:
+        self._record("kill")
+        return 0
+
+    def reboot(self) -> int:
+        self._record("reboot")
+        return 0
+
+    def start_stream(self, timeout: float = 1.0) -> None:
+        self._record("start_stream", timeout)
+
+    def stop_stream(self, timeout: float = 1.0) -> None:
+        self._record("stop_stream", timeout)
+
+    def list_params(self, timeout: float = 1.0) -> list[ParamValue]:
+        self._record("list_params", timeout)
+        return [ParamValue(item.name, item.type_id, item.value) for item in self._params]
+
+    def set_param(self, name: str, type_id: int, value):
+        self._record("set_param", name, type_id, value)
+        for index, item in enumerate(self._params):
+            if item.name == name:
+                cast_value = float(value) if type_id == 4 else int(value)
+                self._params[index] = ParamValue(name, type_id, cast_value)
+                return self._params[index]
+        item = ParamValue(name, type_id, value)
+        self._params.append(item)
+        return item
+
+    def save_params(self, timeout: float = 1.0) -> None:
+        self._record("save_params", timeout)
+
+    def reset_params(self, timeout: float = 1.0) -> None:
+        self._record("reset_params", timeout)
+
+    def export_params(self, output_path: Path) -> ParamSnapshot:
+        self._record("export_params", output_path)
+        snapshot = ParamSnapshot(schema=1, firmware={"protocol_version": 1}, params=[{"name": item.name, "type_id": item.type_id, "value": item.value} for item in self._params])
+        snapshot.write_json(output_path)
+        return snapshot
+
+    def import_params(self, input_path: Path, save_after: bool = False) -> list[ParamValue]:
+        self._record("import_params", input_path, save_after)
+        data = json.loads(input_path.read_text(encoding="utf-8"))
+        applied = []
+        for item in data.get("params", []):
+            applied.append(self.set_param(str(item["name"]), int(item["type_id"]), item["value"]))
+        return applied
+
+    def motor_test(self, motor_index: int, duty: float) -> int:
+        self._record("motor_test", motor_index, duty)
+        return 0
+
+    def calib_gyro(self) -> int:
+        self._record("calib_gyro")
+        return 0
+
+    def calib_level(self) -> int:
+        self._record("calib_level")
+        return 0
+
+    def rate_test(self, axis_index: int, value_dps: float) -> int:
+        self._record("rate_test", axis_index, value_dps)
+        return 0
+
+    def start_csv_log(self, output_path: Path) -> None:
+        self._record("start_csv_log", output_path)
+        self.last_log_path = output_path
+
+    def stop_csv_log(self) -> Path | None:
+        self._record("stop_csv_log")
+        return self.last_log_path
+
+    def dump_csv(self, output_path: Path, duration_s: float = 5.0) -> int:
+        self._record("dump_csv", output_path, duration_s)
+        self.last_log_path = output_path
+        return 3
+
+
 def test_device_session_mock_roundtrip(tmp_path: Path):
     session = DeviceSession()
     transport = MockTransport()
@@ -159,6 +313,145 @@ def test_gui_startup_without_device_or_missing_pyside6(monkeypatch):
     window = MainWindow()
     window.close()
     app.quit()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("PySide6") is None, reason="PySide6 not installed")
+def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PySide6.QtWidgets import QApplication, QFileDialog
+
+    from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
+
+    class SyncBridge(QtSessionBridge):
+        def run_async(self, label: str, callback) -> None:
+            try:
+                callback()
+                self.command_finished.emit(label)
+            except Exception as exc:  # pragma: no cover - test should not hit
+                self.error_raised.emit(f"{label}: {exc}")
+
+    export_path = tmp_path / "export.json"
+    import_path = tmp_path / "import.json"
+    import_path.write_text(json.dumps({"params": [{"name": "alpha", "type_id": 2, "value": 99}]}), encoding="utf-8")
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *args, **kwargs: (str(export_path), "JSON Files (*.json)")))
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(lambda *args, **kwargs: (str(import_path), "JSON Files (*.json)")))
+
+    app = QApplication.instance() or QApplication([])
+    session = FakeSession()
+    window = MainWindow(
+        session=session,
+        bridge_cls=SyncBridge,
+        serial_port_provider=lambda: ["COM9"],
+    )
+
+    window.serial_port_combo.setCurrentText("COM9")
+    window.connect_button.click()
+    app.processEvents()
+    assert ("connect_serial", ("COM9", 115200, 0.2), {}) in session.calls
+    assert "Connected" in window.connection_status_label.text()
+    assert window.params_table.rowCount() == 2
+
+    sample = TelemetrySample.from_payload(build_telemetry_payload())
+    session.emit_telemetry(sample)
+    session.emit_event("imu healthy")
+    app.processEvents()
+    assert window.telemetry_table.item(0, 1).text() == "1.0"
+    assert window.arm_state_label.text() == "0"
+    assert window.event_log_label.text() == "imu healthy"
+
+    window.stream_on_button.click()
+    window.stream_off_button.click()
+    window.stream_rate_spin.setValue(150)
+    window.apply_stream_rate_button.click()
+    window.arm_button.click()
+    window.kill_button.click()
+    window.disarm_button.click()
+    window.reboot_button.click()
+
+    window.params_table.selectRow(0)
+    app.processEvents()
+    window.param_value_edit.setText("77")
+    window.set_param_button.click()
+    window.save_params_button.click()
+    window.reset_params_button.click()
+    window.export_params_button.click()
+    window.import_params_button.click()
+
+    window.motor_combo.setCurrentIndex(2)
+    window.motor_duty_spin.setValue(0.12)
+    window.motor_start_button.click()
+    window.motor_stop_button.click()
+    window.calib_gyro_button.click()
+    window.calib_level_button.click()
+
+    window.rate_axis_combo.setCurrentIndex(1)
+    window.rate_value_spin.setValue(35.0)
+    window.rate_start_button.click()
+    window.rate_stop_button.click()
+
+    log_path = tmp_path / "telemetry.csv"
+    window.log_path_edit.setText(str(log_path))
+    window.start_log_button.click()
+    window.stop_log_button.click()
+    window.dump_duration_spin.setValue(2.5)
+    window.dump_csv_button.click()
+
+    window.link_type_combo.setCurrentText("udp")
+    window.udp_host_edit.setText("192.168.4.1")
+    window.udp_port_spin.setValue(2391)
+    window.connect_button.click()
+    window.disconnect_button.click()
+    app.processEvents()
+
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "start_stream" in call_names
+    assert "stop_stream" in call_names
+    assert "arm" in call_names
+    assert "kill" in call_names
+    assert "disarm" in call_names
+    assert "reboot" in call_names
+    assert "set_param" in call_names
+    assert ("set_param", ("telemetry_usb_hz", 2, "150"), {}) in session.calls
+    assert "save_params" in call_names
+    assert "reset_params" in call_names
+    assert "export_params" in call_names
+    assert "import_params" in call_names
+    assert ("motor_test", (2, 0.12), {}) in session.calls
+    assert ("motor_test", (2, 0.0), {}) in session.calls
+    assert ("rate_test", (1, 35.0), {}) in session.calls
+    assert ("rate_test", (1, 0.0), {}) in session.calls
+    assert "start_csv_log" in call_names
+    assert "stop_csv_log" in call_names
+    assert "dump_csv" in call_names
+    assert ("connect_udp", ("192.168.4.1", 2391, 1.0), {}) in session.calls
+    assert "disconnect" in call_names
+    assert window.last_log_path_label.text().endswith("telemetry.csv")
+
+    window.close()
+    app.processEvents()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("PySide6") is None, reason="PySide6 not installed")
+def test_gui_close_disconnects_session(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
+
+    class SyncBridge(QtSessionBridge):
+        def run_async(self, label: str, callback) -> None:
+            callback()
+            self.command_finished.emit(label)
+
+    app = QApplication.instance() or QApplication([])
+    session = FakeSession()
+    window = MainWindow(session=session, bridge_cls=SyncBridge, serial_port_provider=lambda: [])
+    window.close()
+    app.processEvents()
+
+    assert any(name == "disconnect" for name, _args, _kwargs in session.calls)
 
 
 def test_cli_parser_compatibility_without_gui_dependency():

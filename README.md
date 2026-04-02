@@ -74,7 +74,7 @@ The repository currently contains:
 - Baseline safety shell for `arm / disarm / kill`, state ownership, and a small set of hard stop triggers
 - Shared Python tool core for protocol, transport, telemetry decode, parameter snapshots and device commands
 - CLI entrypoint for scripting and automation
-- Minimal PySide6 GUI shell for manual bench debugging on Windows
+- Minimal PySide6 GUI for manual bench debugging on Windows, backed by the same shared `DeviceSession`
 
 Current hardware validation status:
 
@@ -148,6 +148,30 @@ python -m esp_drone_cli.gui_main
 ```
 
 The GUI is intended for manual bench debugging. CLI remains the primary interface for automation and scripted tests.
+
+### GUI Capability Boundary
+
+The current GUI is a minimal manual-debug shell. It is intended to speed up restrained bench work, not to replace the CLI or grow a second protocol stack.
+
+Current GUI capabilities:
+
+- serial / UDP connect and disconnect
+- `arm / disarm / kill / reboot`
+- `stream on / off`
+- realtime telemetry table
+- parameter refresh, search, set selected, save, reset, import and export
+- `motor-test`
+- `calib gyro` / `calib level`
+- `rate-test`
+- CSV logging and CSV dump
+
+Still intentionally deferred:
+
+- advanced plotting / curves / dashboards
+- GUI-only protocol or transport behavior
+- stock App / RC / legacy UDP compatibility workflows
+
+For automation, scripted regression checks and repeatable data capture, CLI remains the preferred interface.
 
 ## Stage-2 Console Rule
 

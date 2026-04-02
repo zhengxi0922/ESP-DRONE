@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
+from typing import Callable, Iterable
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFileDialog,
-    QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -65,13 +65,19 @@ class MainWindow(QMainWindow):
         "imu_mode", "arm_state", "failsafe_reason", "control_mode",
     ]
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        session: DeviceSession | None = None,
+        bridge_cls: type[QtSessionBridge] = QtSessionBridge,
+        serial_port_provider: Callable[[], Iterable] | None = None,
+    ) -> None:
         super().__init__()
         self.setWindowTitle("ESP-DRONE Debug GUI")
         self.resize(1300, 900)
 
-        self._session = DeviceSession()
-        self._bridge = QtSessionBridge(self._session)
+        self._session = session or DeviceSession()
+        self._bridge = bridge_cls(self._session)
+        self._serial_port_provider = serial_port_provider or list_ports.comports
         self._params: list[ParamValue] = []
         self._selected_param: ParamValue | None = None
         self._last_telemetry: TelemetrySample | None = None
@@ -98,6 +104,7 @@ class MainWindow(QMainWindow):
         self.link_type_combo = QComboBox()
         self.link_type_combo.addItems(["serial", "udp"])
         self.serial_port_combo = QComboBox()
+        self.serial_port_combo.setEditable(True)
         self.refresh_ports_button = QPushButton("Refresh Ports")
         self.baudrate_spin = QSpinBox()
         self.baudrate_spin.setRange(9600, 2000000)
@@ -321,8 +328,8 @@ class MainWindow(QMainWindow):
         self.rate_stop_button.clicked.connect(lambda: self._bridge.run_async("rate stop", lambda: self._session.rate_test(self.rate_axis_combo.currentIndex(), 0.0)))
 
         self.log_browse_button.clicked.connect(self._browse_log_path)
-        self.start_log_button.clicked.connect(lambda: self._bridge.run_async("start log", lambda: self._session.start_csv_log(Path(self.log_path_edit.text()))))
-        self.stop_log_button.clicked.connect(lambda: self._bridge.run_async("stop log", self._session.stop_csv_log))
+        self.start_log_button.clicked.connect(self._start_log)
+        self.stop_log_button.clicked.connect(self._stop_log)
         self.dump_csv_button.clicked.connect(self._dump_csv)
 
         self._bridge.connection_changed.connect(self._on_connection_changed)
@@ -333,9 +340,13 @@ class MainWindow(QMainWindow):
         self._bridge.command_finished.connect(self._on_command_finished)
 
     def _refresh_serial_ports(self) -> None:
+        current_text = self.serial_port_combo.currentText()
         self.serial_port_combo.clear()
-        for port in list_ports.comports():
-            self.serial_port_combo.addItem(port.device)
+        for port in self._serial_port_provider():
+            device = getattr(port, "device", str(port))
+            self.serial_port_combo.addItem(device)
+        if current_text:
+            self.serial_port_combo.setCurrentText(current_text)
 
     def _connect_requested(self) -> None:
         if self.link_type_combo.currentText() == "serial":
@@ -464,8 +475,21 @@ class MainWindow(QMainWindow):
 
     def _on_command_finished(self, label: str) -> None:
         self.last_log_path_label.setText(str(self._session.last_log_path or "-"))
-        if label in {"reset params", "import params", "set stream rate"} and self._session.is_connected:
+        if label in {"reset params", "import params", "set stream rate"} or label.startswith("set "):
+            if self._session.is_connected:
+                self._refresh_params()
+        if label.startswith("connect ") and self._session.is_connected:
             self._refresh_params()
+
+    def _start_log(self) -> None:
+        def action() -> None:
+            self._session.start_csv_log(Path(self.log_path_edit.text()))
+            self._session.start_stream()
+
+        self._bridge.run_async("start log", action)
+
+    def _stop_log(self) -> None:
+        self._bridge.run_async("stop log", self._session.stop_csv_log)
 
     def closeEvent(self, event) -> None:  # pragma: no cover - UI lifecycle
         try:

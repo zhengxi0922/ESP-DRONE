@@ -25,6 +25,15 @@ Phase B is now implemented in code.
 
 This means there is no second client implementation that owns command flow, framing, or transport behavior.
 
+## Phase C Status
+
+Phase C minimal GUI is now implemented on top of the same `DeviceSession`.
+
+- GUI connects through serial or UDP only by calling `DeviceSession`
+- GUI does not own framing, transport, or command encoding
+- GUI currently supports connect / disconnect, stream control, telemetry table, parameter operations, `arm / disarm / kill / reboot`, `motor-test`, `calib`, `rate-test`, and CSV logging
+- GUI remains intentionally minimal; plotting and heavier desktop UX work are still deferred
+
 ## Planned Package Layout
 
 ```text
