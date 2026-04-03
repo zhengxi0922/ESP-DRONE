@@ -60,21 +60,25 @@ python -m esp_drone_cli.gui_main
 
 The GUI is arranged as a bench-debug workbench:
 
-- left column:
+- left control rail:
   - connection
   - safety control
   - debug actions
-- center column:
-  - realtime telemetry table
-  - realtime charts
-- right column:
-  - parameter list
-  - selected parameter detail / edit
-- bottom:
-  - event log
-  - last error
+- right workspace:
+  - `Realtime` tab
+  - `Charts` tab
+  - `Parameters` tab
+  - `Events` tab
+- top status strip:
+  - link
+  - arm state
+  - failsafe
+  - control mode
+  - stream state
+  - imu mode
   - last result
-  - last log path
+
+This tabbed layout is intentional: when the window is crowded, large areas such as telemetry, charts, parameter editing, and event log are split into tabs rather than squeezed into narrow columns.
 
 ## Serial Connection Example
 

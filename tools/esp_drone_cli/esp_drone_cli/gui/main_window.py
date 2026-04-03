@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QFrame,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -28,10 +29,12 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QDoubleSpinBox,
     QSplitter,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -292,6 +295,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("ESP-DRONE Bench Debugger")
         self.resize(1660, 980)
+        self._apply_workbench_style()
 
         self._session = session or DeviceSession()
         self._bridge = bridge_cls(self._session)
@@ -318,39 +322,209 @@ class MainWindow(QMainWindow):
         self._plot_timer.timeout.connect(self._refresh_plots)
         self._plot_timer.start()
 
+    def _apply_workbench_style(self) -> None:
+        self.setStyleSheet(
+            """
+            QWidget {
+                background-color: #111827;
+                color: #e5eefb;
+                font-size: 13px;
+            }
+            QMainWindow {
+                background-color: #0b1220;
+            }
+            QGroupBox {
+                border: 1px solid #253447;
+                border-radius: 8px;
+                margin-top: 12px;
+                padding-top: 12px;
+                font-weight: 600;
+                background-color: #101826;
+            }
+            QHeaderView::section {
+                background-color: #162131;
+                color: #dbeafe;
+                border: 0;
+                padding: 6px;
+            }
+            QTableWidget {
+                gridline-color: #223145;
+                background-color: #0f1722;
+                alternate-background-color: #142030;
+                selection-background-color: #1d4ed8;
+                selection-color: white;
+            }
+            QPlainTextEdit {
+                background-color: #0f1722;
+                border: 1px solid #253447;
+                border-radius: 8px;
+                selection-background-color: #1d4ed8;
+                selection-color: white;
+            }
+            QPushButton {
+                background-color: #1d4ed8;
+                border: 0;
+                border-radius: 6px;
+                padding: 6px 12px;
+                color: white;
+                min-height: 28px;
+            }
+            QPushButton:hover {
+                background-color: #2563eb;
+            }
+            QPushButton:disabled {
+                background-color: #415266;
+                color: #a8b4c4;
+            }
+            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+                background-color: #0f1722;
+                border: 1px solid #2a3a51;
+                border-radius: 6px;
+                padding: 4px 6px;
+                min-height: 26px;
+            }
+            QTabWidget::pane {
+                border: 1px solid #253447;
+                border-radius: 8px;
+                top: -1px;
+                background-color: #101826;
+            }
+            QTabBar::tab {
+                background-color: #162131;
+                border: 1px solid #253447;
+                padding: 8px 14px;
+                min-width: 60px;
+                min-height: 24px;
+                color: #dbeafe;
+            }
+            QTabBar::tab:selected {
+                background-color: #1d4ed8;
+                color: white;
+            }
+            QScrollArea {
+                border: 0;
+                background: transparent;
+            }
+            QScrollBar:vertical {
+                background: #101826;
+                width: 12px;
+                margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #2a3a51;
+                border-radius: 6px;
+                min-height: 24px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0;
+            }
+            """
+        )
+
     def _build_ui(self) -> None:
         root = QWidget(self)
         layout = QVBoxLayout(root)
         layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
 
-        self.vertical_splitter = QSplitter(Qt.Vertical)
-        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.root_splitter = QSplitter(Qt.Horizontal)
+        self.root_splitter.setChildrenCollapsible(False)
+        self.root_splitter.setOpaqueResize(False)
 
-        self.left_panel = self._build_left_panel()
-        self.center_panel = self._build_center_panel()
-        self.right_panel = self._build_right_panel()
-        self.bottom_panel = self._build_bottom_panel()
+        left_content = self._build_left_panel()
+        self.sidebar_scroll = QScrollArea()
+        self.sidebar_scroll.setWidgetResizable(True)
+        self.sidebar_scroll.setFrameShape(QFrame.NoFrame)
+        self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.sidebar_scroll.setMinimumWidth(360)
+        self.sidebar_scroll.setWidget(left_content)
 
-        self.main_splitter.addWidget(self.left_panel)
-        self.main_splitter.addWidget(self.center_panel)
-        self.main_splitter.addWidget(self.right_panel)
-        self.main_splitter.setStretchFactor(0, 0)
-        self.main_splitter.setStretchFactor(1, 1)
-        self.main_splitter.setStretchFactor(2, 0)
-        self.main_splitter.setSizes([340, 850, 420])
+        self.workspace_panel = self._build_workspace_panel()
+        self.root_splitter.addWidget(self.sidebar_scroll)
+        self.root_splitter.addWidget(self.workspace_panel)
+        self.root_splitter.setStretchFactor(0, 0)
+        self.root_splitter.setStretchFactor(1, 1)
+        self.root_splitter.setSizes([380, 1280])
 
-        self.vertical_splitter.addWidget(self.main_splitter)
-        self.vertical_splitter.addWidget(self.bottom_panel)
-        self.vertical_splitter.setStretchFactor(0, 1)
-        self.vertical_splitter.setStretchFactor(1, 0)
-        self.vertical_splitter.setSizes([760, 220])
-
-        layout.addWidget(self.vertical_splitter)
+        layout.addWidget(self.root_splitter)
         self.setCentralWidget(root)
+
+    def _build_workspace_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        layout.addWidget(self._build_overview_strip())
+
+        self.display_tabs = QTabWidget()
+        self.display_tabs.setDocumentMode(True)
+        self.display_tabs.addTab(self._build_telemetry_group(), "Realtime")
+        self.display_tabs.addTab(self._build_charts_group(), "Charts")
+
+        self.info_tabs = QTabWidget()
+        self.info_tabs.setDocumentMode(True)
+        self.info_tabs.addTab(self._build_params_group(), "Parameters")
+        self.info_tabs.addTab(self._build_bottom_panel(), "Events")
+
+        self.workspace_splitter = QSplitter(Qt.Vertical)
+        self.workspace_splitter.setChildrenCollapsible(False)
+        self.workspace_splitter.setOpaqueResize(False)
+        self.workspace_splitter.addWidget(self.display_tabs)
+        self.workspace_splitter.addWidget(self.info_tabs)
+        self.workspace_splitter.setStretchFactor(0, 3)
+        self.workspace_splitter.setStretchFactor(1, 2)
+        self.workspace_splitter.setSizes([520, 360])
+        layout.addWidget(self.workspace_splitter, 1)
+        return panel
+
+    def _build_overview_strip(self) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("overviewStrip")
+        frame.setStyleSheet(
+            "QFrame#overviewStrip {background:#101826;border:1px solid #253447;border-radius:8px;}"
+        )
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+
+        self.overview_connection_chip = QLabel("Disconnected")
+        self.overview_arm_chip = QLabel("DISARMED")
+        self.overview_failsafe_chip = QLabel("NONE")
+        self.overview_mode_chip = QLabel("IDLE")
+        self.overview_stream_chip = QLabel("STREAM OFF")
+        self.overview_imu_chip = QLabel("DIRECT")
+        self.overview_result_label = QLabel("-")
+        self.overview_result_label.setWordWrap(True)
+
+        for title, widget in (
+            ("Link", self.overview_connection_chip),
+            ("Arm", self.overview_arm_chip),
+            ("Failsafe", self.overview_failsafe_chip),
+            ("Mode", self.overview_mode_chip),
+            ("Stream", self.overview_stream_chip),
+            ("IMU", self.overview_imu_chip),
+        ):
+            layout.addWidget(QLabel(title))
+            layout.addWidget(widget)
+
+        layout.addStretch(1)
+        layout.addWidget(QLabel("Last Result"))
+        layout.addWidget(self.overview_result_label, 1)
+
+        _set_badge(self.overview_connection_chip, "Disconnected", "neutral")
+        _set_badge(self.overview_arm_chip, "DISARMED", "neutral")
+        _set_badge(self.overview_failsafe_chip, "NONE", "neutral")
+        _set_badge(self.overview_mode_chip, "IDLE", "neutral")
+        _set_badge(self.overview_stream_chip, "STREAM OFF", "neutral")
+        _set_badge(self.overview_imu_chip, "-", "neutral")
+        return frame
 
     def _build_left_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
         layout.addWidget(self._build_connection_group())
         layout.addWidget(self._build_safety_group())
         layout.addWidget(self._build_debug_group())
@@ -553,12 +727,16 @@ class MainWindow(QMainWindow):
 
             checkbox_bar = QHBoxLayout()
             plot = pg.PlotWidget()
-            plot.setBackground("w")
+            plot.setBackground("#0f1722")
             plot.showGrid(x=True, y=True, alpha=0.25)
             plot.setLabel("left", spec.y_label)
             plot.setLabel("bottom", "time", units="s")
             plot.addLegend(offset=(10, 10))
             plot.setMenuEnabled(False)
+            plot.getAxis("left").setTextPen("#dbeafe")
+            plot.getAxis("bottom").setTextPen("#dbeafe")
+            plot.getAxis("left").setPen(pg.mkPen("#4b5d75"))
+            plot.getAxis("bottom").setPen(pg.mkPen("#4b5d75"))
 
             curves: dict[str, object] = {}
             checks: dict[str, QCheckBox] = {}
@@ -785,6 +963,7 @@ class MainWindow(QMainWindow):
     def _set_last_result(self, text: str) -> None:
         self._last_result = text
         self.last_result_label.setText(text)
+        self.overview_result_label.setText(text)
 
     def _append_log(self, text: str) -> None:
         stamp = time.strftime("%H:%M:%S")
@@ -1083,6 +1262,7 @@ class MainWindow(QMainWindow):
         info = payload.get("device_info")
         if connected:
             _set_badge(self.connection_status_chip, "Connected", "ok")
+            _set_badge(self.overview_connection_chip, "Connected", "ok")
             self.connection_info_label.setText(_device_info_text(info))
             self.connection_error_detail.setText("No connection error.")
             self.last_error_label.setText("-")
@@ -1092,6 +1272,7 @@ class MainWindow(QMainWindow):
             self._run_session_action("list_params", lambda: self._session.list_params(timeout=3.0))
         else:
             _set_badge(self.connection_status_chip, "Disconnected", "neutral" if not error else "warn")
+            _set_badge(self.overview_connection_chip, "Disconnected", "neutral" if not error else "warn")
             self.connection_info_label.setText("No active device session.")
             self._stream_enabled = False
             if error:
@@ -1107,8 +1288,10 @@ class MainWindow(QMainWindow):
     def _update_stream_chip(self) -> None:
         if self._stream_enabled:
             _set_badge(self.stream_chip, "STREAM ON", "active")
+            _set_badge(self.overview_stream_chip, "STREAM ON", "active")
         else:
             _set_badge(self.stream_chip, "STREAM OFF", "neutral")
+            _set_badge(self.overview_stream_chip, "STREAM OFF", "neutral")
 
     def _on_telemetry_received(self, sample: TelemetrySample) -> None:
         self._last_telemetry = sample
@@ -1137,6 +1320,10 @@ class MainWindow(QMainWindow):
         _set_badge(self.failsafe_chip, failsafe_text, failsafe_role)
         _set_badge(self.control_mode_chip, control_text, control_role)
         _set_badge(self.imu_mode_chip, imu_text, imu_role)
+        _set_badge(self.overview_arm_chip, arm_text, arm_role)
+        _set_badge(self.overview_failsafe_chip, failsafe_text, failsafe_role)
+        _set_badge(self.overview_mode_chip, control_text, control_role)
+        _set_badge(self.overview_imu_chip, imu_text, imu_role)
 
     def _on_event_received(self, message: str) -> None:
         self._append_log(message)
@@ -1252,8 +1439,8 @@ class MainWindow(QMainWindow):
     def _save_settings(self) -> None:
         self._settings.setValue("window/geometry", self.saveGeometry())
         self._settings.setValue("window/state", self.saveState())
-        self._settings.setValue("splitter/main", self.main_splitter.saveState())
-        self._settings.setValue("splitter/vertical", self.vertical_splitter.saveState())
+        self._settings.setValue("splitter/root", self.root_splitter.saveState())
+        self._settings.setValue("splitter/workspace", self.workspace_splitter.saveState())
         self._settings.setValue("splitter/params", self.params_splitter.saveState())
         self._settings.setValue("link/type", self.link_type_combo.currentText())
         self._settings.setValue("serial/port", self.serial_port_combo.currentText())
@@ -1261,23 +1448,25 @@ class MainWindow(QMainWindow):
         self._settings.setValue("udp/host", self.udp_host_edit.text())
         self._settings.setValue("udp/port", self.udp_port_spin.value())
         self._settings.setValue("chart/window_index", self.chart_window_combo.currentIndex())
+        self._settings.setValue("tabs/display", self.display_tabs.currentIndex())
+        self._settings.setValue("tabs/info", self.info_tabs.currentIndex())
         self._settings.setValue("params/search", self.param_search_edit.text())
         self._settings.setValue("log/path", self.log_path_edit.text())
 
     def _load_settings(self) -> None:
         geometry = self._settings.value("window/geometry", type=QByteArray)
         state = self._settings.value("window/state", type=QByteArray)
-        main_splitter_state = self._settings.value("splitter/main", type=QByteArray)
-        vertical_splitter_state = self._settings.value("splitter/vertical", type=QByteArray)
+        root_splitter_state = self._settings.value("splitter/root", type=QByteArray)
+        workspace_splitter_state = self._settings.value("splitter/workspace", type=QByteArray)
         params_splitter_state = self._settings.value("splitter/params", type=QByteArray)
         if geometry:
             self.restoreGeometry(geometry)
         if state:
             self.restoreState(state)
-        if main_splitter_state:
-            self.main_splitter.restoreState(main_splitter_state)
-        if vertical_splitter_state:
-            self.vertical_splitter.restoreState(vertical_splitter_state)
+        if root_splitter_state:
+            self.root_splitter.restoreState(root_splitter_state)
+        if workspace_splitter_state:
+            self.workspace_splitter.restoreState(workspace_splitter_state)
         if params_splitter_state:
             self.params_splitter.restoreState(params_splitter_state)
 
@@ -1287,6 +1476,8 @@ class MainWindow(QMainWindow):
         udp_host = self._settings.value("udp/host", "192.168.4.1")
         udp_port = int(self._settings.value("udp/port", 2391))
         chart_index = int(self._settings.value("chart/window_index", 1))
+        display_tab_index = int(self._settings.value("tabs/display", 0))
+        info_tab_index = int(self._settings.value("tabs/info", 0))
         param_search = self._settings.value("params/search", "")
         log_path = self._settings.value("log/path", self.log_path_edit.text())
 
@@ -1296,6 +1487,8 @@ class MainWindow(QMainWindow):
         self.udp_host_edit.setText(str(udp_host))
         self.udp_port_spin.setValue(udp_port)
         self.chart_window_combo.setCurrentIndex(max(0, min(chart_index, self.chart_window_combo.count() - 1)))
+        self.display_tabs.setCurrentIndex(max(0, min(display_tab_index, self.display_tabs.count() - 1)))
+        self.info_tabs.setCurrentIndex(max(0, min(info_tab_index, self.info_tabs.count() - 1)))
         self.param_search_edit.setText(str(param_search))
         self.log_path_edit.setText(str(log_path))
         self._update_link_inputs()
@@ -1313,7 +1506,7 @@ class MainWindow(QMainWindow):
 
 def run_gui(_argv: list[str] | None = None) -> int:
     app = QApplication.instance() or QApplication([])
-    pg.setConfigOptions(antialias=True, foreground="#263238")
+    pg.setConfigOptions(antialias=True, foreground="#dbeafe", background="#0f1722")
     window = MainWindow()
     window.show()
     return int(app.exec())

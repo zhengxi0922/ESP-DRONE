@@ -167,7 +167,7 @@ The GUI is intended for manual bench debugging. CLI remains the primary interfac
 
 ### GUI Capability Boundary
 
-The current GUI is a PyQt5 workbench focused on restrained bench debugging. It is intended to speed up manual debugging sessions, not to replace the CLI or grow a second protocol stack.
+The current GUI is a PyQt5 workbench focused on restrained bench debugging. Its layout now follows a denser "left control rail + right tabbed workspace" pattern so the telemetry, charts, parameters, and event log do not compete for the same screen area on Windows.
 
 Current GUI capabilities:
 

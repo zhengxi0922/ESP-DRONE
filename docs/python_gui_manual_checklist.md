@@ -18,6 +18,7 @@ Bench assumptions:
 - [ ] `esp-drone-gui` starts successfully
 - [ ] closing the window does not hang
 - [ ] if `PyQt5` or `pyqtgraph` is missing, GUI prints a clear install error instead of crashing obscurely
+- [ ] left control rail and right tabbed workspace render correctly at maximized window size
 
 ## Connection
 
@@ -45,6 +46,7 @@ Bench assumptions:
 - [ ] clear chart history works
 - [ ] switching chart window length works
 - [ ] channel visibility checkboxes work
+- [ ] `Realtime`, `Charts`, `Parameters`, and `Events` tabs all remain usable without overlap at maximized size
 
 ## Parameters
 
