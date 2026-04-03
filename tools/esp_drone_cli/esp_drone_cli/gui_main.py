@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    os.environ.setdefault("PYQTGRAPH_QT_LIB", "PyQt5")
     try:
         from .gui.main_window import run_gui
     except ModuleNotFoundError as exc:

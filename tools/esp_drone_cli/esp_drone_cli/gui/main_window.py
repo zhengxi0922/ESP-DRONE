@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import deque
@@ -7,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
-import pyqtgraph as pg
+os.environ.setdefault("PYQTGRAPH_QT_LIB", "PyQt5")
+
 from PyQt5.QtCore import QByteArray, QObject, QSettings, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QBrush, QColor, QKeySequence
 from PyQt5.QtWidgets import (
@@ -35,6 +37,7 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+import pyqtgraph as pg
 from serial.tools import list_ports
 
 from esp_drone_cli.core import DeviceSession, ParamValue, TelemetrySample
