@@ -13,7 +13,8 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = [
-  "PySide6>=6.7",
+  "PyQt5>=5.15",
+  "pyqtgraph>=0.13",
 ]
 
 [project.scripts]

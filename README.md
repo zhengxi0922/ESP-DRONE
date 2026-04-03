@@ -74,7 +74,7 @@ The repository currently contains:
 - Baseline safety shell for `arm / disarm / kill`, state ownership, and a small set of hard stop triggers
 - Shared Python tool core for protocol, transport, telemetry decode, parameter snapshots and device commands
 - CLI entrypoint for scripting and automation
-- Minimal PySide6 GUI for manual bench debugging on Windows, backed by the same shared `DeviceSession`
+- PyQt5 GUI workbench for manual bench debugging on Windows, backed by the same shared `DeviceSession`
 
 Current hardware validation status:
 
@@ -90,11 +90,12 @@ Still pending in later stages:
 
 ## Python Tool Usage
 
-The Python tooling now supports both a script-first CLI and a minimal desktop GUI. They share the same `DeviceSession` core and do not maintain separate protocol stacks.
+The Python tooling now supports both a script-first CLI and a desktop GUI workbench. They share the same `DeviceSession` core and do not maintain separate protocol stacks.
 
 Related docs:
 
 - [GUI refactor plan](./docs/python_tool_gui_refactor_plan.md)
+- [GUI UI plan](./docs/python_gui_ui_plan.md)
 - [GUI usage guide](./docs/python_gui_usage.md)
 - [GUI manual checklist](./docs/python_gui_manual_checklist.md)
 
@@ -118,7 +119,7 @@ cd tools\esp_drone_cli
 pip install -e .
 ```
 
-This installs the Python package with the CLI entrypoint only. It does not pull in the optional `PySide6` GUI dependency.
+This installs the Python package with the CLI entrypoint only. It does not pull in the optional GUI dependencies.
 
 CLI + GUI:
 
@@ -127,9 +128,9 @@ cd tools\esp_drone_cli
 pip install -e .[gui]
 ```
 
-This installs the same package plus the optional `PySide6` dependency required by the GUI.
+This installs the same package plus the optional `PyQt5 + pyqtgraph` dependencies required by the GUI.
 
-`PySide6` is optional. If it is not installed:
+`PyQt5` is optional. If it is not installed:
 
 - CLI still imports and runs normally
 - GUI startup fails fast with a clear error telling you to install `pip install -e .[gui]`
@@ -166,23 +167,24 @@ The GUI is intended for manual bench debugging. CLI remains the primary interfac
 
 ### GUI Capability Boundary
 
-The current GUI is a minimal manual-debug shell. It is intended to speed up restrained bench work, not to replace the CLI or grow a second protocol stack.
+The current GUI is a PyQt5 workbench focused on restrained bench debugging. It is intended to speed up manual debugging sessions, not to replace the CLI or grow a second protocol stack.
 
 Current GUI capabilities:
 
 - serial / UDP connect and disconnect
 - `arm / disarm / kill / reboot`
 - `stream on / off`
-- realtime telemetry table
+- realtime telemetry table with copy support
+- pyqtgraph charts for gyro, attitude, motor outputs and battery voltage
 - parameter refresh, search, set selected, save, reset, import and export
 - `motor-test`
 - `calib gyro` / `calib level`
 - `rate-test`
 - CSV logging and CSV dump
+- local GUI state persistence through `QSettings`
 
 Still intentionally deferred:
 
-- advanced plotting / curves / dashboards
 - GUI-only protocol or transport behavior
 - stock App / RC / legacy UDP compatibility workflows
 

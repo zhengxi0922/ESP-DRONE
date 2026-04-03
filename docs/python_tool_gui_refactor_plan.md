@@ -2,18 +2,21 @@
 
 ## Goal
 
-Upgrade `tools/esp_drone_cli/` from a CLI-only tool into a shared `core + cli + gui` structure.
+Upgrade `tools/esp_drone_cli/` from a CLI-first tool into a shared `core + cli + gui` structure, with the GUI now implemented on `PyQt5` instead of `PySide6`.
 
 Constraints:
 
-- Keep the existing CLI command style as stable as possible
-- Add a Windows desktop GUI with `PySide6`
-- GUI and CLI must reuse one protocol / transport / device-command implementation
-- GUI is only an interaction shell; automation and tests remain CLI-first
+- keep the existing CLI command style as stable as possible
+- keep `DeviceSession` as the only session / command owner
+- keep protocol and transport ownership inside `core/`
+- let GUI remain an interaction shell rather than a second protocol stack
+- keep automation and repeatable checks CLI-first
 
-## Phase B Status
+## Current Status
 
-Phase B is now implemented in code.
+### Phase B
+
+Phase B is implemented in code.
 
 - `esp_drone_cli.core.device_session.DeviceSession` is the only session / command owner
 - `esp_drone_cli.core.protocol.*` is the only protocol owner
@@ -23,50 +26,48 @@ Phase B is now implemented in code.
 - GUI calls `DeviceSession` directly
 - old top-level `client.py`, `protocol/*`, and `transport/*` modules are compatibility shims only
 
-This means there is no second client implementation that owns command flow, framing, or transport behavior.
+### Phase C
 
-## Phase C Status
-
-Phase C minimal GUI is now implemented on top of the same `DeviceSession`.
+Phase C minimal GUI is implemented on the same `DeviceSession`.
 
 - GUI connects through serial or UDP only by calling `DeviceSession`
 - GUI does not own framing, transport, or command encoding
-- GUI currently supports connect / disconnect, stream control, telemetry table, parameter operations, `arm / disarm / kill / reboot`, `motor-test`, `calib`, `rate-test`, and CSV logging
-- GUI remains intentionally minimal; plotting and heavier desktop UX work are still deferred
+- GUI supports connect / disconnect, stream control, telemetry, parameter operations, `arm / disarm / kill / reboot`, `motor-test`, calibration, `rate-test`, CSV logging, and CSV dump
 
-## Phase D Status
+### Phase D
 
-Phase D focuses on closure rather than feature growth.
+Phase D focuses on closure and manual-debug usability.
 
-- README now documents CLI vs GUI install and startup flows
-- dedicated GUI usage and manual checklist docs exist under `docs/`
-- smoke tests cover optional `PySide6`, basic GUI startup/close, and GUI-to-session action routing
+- README documents CLI vs GUI install and startup flows
+- GUI usage and manual checklist docs exist under `docs/`
+- smoke tests cover optional GUI dependency behavior, GUI startup/close, and GUI-to-session action routing
+- GUI has moved to `PyQt5 + pyqtgraph`
 - core ownership remains unchanged: GUI and CLI still share one `DeviceSession`
 
 ## Planned Package Layout
 
 ```text
 tools/esp_drone_cli/esp_drone_cli/
-├─ core/
-│  ├─ protocol/
-│  ├─ transport/
-│  ├─ device_session.py
-│  ├─ models.py
-│  └─ csv_log.py
-├─ cli/
-│  └─ main.py
-├─ gui/
-│  └─ main_window.py
-├─ __main__.py
-├─ gui_main.py
-├─ client.py
-├─ protocol/
-└─ transport/
+|- core/
+|  |- protocol/
+|  |- transport/
+|  |- device_session.py
+|  |- models.py
+|  `- csv_log.py
+|- cli/
+|  `- main.py
+|- gui/
+|  `- main_window.py
+|- __main__.py
+|- gui_main.py
+|- client.py
+|- protocol/
+`- transport/
 ```
 
 ## File Movement And Compatibility
 
-The real implementation moves into `core/`. Existing top-level modules become compatibility shims.
+The real implementation lives in `core/`. Existing top-level modules remain only as compatibility shims.
 
 | Current file | New owner | Compatibility rule |
 |---|---|---|
@@ -83,13 +84,9 @@ The following remain stable or intentionally compatible:
 
 - `python -m esp_drone_cli ...`
 - `esp-drone-cli ...`
-- serial and UDP transport choices
-- existing command names such as `connect`, `arm`, `disarm`, `kill`, `motor-test`, `axis-test`, `rate-test`, `dump-csv`
-
-The following are added without breaking existing commands:
-
 - `esp-drone-gui`
-- JSON parameter export / import through shared core helpers
+- serial and UDP transport choices
+- command names such as `connect`, `arm`, `disarm`, `kill`, `motor-test`, `axis-test`, `rate-test`, `dump-csv`
 
 ## Core Layer Responsibilities
 
@@ -122,101 +119,35 @@ The central object is `DeviceSession`.
 | stream lifecycle | `esp_drone_cli.core.device_session` |
 | CSV log export | `esp_drone_cli.core.csv_log` + `esp_drone_cli.core.device_session` |
 
-## DeviceSession Contract
+## GUI Technology Stack
 
-`DeviceSession` will expose:
+- GUI binding: `PyQt5`
+- plotting: `pyqtgraph`
+- session bridge: callback -> Qt signal translation in `gui/main_window.py`
 
-- `connect_serial()`
-- `connect_udp()`
-- `connect_transport()`
-- `disconnect()`
-- `hello()`
-- `arm()`
-- `disarm()`
-- `kill()`
-- `reboot()`
-- `get_param()`
-- `set_param()`
-- `list_params()`
-- `save_params()`
-- `reset_params()`
-- `export_params()`
-- `import_params()`
-- `start_stream()`
-- `stop_stream()`
-- `motor_test()`
-- `axis_test()`
-- `rate_test()`
-- `calib_gyro()`
-- `calib_level()`
-- `send_rc()`
-- `subscribe_telemetry()`
-- `subscribe_event_log()`
-- `subscribe_connection_state()`
+If GUI dependencies are missing:
 
-## Concurrency Model
+- CLI still works
+- `esp-drone-gui` fails fast with a clear install hint
 
-- All transport receive work lives in one background reader thread inside `DeviceSession`
-- Sync CLI commands wait on response frames through a thread-safe queue
-- GUI only talks to `DeviceSession`; it never reads the transport directly
-- GUI receives telemetry and event updates through callback -> Qt signal bridging
+## GUI Scope
 
-## GUI Class Split
-
-First revision uses a small class set:
-
-- `MainWindow`
-  - owns the visible panels and button wiring
-- `QtSessionBridge`
-  - translates core callbacks into Qt signals
-- `TelemetryPanel`
-  - shows current values in a compact form/table
-- `ParamsPanel`
-  - handles search, refresh, set, save, reset, import, export
-
-The first implementation may keep these panels inside one file if that keeps the code smaller and clearer.
-
-## GUI Layout Sketch
-
-```text
-+--------------------------------------------------------------+
-| Connection: [serial|udp] [port/ip] [baud/port] [connect]    |
-+----------------------+---------------------------------------+
-| Safety               | Realtime Telemetry                    |
-| arm disarm kill      | gyro / rpy / setpoint / motors / bat |
-| reboot               | stream on/off, rate param selector    |
-+----------------------+---------------------------------------+
-| Params: search, list, set selected, save/reset, import/export|
-+----------------------+---------------------------------------+
-| Debug Actions        | Log Export                            |
-| motor_test           | choose file                           |
-| calib gyro/level     | start log / stop log / dump csv       |
-| rate test            | last path / last error                |
-+--------------------------------------------------------------+
-```
-
-## GUI Scope For First Revision
-
-Must work:
+Current GUI scope:
 
 - connect / disconnect
 - stream on / off
 - arm / disarm / kill / reboot
-- telemetry display
-- get / set / save / reset / export / import params
+- telemetry table
+- realtime charts
+- parameter refresh / set / save / reset / import / export
 - motor test
-- calibration command buttons
-- rate test entry
-- CSV log export
+- calibration commands
+- rate test
+- CSV logging
+- QSettings-backed local UI state
 
-Explicitly deferred:
+Still intentionally deferred:
 
-- advanced plotting
-- RC / UDP compatibility work
-- high-polish styling
-
-## Risk Notes
-
-- The firmware does not yet implement every future protocol feature, so `send_rc()` will initially stay as a reserved core API surface.
-- PySide6 must stay optional; GUI import failures must not affect CLI startup.
-- Top-level compatibility modules must remain thin re-exports only. Any future business logic added there would reintroduce a forbidden dual-owner design.
+- RC / stock App compatibility workflows
+- GUI-owned protocol logic
+- large dashboard styling / heavy visualization

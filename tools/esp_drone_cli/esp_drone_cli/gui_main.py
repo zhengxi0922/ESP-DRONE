@@ -8,9 +8,9 @@ def main(argv: list[str] | None = None) -> int:
         from .gui.main_window import run_gui
     except ModuleNotFoundError as exc:
         missing_name = exc.name or str(exc)
-        if "PySide6" in missing_name:
+        if "PyQt5" in missing_name or "pyqtgraph" in missing_name:
             print(
-                "PySide6 is required for esp-drone-gui. Install it with: pip install -e .[gui]",
+                "PyQt5 and pyqtgraph are required for esp-drone-gui. Install them with: pip install -e .[gui]",
                 file=sys.stderr,
             )
             return 1

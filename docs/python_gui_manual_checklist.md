@@ -17,7 +17,7 @@ Bench assumptions:
 
 - [ ] `esp-drone-gui` starts successfully
 - [ ] closing the window does not hang
-- [ ] if `PySide6` is missing, GUI prints a clear install error instead of crashing obscurely
+- [ ] if `PyQt5` or `pyqtgraph` is missing, GUI prints a clear install error instead of crashing obscurely
 
 ## Connection
 
@@ -25,19 +25,33 @@ Bench assumptions:
 - [ ] serial connect succeeds
 - [ ] UDP mode can connect to `host:port`
 - [ ] disconnect returns the GUI to `Disconnected`
+- [ ] last connection error field is readable and meaningful on failure
 
 ## Stream And Telemetry
 
 - [ ] `Stream On` starts telemetry updates
 - [ ] `Stream Off` stops telemetry updates or clearly stops new samples
 - [ ] telemetry table refreshes with gyro / attitude / motor / battery / loop timing fields
+- [ ] telemetry table selection can be copied with `Ctrl+C`
 - [ ] changing target stream rate applies without breaking the session
+
+## Charts
+
+- [ ] gyro chart updates while streaming
+- [ ] attitude chart updates while streaming
+- [ ] motor chart updates while streaming
+- [ ] battery chart updates while streaming
+- [ ] pause / resume works
+- [ ] clear chart history works
+- [ ] switching chart window length works
+- [ ] channel visibility checkboxes work
 
 ## Parameters
 
-- [ ] `Refresh Params` loads the parameter list
+- [ ] `Refresh` loads the parameter list
 - [ ] search box filters the list
-- [ ] selecting one parameter fills the edit box
+- [ ] selecting one parameter fills the detail pane
+- [ ] local hint text updates when editing a value
 - [ ] setting one parameter returns without GUI error
 - [ ] `Save` succeeds
 - [ ] `Reset` succeeds
@@ -67,6 +81,15 @@ Bench assumptions:
 - [ ] `Dump CSV` writes a CSV file for the requested duration
 - [ ] `Last log` updates to the most recent output path
 - [ ] `Last error` remains clear during a nominal session
+- [ ] event log can be cleared, copied, and saved to text
+
+## State Persistence
+
+- [ ] last serial port is restored after restart
+- [ ] last UDP target is restored after restart
+- [ ] window geometry is restored after restart
+- [ ] chart window selection is restored after restart
+- [ ] last parameter search text is restored after restart
 
 ## Shutdown
 

@@ -302,15 +302,15 @@ def test_device_session_telemetry_subscription_receives_samples():
     assert received[0].control_mode == 2
 
 
-def test_gui_startup_without_device_or_missing_pyside6(monkeypatch):
-    if importlib.util.find_spec("PySide6") is None:
+def test_gui_startup_without_device_or_missing_pyqt5(monkeypatch):
+    if importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None:
         from esp_drone_cli import gui_main
 
         assert gui_main.main([]) == 1
         return
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
+    from PyQt5.QtWidgets import QApplication
 
     from esp_drone_cli.gui.main_window import MainWindow
 
@@ -320,19 +320,20 @@ def test_gui_startup_without_device_or_missing_pyside6(monkeypatch):
     app.quit()
 
 
-@pytest.mark.skipif(importlib.util.find_spec("PySide6") is None, reason="PySide6 not installed")
+@pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
 def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
-    from PySide6.QtWidgets import QApplication, QFileDialog
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication, QFileDialog
 
     from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
 
     class SyncBridge(QtSessionBridge):
         def run_async(self, label: str, callback) -> None:
             try:
-                callback()
-                self.command_finished.emit(label)
+                result = callback()
+                self.command_finished.emit(label, result)
             except Exception as exc:  # pragma: no cover - test should not hit
                 self.error_raised.emit(f"{label}: {exc}")
 
@@ -345,17 +346,19 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
 
     app = QApplication.instance() or QApplication([])
     session = FakeSession()
+    settings = QSettings(str(tmp_path / "gui.ini"), QSettings.IniFormat)
     window = MainWindow(
         session=session,
         bridge_cls=SyncBridge,
         serial_port_provider=lambda: ["COM9"],
+        settings=settings,
     )
 
     window.serial_port_combo.setCurrentText("COM9")
     window.connect_button.click()
     app.processEvents()
     assert ("connect_serial", ("COM9", 115200, 0.2), {}) in session.calls
-    assert "Connected" in window.connection_status_label.text()
+    assert "Connected" in window.connection_status_chip.text()
     assert window.params_table.rowCount() == 2
     session.calls.clear()
 
@@ -363,9 +366,9 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     session.emit_telemetry(sample)
     session.emit_event("imu healthy")
     app.processEvents()
-    assert window.telemetry_table.item(0, 1).text() == "1.0"
-    assert window.arm_state_label.text() == "0"
-    assert window.event_log_label.text() == "imu healthy"
+    assert window.telemetry_table.item(0, 1).text() == "1.000"
+    assert window.arm_state_chip.text() == "DISARMED"
+    assert "imu healthy" in window.event_log_edit.toPlainText()
 
     window.stream_on_button.click()
     window.stream_off_button.click()
@@ -379,7 +382,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
 
     window.params_table.selectRow(0)
     app.processEvents()
-    window.param_value_edit.setText("77")
+    window.param_new_value_edit.setText("77")
     window.set_param_button.click()
     window.save_params_button.click()
     window.reset_params_button.click()
@@ -405,6 +408,8 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     window.dump_duration_spin.setValue(2.5)
     window.dump_csv_button.click()
 
+    window.disconnect_button.click()
+    app.processEvents()
     window.link_type_combo.setCurrentText("udp")
     window.udp_host_edit.setText("192.168.4.1")
     window.udp_port_spin.setValue(2391)
@@ -441,21 +446,23 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     app.processEvents()
 
 
-@pytest.mark.skipif(importlib.util.find_spec("PySide6") is None, reason="PySide6 not installed")
-def test_gui_close_disconnects_session(monkeypatch):
+@pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
+def test_gui_close_disconnects_session(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
 
     from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
 
     class SyncBridge(QtSessionBridge):
         def run_async(self, label: str, callback) -> None:
-            callback()
-            self.command_finished.emit(label)
+            result = callback()
+            self.command_finished.emit(label, result)
 
     app = QApplication.instance() or QApplication([])
     session = FakeSession()
-    window = MainWindow(session=session, bridge_cls=SyncBridge, serial_port_provider=lambda: [])
+    settings = QSettings(str(tmp_path / "gui-close.ini"), QSettings.IniFormat)
+    window = MainWindow(session=session, bridge_cls=SyncBridge, serial_port_provider=lambda: [], settings=settings)
     window.close()
     app.processEvents()
 
@@ -471,11 +478,11 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert args.axis == "yaw"
 
 
-def test_cli_import_does_not_require_pyside6(monkeypatch):
+def test_cli_import_does_not_require_pyqt5(monkeypatch):
     real_import = builtins.__import__
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name.startswith("PySide6"):
+        if name.startswith("PyQt5") or name.startswith("pyqtgraph"):
             raise ModuleNotFoundError(name)
         return real_import(name, globals, locals, fromlist, level)
 
@@ -486,11 +493,11 @@ def test_cli_import_does_not_require_pyside6(monkeypatch):
     assert args.command == "connect"
 
 
-def test_cli_main_runs_without_pyside6(monkeypatch):
+def test_cli_main_runs_without_pyqt5(monkeypatch):
     real_import = builtins.__import__
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name.startswith("PySide6"):
+        if name.startswith("PyQt5") or name.startswith("pyqtgraph"):
             raise ModuleNotFoundError(name)
         return real_import(name, globals, locals, fromlist, level)
 
@@ -506,11 +513,11 @@ def test_cli_main_runs_without_pyside6(monkeypatch):
     assert "close" in call_names
 
 
-def test_gui_entry_reports_missing_pyside6_without_affecting_cli(monkeypatch):
+def test_gui_entry_reports_missing_pyqt5_without_affecting_cli(monkeypatch):
     real_import = builtins.__import__
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name.startswith("PySide6"):
+        if name.startswith("PyQt5") or name.startswith("pyqtgraph"):
             raise ModuleNotFoundError(name)
         return real_import(name, globals, locals, fromlist, level)
 
