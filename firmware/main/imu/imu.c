@@ -67,6 +67,8 @@ static _Atomic uint32_t s_parse_errors;
 static _Atomic uint32_t s_consecutive_parse_errors;
 static _Atomic uint64_t s_last_frame_us;
 static bool s_initialized;
+static vec3f_t s_gyro_bias_body_dps;
+static eulerf_t s_level_trim_deg;
 
 typedef struct {
     float m[3][3];
@@ -263,6 +265,26 @@ static quatf_t imu_quat_from_mat3(mat3f_t m)
     return imu_quat_normalize(q);
 }
 
+static void imu_apply_runtime_calibration(imu_sample_t *sample)
+{
+    if (sample == NULL) {
+        return;
+    }
+
+    sample->gyro_xyz_dps.x -= s_gyro_bias_body_dps.x;
+    sample->gyro_xyz_dps.y -= s_gyro_bias_body_dps.y;
+    sample->gyro_xyz_dps.z -= s_gyro_bias_body_dps.z;
+
+    if (sample->has_attitude) {
+        sample->roll_pitch_yaw_deg.roll_deg =
+            imu_norm_angle(sample->roll_pitch_yaw_deg.roll_deg - s_level_trim_deg.roll_deg);
+        sample->roll_pitch_yaw_deg.pitch_deg =
+            imu_norm_angle(sample->roll_pitch_yaw_deg.pitch_deg - s_level_trim_deg.pitch_deg);
+        sample->roll_pitch_yaw_deg.yaw_deg =
+            imu_norm_angle(sample->roll_pitch_yaw_deg.yaw_deg - s_level_trim_deg.yaw_deg);
+    }
+}
+
 static eulerf_t imu_project_euler_from_body_to_world(mat3f_t r_body_to_world)
 {
     const float pitch = atan2f(r_body_to_world.m[2][1], r_body_to_world.m[2][2]);
@@ -351,7 +373,19 @@ static uint8_t imu_return_set_from_params(void)
     if (params->imu_mode == IMU_MODE_RAW) {
         return params->imu_mag_enable ? 0x0C : 0x04;
     }
-    return 0x03;
+    /*
+     * DIRECT mode still needs gyro/acc frames so that:
+     * - telemetry exposes live gyro_x/y/z and acc_x/y/z
+     * - single-axis rate test has fresh rate feedback
+     * - bench-side gyro calibration stays available without switching modes
+     *
+     * Frame bitmap:
+     *   0x01 attitude
+     *   0x02 quaternion
+     *   0x04 gyro+acc
+     *   0x08 mag
+     */
+    return params->imu_mag_enable ? 0x0F : 0x07;
 }
 
 static void imu_write_reg_u8(uint8_t reg_id, uint8_t value)
@@ -428,6 +462,7 @@ static void imu_handle_completed_frame(uint8_t frame_id, const uint8_t *payload,
     }
 
     imu_map_partial_to_project_sample(&s_partial, &sample);
+    imu_apply_runtime_calibration(&sample);
 
     const params_store_t *params = params_get();
     if (params->imu_mode == IMU_MODE_RAW && !s_partial.have_gyro_acc) {
@@ -545,6 +580,8 @@ esp_err_t imu_init(void)
         .health = IMU_HEALTH_INIT,
     };
     s_samples[1] = s_samples[0];
+    s_gyro_bias_body_dps = (vec3f_t){0};
+    s_level_trim_deg = (eulerf_t){0};
     s_initialized = true;
     return ESP_OK;
 }
@@ -556,6 +593,32 @@ esp_err_t imu_reconfigure_from_params(void)
     }
 
     imu_apply_param_configuration();
+    return ESP_OK;
+}
+
+esp_err_t imu_calibrate_gyro(void)
+{
+    imu_sample_t sample = {0};
+    if (!imu_get_latest(&sample, NULL) || sample.health != IMU_HEALTH_OK || !sample.has_gyro_acc) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    s_gyro_bias_body_dps.x += sample.gyro_xyz_dps.x;
+    s_gyro_bias_body_dps.y += sample.gyro_xyz_dps.y;
+    s_gyro_bias_body_dps.z += sample.gyro_xyz_dps.z;
+    return ESP_OK;
+}
+
+esp_err_t imu_calibrate_level(void)
+{
+    imu_sample_t sample = {0};
+    if (!imu_get_latest(&sample, NULL) || sample.health != IMU_HEALTH_OK || !sample.has_attitude) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    s_level_trim_deg.roll_deg += sample.roll_pitch_yaw_deg.roll_deg;
+    s_level_trim_deg.pitch_deg += sample.roll_pitch_yaw_deg.pitch_deg;
+    s_level_trim_deg.yaw_deg = 0.0f;
     return ESP_OK;
 }
 

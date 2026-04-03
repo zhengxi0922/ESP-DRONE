@@ -9,8 +9,35 @@ from esp_drone_cli.core.protocol.messages import Frame
 
 
 class SerialTransport:
-    def __init__(self, port: str, baudrate: int = 115200, timeout: float = 0.2) -> None:
-        self._serial = serial.Serial(port=port, baudrate=baudrate, timeout=timeout)
+    def __init__(
+        self,
+        port: str,
+        baudrate: int = 115200,
+        timeout: float = 0.2,
+        settle_delay_s: float = 0.25,
+        open_retry_timeout_s: float = 5.0,
+        open_retry_interval_s: float = 0.25,
+    ) -> None:
+        deadline = time.monotonic() + max(0.0, open_retry_timeout_s)
+        last_error: Exception | None = None
+        while True:
+            try:
+                # Keep pyserial's default control-line behavior so Windows USB CDC
+                # devices see the same line state as standard terminal tools.
+                self._serial = serial.Serial(port=port, baudrate=baudrate, timeout=timeout)
+                break
+            except serial.SerialException as exc:
+                last_error = exc
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(max(0.01, open_retry_interval_s))
+        if last_error is not None:
+            # Opening eventually succeeded after a transient COM hold. No action needed.
+            pass
+
+        if settle_delay_s > 0:
+            time.sleep(settle_delay_s)
+        self._serial.reset_input_buffer()
 
     def send(self, data: bytes) -> None:
         self._serial.write(data)
@@ -27,8 +54,14 @@ class SerialTransport:
             if not chunk:
                 continue
             packet.extend(chunk)
+            if len(packet) > 4096:
+                packet.clear()
+                continue
             if chunk == b"\x00":
-                return decode_serial_packet(bytes(packet))
+                try:
+                    return decode_serial_packet(bytes(packet))
+                except ValueError:
+                    packet.clear()
         raise TimeoutError("serial frame timeout")
 
     def close(self) -> None:

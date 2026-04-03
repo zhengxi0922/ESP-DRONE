@@ -17,6 +17,8 @@ typedef struct {
 
 esp_err_t imu_init(void);
 esp_err_t imu_reconfigure_from_params(void);
+esp_err_t imu_calibrate_gyro(void);
+esp_err_t imu_calibrate_level(void);
 void imu_service_rx(void);
 
 bool imu_get_latest(imu_sample_t *out_sample, uint32_t *out_seq);

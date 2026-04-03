@@ -34,7 +34,7 @@ def add_common_transport_args(parser: argparse.ArgumentParser) -> None:
 
 
 def cmd_connect(session: DeviceSession, _args) -> int:
-    print(session.hello())
+    print(session.device_info or session.hello())
     return 0
 
 

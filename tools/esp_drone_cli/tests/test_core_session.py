@@ -13,6 +13,7 @@ import pytest
 
 from esp_drone_cli.core import DeviceSession
 from esp_drone_cli.core.models import HELLO_RESP_STRUCT, ParamSnapshot, ParamValue, TELEMETRY_STRUCT, TelemetrySample
+from esp_drone_cli.core.protocol.framing import encode_serial_packet
 from esp_drone_cli.core.protocol.messages import CmdId, Frame, MsgType
 
 
@@ -537,3 +538,67 @@ def test_compatibility_shims_resolve_to_core_owners():
     assert EspDroneClient is CoreDeviceSession
     assert ShimMsgType is CoreMsgType
     assert ShimSerialTransport is CoreSerialTransport
+
+
+def test_serial_transport_keeps_default_control_lines(monkeypatch):
+    from esp_drone_cli.core.transport import serial_link
+
+    serial_instances = []
+
+    class FakeSerial:
+        def __init__(self, *args, **kwargs) -> None:
+            self.args = args
+            self.kwargs = kwargs
+            self.dtr_assignments = []
+            self.rts_assignments = []
+            serial_instances.append(self)
+
+        def __setattr__(self, name, value):
+            if name == "dtr":
+                self.__dict__.setdefault("dtr_assignments", []).append(value)
+            if name == "rts":
+                self.__dict__.setdefault("rts_assignments", []).append(value)
+            self.__dict__[name] = value
+
+        def reset_input_buffer(self) -> None:
+            return None
+
+    monkeypatch.setattr(serial_link.serial, "Serial", FakeSerial)
+    monkeypatch.setattr(serial_link.time, "sleep", lambda _seconds: None)
+
+    serial_link.SerialTransport("COM7", baudrate=115200, timeout=0.2)
+
+    assert len(serial_instances) == 1
+    assert serial_instances[0].kwargs == {"port": "COM7", "baudrate": 115200, "timeout": 0.2}
+    assert serial_instances[0].dtr_assignments == []
+    assert serial_instances[0].rts_assignments == []
+
+
+def test_serial_transport_recv_frame_skips_invalid_packets(monkeypatch):
+    from esp_drone_cli.core.transport import serial_link
+
+    class FakeSerial:
+        def __init__(self, *args, **kwargs) -> None:
+            self.data = bytearray()
+
+        def reset_input_buffer(self) -> None:
+            return None
+
+        def read(self, _size: int) -> bytes:
+            if not self.data:
+                return b""
+            return bytes([self.data.pop(0)])
+
+    fake_serial = FakeSerial()
+    monkeypatch.setattr(serial_link.serial, "Serial", lambda *args, **kwargs: fake_serial)
+    monkeypatch.setattr(serial_link.time, "sleep", lambda _seconds: None)
+
+    transport = serial_link.SerialTransport("COM7", settle_delay_s=0.0)
+    hello_payload = HELLO_RESP_STRUCT.pack(1, 1, 0, 0, 0xF)
+    fake_serial.data.extend(b"bad\x00")
+    fake_serial.data.extend(encode_serial_packet(MsgType.HELLO_RESP, hello_payload))
+
+    frame = transport.recv_frame(timeout=0.2)
+
+    assert frame.msg_type == MsgType.HELLO_RESP
+    assert frame.payload == hello_payload

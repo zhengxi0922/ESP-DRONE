@@ -10,6 +10,7 @@
 #include "freertos/semphr.h"
 
 #include "esp_system.h"
+#include "esp_vfs_cdcacm.h"
 
 #include "console_protocol.h"
 #include "controller.h"
@@ -129,6 +130,7 @@ static bool console_send_frame(uint8_t msg_type, const void *payload, uint16_t p
     fwrite(encoded_buf, 1, encoded_len, stdout);
     fputc(0, stdout);
     fflush(stdout);
+    fsync(fileno(stdout));
     if (s_console_tx_mutex != NULL) {
         xSemaphoreGive(s_console_tx_mutex);
     }
@@ -242,8 +244,19 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         console_send_cmd_resp(req.cmd_id, 0);
         break;
     case CMD_REBOOT:
+        runtime_state_set_stream_enabled(false);
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        motor_stop_all();
         console_send_cmd_resp(req.cmd_id, 0);
         fflush(stdout);
+        /*
+         * Give the host one short USB frame window to receive the ACK before
+         * tearing down the CDC session via software restart.
+         */
+        vTaskDelay(pdMS_TO_TICKS(100));
         esp_restart();
         break;
     case CMD_MOTOR_TEST:
@@ -293,7 +306,11 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         break;
     }
     case CMD_CALIB_GYRO:
+        console_send_cmd_resp(req.cmd_id, (imu_calibrate_gyro() == ESP_OK) ? 0 : 1);
+        break;
     case CMD_CALIB_LEVEL:
+        console_send_cmd_resp(req.cmd_id, (imu_calibrate_level() == ESP_OK) ? 0 : 1);
+        break;
     default:
         console_send_cmd_resp(req.cmd_id, 2);
         break;
@@ -463,6 +480,12 @@ static void console_try_process_frame(const uint8_t *encoded_frame, size_t encod
 
 esp_err_t console_init(void)
 {
+    esp_vfs_dev_cdcacm_set_rx_line_endings(ESP_LINE_ENDINGS_LF);
+    esp_vfs_dev_cdcacm_set_tx_line_endings(ESP_LINE_ENDINGS_LF);
+
+    setvbuf(stdin, NULL, _IONBF, 0);
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     const int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
     if (flags >= 0) {
         fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);

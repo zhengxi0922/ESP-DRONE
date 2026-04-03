@@ -181,8 +181,17 @@ class DeviceSession:
         self._notify_connection(connected=True)
         return info
 
-    def connect_serial(self, port: str, baudrate: int = 115200, timeout: float = 0.2) -> DeviceInfo:
-        return self.connect_transport(SerialTransport(port=port, baudrate=baudrate, timeout=timeout))
+    def connect_serial(
+        self,
+        port: str,
+        baudrate: int = 115200,
+        timeout: float = 0.2,
+        hello_timeout: float = 3.0,
+    ) -> DeviceInfo:
+        return self.connect_transport(
+            SerialTransport(port=port, baudrate=baudrate, timeout=timeout),
+            hello_timeout=hello_timeout,
+        )
 
     def connect_udp(self, host: str, port: int = 2391, timeout: float = 1.0) -> DeviceInfo:
         return self.connect_transport(UdpTransport(host=host, port=port, timeout=timeout))
@@ -222,6 +231,10 @@ class DeviceSession:
     @property
     def last_error(self) -> str | None:
         return self._last_error
+
+    @property
+    def device_info(self) -> DeviceInfo | None:
+        return self._device_info
 
     @property
     def last_log_path(self) -> Path | None:
