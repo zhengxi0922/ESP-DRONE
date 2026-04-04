@@ -167,15 +167,23 @@ The GUI is intended for manual bench debugging. CLI remains the primary interfac
 
 ### GUI Capability Boundary
 
-The current GUI is a PyQt5 workbench focused on restrained bench debugging. Its layout now follows a denser "left control rail + right tabbed workspace" pattern so the telemetry, charts, parameters, and event log do not compete for the same screen area on Windows.
+The current GUI is a PyQt5 workbench focused on restrained bench debugging. Its layout now follows a "three-column workbench + collapsible bottom log" pattern:
+
+- left narrow rail for connection, safety, and debug actions
+- center large chart workspace with live telemetry visible below it
+- right status cards plus a denser parameter editor
+- bottom event log that starts compact and can be expanded
+
+The GUI now defaults to Chinese and includes a `中文 / English` switch in the top-right corner.
 
 Current GUI capabilities:
 
 - serial / UDP connect and disconnect
 - `arm / disarm / kill / reboot`
 - `stream on / off`
+- large pyqtgraph chart workspace for gyro, attitude, motor outputs and battery voltage
 - realtime telemetry table with copy support
-- pyqtgraph charts for gyro, attitude, motor outputs and battery voltage
+- key status cards for arm / failsafe / mode / imu / stream / battery / timing
 - parameter refresh, search, set selected, save, reset, import and export
 - `motor-test`
 - `calib gyro` / `calib level`

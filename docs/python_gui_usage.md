@@ -58,107 +58,138 @@ python -m esp_drone_cli.gui_main
 
 ## Window Layout
 
-The GUI is arranged as a bench-debug workbench:
+The GUI is now arranged as a three-column workbench plus a collapsible bottom log:
 
-- left control rail:
+- left column, narrow:
   - connection
   - safety control
   - debug actions
-- right workspace:
-  - `Realtime` tab
-  - `Charts` tab
-  - `Parameters` tab
-  - `Events` tab
-- top status strip:
-  - link
-  - arm state
-  - failsafe
-  - control mode
-  - stream state
-  - imu mode
+- center column, largest:
+  - one large realtime chart
+  - live numeric telemetry table below it
+- right column:
+  - key status cards
+  - large parameter table and compact edit/detail area
+- bottom log:
+  - recent events
   - last result
+  - last log path
+  - last error
 
-This tabbed layout is intentional: when the window is crowded, large areas such as telemetry, charts, parameter editing, and event log are split into tabs rather than squeezed into narrow columns.
+The chart and numeric telemetry are visible at the same time. They are no longer separated into mutually exclusive tabs.
+
+## Language
+
+- default UI language: Chinese
+- top-right language switch: `中文 / English`
+
+The main controls, labels, group titles, and status texts are localized for bench use.
 
 ## Serial Connection Example
 
 1. Plug the aircraft into USB CDC.
 2. Start the GUI.
-3. In the `Connection` area:
-   - select `serial`
+3. In the `设备连接 / Connection` area:
+   - choose `串口 / Serial`
    - choose the COM port or type it manually
    - keep baudrate at `115200` unless firmware changes it later
-4. Click `Connect`
+4. Click `连接 / Connect`
 
 Expected result:
 
-- connection badge switches to `Connected`
+- connection badge switches to connected
 - parameter list refreshes automatically
-- telemetry starts updating after `Stream On`
+- telemetry starts updating after `开始流 / Stream On`
 
 ## UDP Connection Example
 
 1. Power the aircraft and make sure the UDP endpoint is reachable.
-2. In the `Connection` area:
-   - select `udp`
+2. In the `设备连接 / Connection` area:
+   - choose `UDP`
    - set host, for example `192.168.4.1`
    - set port, default `2391`
-3. Click `Connect`
+3. Click `连接 / Connect`
 
 Expected result:
 
-- connection badge switches to `Connected`
+- connection badge switches to connected
 - commands are sent through the same `DeviceSession` path as serial
 
 ## GUI Areas
 
-### Connection
+### Left Column
+
+Connection:
 
 - choose serial or UDP
-- configure COM port / baudrate or host / port
+- serial mode only shows COM / baudrate controls
+- UDP mode only shows host / port controls
 - refresh serial ports
 - connect and disconnect
-- check current connection state
-- inspect the last connection error
+- inspect current session info and last connection error
 
-### Safety Control
+Safety:
 
 - `Arm`
 - `Disarm`
 - `Kill`
 - `Reboot`
-- current `arm_state`, `failsafe_reason`, `control_mode`, `imu_mode`
-- current stream state badge
 
-### Realtime Telemetry
+Debug actions:
+
+- `motor_test`
+- `calib gyro`
+- `calib level`
+- `rate_test`
+- `Start Log`
+- `Stop Log`
+- `Dump CSV`
+
+These actions are for restrained bench use only.
+
+### Center Column
+
+Main chart:
+
+- one large plot driven by `pyqtgraph`
+- switch chart group:
+  - `Gyro`
+  - `Attitude`
+  - `Motors`
+  - `Battery`
+- pause / resume
+- clear history
+- auto scale
+- reset view
+- 5s / 10s / 30s window
+- per-channel visibility checkboxes
+
+Live numeric telemetry:
 
 - `Stream On` / `Stream Off`
 - apply target telemetry rate through `telemetry_usb_hz` or `telemetry_udp_hz`
 - view live values for gyro, attitude, rate setpoints, motors, battery, loop timing and safety state
 - copy selected table cells with `Ctrl+C`
 
-### Charts
+### Right Column
 
-The chart area uses `pyqtgraph` and currently provides:
+Key status cards:
 
-- gyro_x / gyro_y / gyro_z
-- roll_deg / pitch_deg / yaw_deg
-- motor1 / motor2 / motor3 / motor4
-- battery_voltage
+- `arm_state`
+- `failsafe_reason`
+- `control_mode`
+- `imu_mode`
+- `stream`
+- `battery_voltage`
+- `imu_age_us`
+- `loop_dt_us`
 
-Chart controls:
-
-- pause / resume chart updates
-- clear history
-- 5s / 10s / 30s window
-- per-channel visibility checkboxes
-
-### Parameter Debug
+Parameter debug:
 
 - refresh parameter list
 - search by parameter name
 - select one parameter and edit a new value
-- view a local hint / description placeholder
+- view a local hint and compact description area
 - `Save`
 - `Reset`
 - `Export JSON`
@@ -166,22 +197,12 @@ Chart controls:
 
 GUI hints are advisory only. Final validation still happens on the device.
 
-### Debug Actions
+### Bottom Log
 
-- `motor_test`
-- `calib gyro`
-- `calib level`
-- `rate_test`
-
-These actions are for restrained bench use only.
-
-### Log Export
-
-- choose CSV output file
-- `Start Log`
-- `Stop Log`
-- `Dump CSV`
-- inspect last log path and latest error/event
+- event log area for recent command results and errors
+- clear / copy / save log
+- collapsed by default to a compact height
+- can be expanded or collapsed through the arrow button
 
 ## QSettings State
 
@@ -192,9 +213,12 @@ The GUI stores local state through `QSettings`, including:
 - last link type
 - last serial port
 - last UDP host / port
+- last chart group
 - last chart window
 - last parameter search text
 - last CSV output path
+- last selected language
+- bottom log collapsed / expanded state
 
 ## Common Errors
 
@@ -202,11 +226,11 @@ The GUI stores local state through `QSettings`, including:
 
 - install GUI dependencies with `pip install -e .[gui]`
 
-`connect_serial: no serial port selected`
+No serial port selected
 
 - choose or type a valid COM port before connecting
 
-`connect_udp: no UDP host provided`
+No UDP host provided
 
 - enter a valid host before connecting
 

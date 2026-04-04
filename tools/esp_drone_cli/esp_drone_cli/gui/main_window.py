@@ -11,7 +11,7 @@ from typing import Callable, Iterable
 os.environ.setdefault("PYQTGRAPH_QT_LIB", "PyQt5")
 
 from PyQt5.QtCore import QByteArray, QObject, QSettings, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QBrush, QColor, QKeySequence
+from PyQt5.QtGui import QBrush, QColor, QFont, QKeySequence
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -34,9 +34,11 @@ from PyQt5.QtWidgets import (
     QSpinBox,
     QDoubleSpinBox,
     QSplitter,
+    QStackedWidget,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -48,6 +50,671 @@ from esp_drone_cli.core import DeviceSession, ParamValue, TelemetrySample
 
 APP_ORG = "ESP-DRONE"
 APP_NAME = "ESP-DRONE GUI"
+
+TRANSLATIONS = {
+    "zh": {
+        "window.title": "ESP-DRONE 调试工作台",
+        "toolbar.language": "语言",
+        "lang.zh": "中文",
+        "lang.en": "English",
+        "group.connection": "设备连接",
+        "group.safety": "安全控制",
+        "group.debug": "调试动作",
+        "group.chart": "主图表工作区",
+        "group.realtime": "实时数值",
+        "group.status": "关键状态",
+        "group.params": "参数调试",
+        "group.log": "事件日志",
+        "group.motor": "电机测试",
+        "group.calib": "校准",
+        "group.rate": "速率测试",
+        "group.csv": "日志导出",
+        "label.link": "连接方式",
+        "label.serial_port": "串口",
+        "label.baud": "波特率",
+        "label.udp_host": "UDP 主机",
+        "label.udp_port": "UDP 端口",
+        "label.session": "会话信息",
+        "label.last_conn_error": "最近连接错误",
+        "label.target_hz": "目标频率",
+        "label.chart_group": "图表组",
+        "label.window": "时间窗",
+        "label.motor": "电机",
+        "label.duty": "占空比",
+        "label.axis": "轴",
+        "label.rate_dps": "角速度(dps)",
+        "label.output": "输出文件",
+        "label.dump_s": "导出时长(s)",
+        "label.name": "名称",
+        "label.type": "类型",
+        "label.current": "当前值",
+        "label.new_value": "新值",
+        "label.description": "说明",
+        "label.last_result": "最近结果",
+        "label.last_log": "最近日志",
+        "label.last_error": "最近错误",
+        "placeholder.search": "搜索参数...",
+        "placeholder.new_value": "输入新的参数值",
+        "placeholder.desc": "参数说明占位区",
+        "placeholder.event_log": "连接事件、命令结果和错误会显示在这里。",
+        "hint.param_default": "选择参数后可查看本地提示。最终校验仍以设备端为准。",
+        "warn.bench": "台架调试专用：请拆桨或固定机体。motor_test / rate_test 默认使用保守值。",
+        "button.connect": "连接",
+        "button.disconnect": "断开",
+        "button.arm": "解锁",
+        "button.disarm": "上锁",
+        "button.kill": "急停",
+        "button.reboot": "重启",
+        "button.stream_on": "开始流",
+        "button.stream_off": "停止流",
+        "button.apply_hz": "应用频率",
+        "button.copy_selected": "复制选中",
+        "button.pause_charts": "暂停图表",
+        "button.resume_charts": "继续图表",
+        "button.clear_charts": "清空图表",
+        "button.auto_scale": "自动缩放",
+        "button.reset_view": "重置视图",
+        "button.refresh": "刷新",
+        "button.save": "保存",
+        "button.reset": "恢复默认",
+        "button.export_json": "导出 JSON",
+        "button.import_json": "导入 JSON",
+        "button.set_selected": "设置当前参数",
+        "button.start": "开始",
+        "button.stop": "停止",
+        "button.calib_gyro": "校准陀螺仪",
+        "button.calib_level": "校准水平",
+        "button.start_log": "开始记录",
+        "button.stop_log": "停止记录",
+        "button.dump_csv": "导出 CSV",
+        "button.browse": "浏览",
+        "button.clear_log": "清空日志",
+        "button.copy_log": "复制日志",
+        "button.save_log": "保存日志",
+        "button.collapse_log": "折叠日志",
+        "button.expand_log": "展开日志",
+        "status.connected": "已连接",
+        "status.disconnected": "未连接",
+        "status.no_session": "当前无会话",
+        "status.no_conn_error": "当前无连接错误",
+        "status.stream_on": "流已开启",
+        "status.stream_off": "流未开启",
+        "status.no_error": "-",
+        "status.no_result": "-",
+        "status.no_log": "-",
+        "status.no_value": "-",
+        "arm.disarmed": "已上锁",
+        "arm.armed": "已解锁",
+        "arm.failsafe": "失效保护",
+        "arm.fault_lock": "故障锁定",
+        "failsafe.none": "无",
+        "failsafe.kill": "急停",
+        "failsafe.rc_timeout": "遥控超时",
+        "failsafe.imu_timeout": "IMU 超时",
+        "failsafe.imu_parse": "IMU 解析错误",
+        "failsafe.bat_critical": "电池严重欠压",
+        "failsafe.loop_overrun": "控制循环超时",
+        "control.idle": "空闲",
+        "control.axis_test": "轴测试",
+        "control.rate_test": "速率测试",
+        "imu.raw": "RAW",
+        "imu.direct": "DIRECT",
+        "msg.saved_log": "已保存事件日志到 {path}",
+        "msg.chart_paused": "图表已暂停",
+        "msg.chart_resumed": "图表已继续",
+        "msg.chart_cleared": "图表历史已清空",
+        "msg.connect_no_port": "未选择串口",
+        "msg.connect_no_host": "未填写 UDP 主机",
+        "msg.set_param_no_select": "未选择参数",
+        "msg.set_param_no_value": "未输入新的参数值",
+        "msg.loaded_params": "已加载 {count} 个参数",
+        "msg.param_updated": "{name} 已更新为 {value}",
+        "msg.export_done": "参数快照已导出",
+        "msg.import_done": "已导入 {count} 个参数",
+        "msg.logging_to": "正在记录到 {path}",
+        "msg.log_stopped": "CSV 日志已停止 ({path})",
+        "msg.dump_csv_done": "已导出 {rows} 行遥测到 {path}",
+        "msg.disconnect_done": "已断开连接",
+        "msg.command_ok": "{label} 完成",
+        "chart.gyro": "陀螺",
+        "chart.attitude": "姿态",
+        "chart.motors": "电机输出",
+        "chart.battery": "电池电压",
+        "chart.y_deg_s": "角速度 (deg/s)",
+        "chart.y_deg": "角度 (deg)",
+        "chart.y_duty": "占空比",
+        "chart.y_volt": "电压 (V)",
+        "chart.time": "时间 (s)",
+        "field.gyro_x": "陀螺 X (gyro_x)",
+        "field.gyro_y": "陀螺 Y (gyro_y)",
+        "field.gyro_z": "陀螺 Z (gyro_z)",
+        "field.roll_deg": "横滚角 (roll_deg)",
+        "field.pitch_deg": "俯仰角 (pitch_deg)",
+        "field.yaw_deg": "航向角 (yaw_deg)",
+        "field.rate_setpoint_roll": "横滚速率目标",
+        "field.rate_setpoint_pitch": "俯仰速率目标",
+        "field.rate_setpoint_yaw": "航向速率目标",
+        "field.motor1": "电机1",
+        "field.motor2": "电机2",
+        "field.motor3": "电机3",
+        "field.motor4": "电机4",
+        "field.battery_voltage": "电池电压",
+        "field.battery_adc_raw": "电池 ADC 原始值",
+        "field.imu_age_us": "IMU 样本龄",
+        "field.loop_dt_us": "控制循环周期",
+        "field.imu_mode": "IMU 模式",
+        "field.imu_health": "IMU 健康",
+        "field.arm_state": "解锁状态",
+        "field.failsafe_reason": "失效保护原因",
+        "field.control_mode": "控制模式",
+        "param.help.default": "暂无本地说明。最终校验仍以设备端为准。",
+    },
+    "en": {
+        "window.title": "ESP-DRONE Debug Workbench",
+        "toolbar.language": "Language",
+        "lang.zh": "中文",
+        "lang.en": "English",
+        "group.connection": "Connection",
+        "group.safety": "Safety Control",
+        "group.debug": "Debug Actions",
+        "group.chart": "Main Chart Workspace",
+        "group.realtime": "Realtime Values",
+        "group.status": "Key Status",
+        "group.params": "Parameters",
+        "group.log": "Event Log",
+        "group.motor": "Motor Test",
+        "group.calib": "Calibration",
+        "group.rate": "Rate Test",
+        "group.csv": "Log Export",
+        "label.link": "Link",
+        "label.serial_port": "Serial Port",
+        "label.baud": "Baud",
+        "label.udp_host": "UDP Host",
+        "label.udp_port": "UDP Port",
+        "label.session": "Session",
+        "label.last_conn_error": "Last Connection Error",
+        "label.target_hz": "Target Hz",
+        "label.chart_group": "Chart Group",
+        "label.window": "Window",
+        "label.motor": "Motor",
+        "label.duty": "Duty",
+        "label.axis": "Axis",
+        "label.rate_dps": "Rate dps",
+        "label.output": "Output",
+        "label.dump_s": "Dump s",
+        "label.name": "Name",
+        "label.type": "Type",
+        "label.current": "Current",
+        "label.new_value": "New Value",
+        "label.description": "Description",
+        "label.last_result": "Last Result",
+        "label.last_log": "Last Log",
+        "label.last_error": "Last Error",
+        "placeholder.search": "Search parameter...",
+        "placeholder.new_value": "Enter a new parameter value",
+        "placeholder.desc": "Parameter description placeholder",
+        "placeholder.event_log": "Connection events, command results, and errors will appear here.",
+        "hint.param_default": "Select a parameter to see a local hint. Device-side validation remains authoritative.",
+        "warn.bench": "Bench only: keep props removed or the frame restrained. motor_test / rate_test use conservative defaults.",
+        "button.connect": "Connect",
+        "button.disconnect": "Disconnect",
+        "button.arm": "Arm",
+        "button.disarm": "Disarm",
+        "button.kill": "Kill",
+        "button.reboot": "Reboot",
+        "button.stream_on": "Stream On",
+        "button.stream_off": "Stream Off",
+        "button.apply_hz": "Apply Hz",
+        "button.copy_selected": "Copy Selected",
+        "button.pause_charts": "Pause",
+        "button.resume_charts": "Resume",
+        "button.clear_charts": "Clear",
+        "button.auto_scale": "Auto Scale",
+        "button.reset_view": "Reset View",
+        "button.refresh": "Refresh",
+        "button.save": "Save",
+        "button.reset": "Reset",
+        "button.export_json": "Export JSON",
+        "button.import_json": "Import JSON",
+        "button.set_selected": "Set Selected",
+        "button.start": "Start",
+        "button.stop": "Stop",
+        "button.browse": "Browse",
+        "button.clear_log": "Clear Log",
+        "button.copy_log": "Copy Log",
+        "button.save_log": "Save Log",
+        "button.collapse_log": "Collapse Log",
+        "button.expand_log": "Expand Log",
+        "status.connected": "Connected",
+        "status.disconnected": "Disconnected",
+        "status.no_session": "No active session.",
+        "status.no_conn_error": "No connection error.",
+        "status.stream_on": "STREAM ON",
+        "status.stream_off": "STREAM OFF",
+        "status.no_error": "-",
+        "status.no_result": "-",
+        "status.no_log": "-",
+        "status.no_value": "-",
+        "arm.disarmed": "DISARMED",
+        "arm.armed": "ARMED",
+        "arm.failsafe": "FAILSAFE",
+        "arm.fault_lock": "FAULT_LOCK",
+        "failsafe.none": "NONE",
+        "failsafe.kill": "KILL",
+        "failsafe.rc_timeout": "RC_TIMEOUT",
+        "failsafe.imu_timeout": "IMU_TIMEOUT",
+        "failsafe.imu_parse": "IMU_PARSE",
+        "failsafe.bat_critical": "BAT_CRITICAL",
+        "failsafe.loop_overrun": "LOOP_OVERRUN",
+        "control.idle": "IDLE",
+        "control.axis_test": "AXIS_TEST",
+        "control.rate_test": "RATE_TEST",
+        "imu.raw": "RAW",
+        "imu.direct": "DIRECT",
+        "msg.saved_log": "Saved event log to {path}",
+        "msg.chart_paused": "Charts paused",
+        "msg.chart_resumed": "Charts resumed",
+        "msg.chart_cleared": "Chart history cleared",
+        "msg.connect_no_port": "No serial port selected",
+        "msg.connect_no_host": "No UDP host provided",
+        "msg.set_param_no_select": "No parameter selected",
+        "msg.set_param_no_value": "No new parameter value provided",
+        "msg.loaded_params": "Loaded {count} params",
+        "msg.param_updated": "{name} updated to {value}",
+        "msg.export_done": "Parameter snapshot exported",
+        "msg.import_done": "Imported {count} params",
+        "msg.logging_to": "Logging to {path}",
+        "msg.log_stopped": "CSV log stopped ({path})",
+        "msg.dump_csv_done": "Dumped {rows} telemetry rows to {path}",
+        "msg.disconnect_done": "Disconnect complete",
+        "msg.command_ok": "{label} complete",
+        "chart.gyro": "Gyro",
+        "chart.attitude": "Attitude",
+        "chart.motors": "Motors",
+        "chart.battery": "Battery",
+        "chart.y_deg_s": "deg/s",
+        "chart.y_deg": "deg",
+        "chart.y_duty": "duty",
+        "chart.y_volt": "V",
+        "chart.time": "time (s)",
+        "field.gyro_x": "gyro_x",
+        "field.gyro_y": "gyro_y",
+        "field.gyro_z": "gyro_z",
+        "field.roll_deg": "roll_deg",
+        "field.pitch_deg": "pitch_deg",
+        "field.yaw_deg": "yaw_deg",
+        "field.rate_setpoint_roll": "rate_setpoint_roll",
+        "field.rate_setpoint_pitch": "rate_setpoint_pitch",
+        "field.rate_setpoint_yaw": "rate_setpoint_yaw",
+        "field.motor1": "motor1",
+        "field.motor2": "motor2",
+        "field.motor3": "motor3",
+        "field.motor4": "motor4",
+        "field.battery_voltage": "battery_voltage",
+        "field.battery_adc_raw": "battery_adc_raw",
+        "field.imu_age_us": "imu_age_us",
+        "field.loop_dt_us": "loop_dt_us",
+        "field.imu_mode": "imu_mode",
+        "field.imu_health": "imu_health",
+        "field.arm_state": "arm_state",
+        "field.failsafe_reason": "failsafe_reason",
+        "field.control_mode": "control_mode",
+        "param.help.default": "No local note yet. Device-side validation remains authoritative.",
+    },
+}
+
+TRANSLATIONS = {
+    "zh": {
+        "window.title": "ESP-DRONE 调试工作台",
+        "toolbar.language": "语言",
+        "lang.zh": "中文",
+        "lang.en": "English",
+        "group.connection": "设备连接",
+        "group.safety": "安全控制",
+        "group.debug": "调试动作",
+        "group.chart": "主图表工作区",
+        "group.realtime": "实时数值",
+        "group.status": "关键状态",
+        "group.params": "参数调试",
+        "group.log": "事件日志",
+        "group.motor": "电机测试",
+        "group.calib": "校准",
+        "group.rate": "速率测试",
+        "group.csv": "日志导出",
+        "label.link": "连接方式",
+        "label.serial_port": "串口",
+        "label.baud": "波特率",
+        "label.udp_host": "UDP 主机",
+        "label.udp_port": "UDP 端口",
+        "label.session": "会话信息",
+        "label.last_conn_error": "最近连接错误",
+        "label.target_hz": "目标频率",
+        "label.chart_group": "通道组",
+        "label.window": "时间窗",
+        "label.motor": "电机",
+        "label.duty": "占空比",
+        "label.axis": "轴",
+        "label.rate_dps": "角速度(dps)",
+        "label.output": "输出文件",
+        "label.dump_s": "导出时长(s)",
+        "label.name": "名称",
+        "label.type": "类型",
+        "label.current": "当前值",
+        "label.new_value": "新值",
+        "label.description": "说明",
+        "label.last_result": "最近结果",
+        "label.last_log": "最近日志",
+        "label.last_error": "最近错误",
+        "placeholder.search": "搜索参数...",
+        "placeholder.new_value": "输入新的参数值",
+        "placeholder.desc": "参数说明占位区",
+        "placeholder.event_log": "连接事件、命令结果和错误会显示在这里。",
+        "hint.param_default": "选择参数后可查看本地提示。最终校验仍以设备端为准。",
+        "warn.bench": "仅限台架调试：请拆桨或固定机体。motor_test / rate_test 默认使用保守值。",
+        "button.connect": "连接",
+        "button.disconnect": "断开",
+        "button.arm": "解锁",
+        "button.disarm": "上锁",
+        "button.kill": "急停",
+        "button.reboot": "重启",
+        "button.stream_on": "开始流",
+        "button.stream_off": "停止流",
+        "button.apply_hz": "应用频率",
+        "button.copy_selected": "复制选中",
+        "button.pause_charts": "暂停图表",
+        "button.resume_charts": "继续图表",
+        "button.clear_charts": "清空图表",
+        "button.auto_scale": "自动缩放",
+        "button.reset_view": "重置视图",
+        "button.refresh": "刷新",
+        "button.save": "保存",
+        "button.reset": "恢复默认",
+        "button.export_json": "导出 JSON",
+        "button.import_json": "导入 JSON",
+        "button.set_selected": "设置当前参数",
+        "button.start": "开始",
+        "button.stop": "停止",
+        "button.browse": "浏览",
+        "button.clear_log": "清空日志",
+        "button.copy_log": "复制日志",
+        "button.save_log": "保存日志",
+        "button.collapse_log": "折叠日志",
+        "button.expand_log": "展开日志",
+        "status.connected": "已连接",
+        "status.disconnected": "未连接",
+        "status.no_session": "当前无活动会话。",
+        "status.no_conn_error": "当前无连接错误。",
+        "status.stream_on": "流已开启",
+        "status.stream_off": "流未开启",
+        "status.no_error": "-",
+        "status.no_result": "-",
+        "status.no_log": "-",
+        "status.no_value": "-",
+        "arm.disarmed": "已上锁",
+        "arm.armed": "已解锁",
+        "arm.failsafe": "失效保护",
+        "arm.fault_lock": "故障锁定",
+        "failsafe.none": "无",
+        "failsafe.kill": "急停",
+        "failsafe.rc_timeout": "遥控超时",
+        "failsafe.imu_timeout": "IMU 超时",
+        "failsafe.imu_parse": "IMU 解析错误",
+        "failsafe.bat_critical": "电池严重欠压",
+        "failsafe.loop_overrun": "控制循环超时",
+        "control.idle": "空闲",
+        "control.axis_test": "轴测试",
+        "control.rate_test": "速率测试",
+        "imu.raw": "RAW",
+        "imu.direct": "DIRECT",
+        "msg.saved_log": "已保存事件日志到 {path}",
+        "msg.chart_paused": "图表已暂停",
+        "msg.chart_resumed": "图表已继续",
+        "msg.chart_cleared": "图表历史已清空",
+        "msg.connect_no_port": "未选择串口",
+        "msg.connect_no_host": "未填写 UDP 主机",
+        "msg.set_param_no_select": "未选择参数",
+        "msg.set_param_no_value": "未输入新的参数值",
+        "msg.loaded_params": "已加载 {count} 个参数",
+        "msg.param_updated": "{name} 已更新为 {value}",
+        "msg.export_done": "参数快照已导出",
+        "msg.import_done": "已导入 {count} 个参数",
+        "msg.logging_to": "正在记录到 {path}",
+        "msg.log_stopped": "CSV 日志已停止 ({path})",
+        "msg.dump_csv_done": "已导出 {rows} 行遥测到 {path}",
+        "msg.disconnect_done": "已断开连接",
+        "msg.command_ok": "{label} 完成",
+        "msg.command_running": "{label} 执行中...",
+        "msg.connected": "已连接：{info}",
+        "msg.disconnected": "连接已断开",
+        "chart.gyro": "陀螺仪",
+        "chart.attitude": "姿态",
+        "chart.motors": "电机输出",
+        "chart.battery": "电池电压",
+        "chart.y_deg_s": "角速度 (deg/s)",
+        "chart.y_deg": "角度 (deg)",
+        "chart.y_duty": "占空比",
+        "chart.y_volt": "电压 (V)",
+        "chart.time": "时间 (s)",
+        "transport.serial": "串口",
+        "axis.roll": "横滚",
+        "axis.pitch": "俯仰",
+        "axis.yaw": "偏航",
+        "field.gyro_x": "陀螺仪 X (gyro_x)",
+        "field.gyro_y": "陀螺仪 Y (gyro_y)",
+        "field.gyro_z": "陀螺仪 Z (gyro_z)",
+        "field.roll_deg": "横滚角 (roll_deg)",
+        "field.pitch_deg": "俯仰角 (pitch_deg)",
+        "field.yaw_deg": "偏航角 (yaw_deg)",
+        "field.rate_setpoint_roll": "横滚速率目标",
+        "field.rate_setpoint_pitch": "俯仰速率目标",
+        "field.rate_setpoint_yaw": "偏航速率目标",
+        "field.motor1": "电机1",
+        "field.motor2": "电机2",
+        "field.motor3": "电机3",
+        "field.motor4": "电机4",
+        "field.battery_voltage": "电池电压",
+        "field.battery_adc_raw": "电池 ADC 原始值",
+        "field.imu_age_us": "IMU 样本龄",
+        "field.loop_dt_us": "控制循环周期",
+        "field.imu_mode": "IMU 模式",
+        "field.imu_health": "IMU 健康",
+        "field.arm_state": "解锁状态",
+        "field.failsafe_reason": "失效保护原因",
+        "field.control_mode": "控制模式",
+        "field.stream": "流状态",
+        "param.help.default": "暂无本地说明。最终校验仍以设备端为准。",
+    },
+    "en": {
+        "window.title": "ESP-DRONE Debug Workbench",
+        "toolbar.language": "Language",
+        "lang.zh": "中文",
+        "lang.en": "English",
+        "group.connection": "Connection",
+        "group.safety": "Safety Control",
+        "group.debug": "Debug Actions",
+        "group.chart": "Main Chart Workspace",
+        "group.realtime": "Realtime Values",
+        "group.status": "Key Status",
+        "group.params": "Parameters",
+        "group.log": "Event Log",
+        "group.motor": "Motor Test",
+        "group.calib": "Calibration",
+        "group.rate": "Rate Test",
+        "group.csv": "Log Export",
+        "label.link": "Link",
+        "label.serial_port": "Serial Port",
+        "label.baud": "Baud",
+        "label.udp_host": "UDP Host",
+        "label.udp_port": "UDP Port",
+        "label.session": "Session",
+        "label.last_conn_error": "Last Connection Error",
+        "label.target_hz": "Target Hz",
+        "label.chart_group": "Chart Group",
+        "label.window": "Window",
+        "label.motor": "Motor",
+        "label.duty": "Duty",
+        "label.axis": "Axis",
+        "label.rate_dps": "Rate dps",
+        "label.output": "Output File",
+        "label.dump_s": "Dump Duration (s)",
+        "label.name": "Name",
+        "label.type": "Type",
+        "label.current": "Current",
+        "label.new_value": "New Value",
+        "label.description": "Description",
+        "label.last_result": "Last Result",
+        "label.last_log": "Last Log",
+        "label.last_error": "Last Error",
+        "placeholder.search": "Search parameter...",
+        "placeholder.new_value": "Enter a new parameter value",
+        "placeholder.desc": "Parameter description placeholder",
+        "placeholder.event_log": "Connection events, command results, and errors appear here.",
+        "hint.param_default": "Select a parameter to see a local hint. Device-side validation remains authoritative.",
+        "warn.bench": "Bench only: keep props removed or the frame restrained. motor_test / rate_test use conservative defaults.",
+        "button.connect": "Connect",
+        "button.disconnect": "Disconnect",
+        "button.arm": "Arm",
+        "button.disarm": "Disarm",
+        "button.kill": "Kill",
+        "button.reboot": "Reboot",
+        "button.stream_on": "Stream On",
+        "button.stream_off": "Stream Off",
+        "button.apply_hz": "Apply Hz",
+        "button.copy_selected": "Copy Selected",
+        "button.pause_charts": "Pause Charts",
+        "button.resume_charts": "Resume Charts",
+        "button.clear_charts": "Clear Charts",
+        "button.auto_scale": "Auto Scale",
+        "button.reset_view": "Reset View",
+        "button.refresh": "Refresh",
+        "button.save": "Save",
+        "button.reset": "Reset",
+        "button.export_json": "Export JSON",
+        "button.import_json": "Import JSON",
+        "button.set_selected": "Set Selected",
+        "button.start": "Start",
+        "button.stop": "Stop",
+        "button.calib_gyro": "Calib Gyro",
+        "button.calib_level": "Calib Level",
+        "button.start_log": "Start Log",
+        "button.stop_log": "Stop Log",
+        "button.dump_csv": "Dump CSV",
+        "button.browse": "Browse",
+        "button.clear_log": "Clear Log",
+        "button.copy_log": "Copy Log",
+        "button.save_log": "Save Log",
+        "button.collapse_log": "Collapse Log",
+        "button.expand_log": "Expand Log",
+        "status.connected": "Connected",
+        "status.disconnected": "Disconnected",
+        "status.no_session": "No active session.",
+        "status.no_conn_error": "No connection error.",
+        "status.stream_on": "STREAM ON",
+        "status.stream_off": "STREAM OFF",
+        "status.no_error": "-",
+        "status.no_result": "-",
+        "status.no_log": "-",
+        "status.no_value": "-",
+        "arm.disarmed": "DISARMED",
+        "arm.armed": "ARMED",
+        "arm.failsafe": "FAILSAFE",
+        "arm.fault_lock": "FAULT_LOCK",
+        "failsafe.none": "NONE",
+        "failsafe.kill": "KILL",
+        "failsafe.rc_timeout": "RC_TIMEOUT",
+        "failsafe.imu_timeout": "IMU_TIMEOUT",
+        "failsafe.imu_parse": "IMU_PARSE",
+        "failsafe.bat_critical": "BAT_CRITICAL",
+        "failsafe.loop_overrun": "LOOP_OVERRUN",
+        "control.idle": "IDLE",
+        "control.axis_test": "AXIS_TEST",
+        "control.rate_test": "RATE_TEST",
+        "imu.raw": "RAW",
+        "imu.direct": "DIRECT",
+        "msg.saved_log": "Saved event log to {path}",
+        "msg.chart_paused": "Charts paused",
+        "msg.chart_resumed": "Charts resumed",
+        "msg.chart_cleared": "Chart history cleared",
+        "msg.connect_no_port": "No serial port selected",
+        "msg.connect_no_host": "No UDP host provided",
+        "msg.set_param_no_select": "No parameter selected",
+        "msg.set_param_no_value": "No new parameter value provided",
+        "msg.loaded_params": "Loaded {count} params",
+        "msg.param_updated": "{name} updated to {value}",
+        "msg.export_done": "Parameter snapshot exported",
+        "msg.import_done": "Imported {count} params",
+        "msg.logging_to": "Logging to {path}",
+        "msg.log_stopped": "CSV log stopped ({path})",
+        "msg.dump_csv_done": "Dumped {rows} telemetry rows to {path}",
+        "msg.disconnect_done": "Disconnect complete",
+        "msg.command_ok": "{label} complete",
+        "msg.command_running": "{label} running...",
+        "msg.connected": "Connected: {info}",
+        "msg.disconnected": "Disconnected",
+        "chart.gyro": "Gyro",
+        "chart.attitude": "Attitude",
+        "chart.motors": "Motors",
+        "chart.battery": "Battery",
+        "chart.y_deg_s": "deg/s",
+        "chart.y_deg": "deg",
+        "chart.y_duty": "duty",
+        "chart.y_volt": "V",
+        "chart.time": "time (s)",
+        "transport.serial": "Serial",
+        "axis.roll": "Roll",
+        "axis.pitch": "Pitch",
+        "axis.yaw": "Yaw",
+        "field.gyro_x": "gyro_x",
+        "field.gyro_y": "gyro_y",
+        "field.gyro_z": "gyro_z",
+        "field.roll_deg": "roll_deg",
+        "field.pitch_deg": "pitch_deg",
+        "field.yaw_deg": "yaw_deg",
+        "field.rate_setpoint_roll": "rate_setpoint_roll",
+        "field.rate_setpoint_pitch": "rate_setpoint_pitch",
+        "field.rate_setpoint_yaw": "rate_setpoint_yaw",
+        "field.motor1": "motor1",
+        "field.motor2": "motor2",
+        "field.motor3": "motor3",
+        "field.motor4": "motor4",
+        "field.battery_voltage": "battery_voltage",
+        "field.battery_adc_raw": "battery_adc_raw",
+        "field.imu_age_us": "imu_age_us",
+        "field.loop_dt_us": "loop_dt_us",
+        "field.imu_mode": "imu_mode",
+        "field.imu_health": "imu_health",
+        "field.arm_state": "arm_state",
+        "field.failsafe_reason": "failsafe_reason",
+        "field.control_mode": "control_mode",
+        "field.stream": "stream",
+        "param.help.default": "No local note yet. Device-side validation remains authoritative.",
+    },
+}
+
+TELEMETRY_FIELD_KEYS = {
+    "gyro_x": "field.gyro_x",
+    "gyro_y": "field.gyro_y",
+    "gyro_z": "field.gyro_z",
+    "roll_deg": "field.roll_deg",
+    "pitch_deg": "field.pitch_deg",
+    "yaw_deg": "field.yaw_deg",
+    "rate_setpoint_roll": "field.rate_setpoint_roll",
+    "rate_setpoint_pitch": "field.rate_setpoint_pitch",
+    "rate_setpoint_yaw": "field.rate_setpoint_yaw",
+    "motor1": "field.motor1",
+    "motor2": "field.motor2",
+    "motor3": "field.motor3",
+    "motor4": "field.motor4",
+    "battery_voltage": "field.battery_voltage",
+    "battery_adc_raw": "field.battery_adc_raw",
+    "imu_age_us": "field.imu_age_us",
+    "loop_dt_us": "field.loop_dt_us",
+    "imu_mode": "field.imu_mode",
+    "imu_health": "field.imu_health",
+    "arm_state": "field.arm_state",
+    "failsafe_reason": "field.failsafe_reason",
+    "control_mode": "field.control_mode",
+}
 
 STATUS_STYLE = {
     "neutral": "background:#ECEFF1;color:#263238;border:1px solid #B0BEC5;border-radius:10px;padding:2px 8px;font-weight:600;",
@@ -74,31 +741,31 @@ TYPE_NAMES = {
 }
 
 ARM_STATE_TEXT = {
-    0: ("DISARMED", "neutral"),
-    1: ("ARMED", "ok"),
-    2: ("FAILSAFE", "warn"),
-    3: ("FAULT_LOCK", "danger"),
+    0: ("arm.disarmed", "neutral"),
+    1: ("arm.armed", "ok"),
+    2: ("arm.failsafe", "warn"),
+    3: ("arm.fault_lock", "danger"),
 }
 
 FAILSAFE_TEXT = {
-    0: ("NONE", "neutral"),
-    1: ("KILL", "danger"),
-    2: ("RC_TIMEOUT", "warn"),
-    3: ("IMU_TIMEOUT", "warn"),
-    4: ("IMU_PARSE", "warn"),
-    5: ("BAT_CRITICAL", "danger"),
-    6: ("LOOP_OVERRUN", "warn"),
+    0: ("failsafe.none", "neutral"),
+    1: ("failsafe.kill", "danger"),
+    2: ("failsafe.rc_timeout", "warn"),
+    3: ("failsafe.imu_timeout", "warn"),
+    4: ("failsafe.imu_parse", "warn"),
+    5: ("failsafe.bat_critical", "danger"),
+    6: ("failsafe.loop_overrun", "warn"),
 }
 
 CONTROL_MODE_TEXT = {
-    0: ("IDLE", "neutral"),
-    1: ("AXIS_TEST", "active"),
-    2: ("RATE_TEST", "active"),
+    0: ("control.idle", "neutral"),
+    1: ("control.axis_test", "active"),
+    2: ("control.rate_test", "active"),
 }
 
 IMU_MODE_TEXT = {
-    0: ("RAW", "warn"),
-    1: ("DIRECT", "ok"),
+    0: ("imu.raw", "warn"),
+    1: ("imu.direct", "ok"),
 }
 
 
@@ -276,12 +943,12 @@ class MainWindow(QMainWindow):
         "bringup_test_base_duty": "Base duty used in axis/rate bench tests. Keep low on a restrained frame.",
     }
 
-    CHART_SPECS = [
-        ChartSpec("Gyro", [("gyro_x", "gyro_x"), ("gyro_y", "gyro_y"), ("gyro_z", "gyro_z")], "deg/s"),
-        ChartSpec("Attitude", [("roll_deg", "roll_deg"), ("pitch_deg", "pitch_deg"), ("yaw_deg", "yaw_deg")], "deg"),
-        ChartSpec("Motors", [("motor1", "motor1"), ("motor2", "motor2"), ("motor3", "motor3"), ("motor4", "motor4")], "duty"),
-        ChartSpec("Battery", [("battery_voltage", "battery_voltage")], "V"),
-    ]
+    CHART_GROUPS = {
+        "gyro": ChartSpec("chart.gyro", [("gyro_x", "field.gyro_x"), ("gyro_y", "field.gyro_y"), ("gyro_z", "field.gyro_z")], "chart.y_deg_s"),
+        "attitude": ChartSpec("chart.attitude", [("roll_deg", "field.roll_deg"), ("pitch_deg", "field.pitch_deg"), ("yaw_deg", "field.yaw_deg")], "chart.y_deg"),
+        "motors": ChartSpec("chart.motors", [("motor1", "field.motor1"), ("motor2", "field.motor2"), ("motor3", "field.motor3"), ("motor4", "field.motor4")], "chart.y_duty"),
+        "battery": ChartSpec("chart.battery", [("battery_voltage", "field.battery_voltage")], "chart.y_volt"),
+    }
 
     CHART_COLORS = ["#D32F2F", "#1976D2", "#388E3C", "#7B1FA2"]
 
@@ -304,16 +971,22 @@ class MainWindow(QMainWindow):
         self._params: list[ParamValue] = []
         self._selected_param: ParamValue | None = None
         self._last_telemetry: TelemetrySample | None = None
-        self._chart_bundles: dict[str, dict[str, object]] = {}
         self._history = TelemetryHistory()
         self._charts_running = True
         self._stream_enabled = False
         self._last_result = "-"
         self._closing = False
+        self._language = "zh"
+        self._current_chart_group = "gyro"
+        self._chart_curves: dict[str, object] = {}
+        self._chart_channel_checks: dict[str, QCheckBox] = {}
+        self._log_collapsed = False
 
         self._build_ui()
         self._wire_signals()
         self._load_settings()
+        self._apply_language()
+        self._rebuild_chart_channels()
         self._refresh_serial_ports()
         self._refresh_enabled_state()
 
@@ -322,6 +995,15 @@ class MainWindow(QMainWindow):
         self._plot_timer.timeout.connect(self._refresh_plots)
         self._plot_timer.start()
 
+    def _t(self, key: str, **kwargs) -> str:
+        table = TRANSLATIONS.get(self._language, TRANSLATIONS["zh"])
+        text = table.get(key, key)
+        return text.format(**kwargs)
+
+    def _combo_data(self, combo: QComboBox) -> object:
+        value = combo.currentData()
+        return combo.currentText() if value is None else value
+
     def _apply_workbench_style(self) -> None:
         self.setStyleSheet(
             """
@@ -329,6 +1011,7 @@ class MainWindow(QMainWindow):
                 background-color: #111827;
                 color: #e5eefb;
                 font-size: 13px;
+                font-family: "Microsoft YaHei";
             }
             QMainWindow {
                 background-color: #0b1220;
@@ -427,144 +1110,132 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
 
-        self.root_splitter = QSplitter(Qt.Horizontal)
-        self.root_splitter.setChildrenCollapsible(False)
-        self.root_splitter.setOpaqueResize(False)
+        top_bar = QHBoxLayout()
+        self.window_title_label = QLabel()
+        self.window_title_label.setStyleSheet("font-size:18px;font-weight:700;color:#f8fafc;")
+        top_bar.addWidget(self.window_title_label)
+        top_bar.addStretch(1)
+        self.language_label = QLabel()
+        self.language_combo = QComboBox()
+        self.language_combo.addItems(["中文", "English"])
+        top_bar.addWidget(self.language_label)
+        top_bar.addWidget(self.language_combo)
+        layout.addLayout(top_bar)
 
-        left_content = self._build_left_panel()
-        self.sidebar_scroll = QScrollArea()
-        self.sidebar_scroll.setWidgetResizable(True)
-        self.sidebar_scroll.setFrameShape(QFrame.NoFrame)
-        self.sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.sidebar_scroll.setMinimumWidth(360)
-        self.sidebar_scroll.setWidget(left_content)
+        self.vertical_splitter = QSplitter(Qt.Vertical)
+        self.vertical_splitter.setChildrenCollapsible(False)
+        self.vertical_splitter.setOpaqueResize(False)
 
-        self.workspace_panel = self._build_workspace_panel()
-        self.root_splitter.addWidget(self.sidebar_scroll)
-        self.root_splitter.addWidget(self.workspace_panel)
-        self.root_splitter.setStretchFactor(0, 0)
-        self.root_splitter.setStretchFactor(1, 1)
-        self.root_splitter.setSizes([380, 1280])
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.setOpaqueResize(False)
 
-        layout.addWidget(self.root_splitter)
+        self.left_panel = self._build_left_panel()
+        self.center_panel = self._build_center_workbench()
+        self.right_panel = self._build_right_workbench()
+        self.bottom_panel = self._build_bottom_panel()
+
+        self.main_splitter.addWidget(self.left_panel)
+        self.main_splitter.addWidget(self.center_panel)
+        self.main_splitter.addWidget(self.right_panel)
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setStretchFactor(2, 0)
+        self.main_splitter.setSizes([310, 960, 420])
+
+        self.vertical_splitter.addWidget(self.main_splitter)
+        self.vertical_splitter.addWidget(self.bottom_panel)
+        self.vertical_splitter.setStretchFactor(0, 1)
+        self.vertical_splitter.setStretchFactor(1, 0)
+        self.vertical_splitter.setSizes([860, 150])
+
+        layout.addWidget(self.vertical_splitter, 1)
         self.setCentralWidget(root)
 
-    def _build_workspace_panel(self) -> QWidget:
+    def _build_left_panel(self) -> QWidget:
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        self.connection_group = self._build_connection_group()
+        self.safety_group = self._build_safety_group()
+        self.debug_group = self._build_debug_group()
+        layout.addWidget(self.connection_group)
+        layout.addWidget(self.safety_group)
+        layout.addWidget(self.debug_group)
+        layout.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setWidget(content)
+        return scroll
+
+    def _build_center_workbench(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        layout.addWidget(self._build_overview_strip())
-
-        self.display_tabs = QTabWidget()
-        self.display_tabs.setDocumentMode(True)
-        self.display_tabs.addTab(self._build_telemetry_group(), "Realtime")
-        self.display_tabs.addTab(self._build_charts_group(), "Charts")
-
-        self.info_tabs = QTabWidget()
-        self.info_tabs.setDocumentMode(True)
-        self.info_tabs.addTab(self._build_params_group(), "Parameters")
-        self.info_tabs.addTab(self._build_bottom_panel(), "Events")
-
-        self.workspace_splitter = QSplitter(Qt.Vertical)
-        self.workspace_splitter.setChildrenCollapsible(False)
-        self.workspace_splitter.setOpaqueResize(False)
-        self.workspace_splitter.addWidget(self.display_tabs)
-        self.workspace_splitter.addWidget(self.info_tabs)
-        self.workspace_splitter.setStretchFactor(0, 3)
-        self.workspace_splitter.setStretchFactor(1, 2)
-        self.workspace_splitter.setSizes([520, 360])
-        layout.addWidget(self.workspace_splitter, 1)
+        self.center_splitter = QSplitter(Qt.Vertical)
+        self.center_splitter.setChildrenCollapsible(False)
+        self.center_splitter.setOpaqueResize(False)
+        self.chart_group = self._build_charts_group()
+        self.realtime_group = self._build_telemetry_group()
+        self.center_splitter.addWidget(self.chart_group)
+        self.center_splitter.addWidget(self.realtime_group)
+        self.center_splitter.setStretchFactor(0, 4)
+        self.center_splitter.setStretchFactor(1, 2)
+        self.center_splitter.setSizes([620, 240])
+        layout.addWidget(self.center_splitter)
         return panel
 
-    def _build_overview_strip(self) -> QWidget:
-        frame = QFrame()
-        frame.setObjectName("overviewStrip")
-        frame.setStyleSheet(
-            "QFrame#overviewStrip {background:#101826;border:1px solid #253447;border-radius:8px;}"
-        )
-        layout = QHBoxLayout(frame)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(10)
-
-        self.overview_connection_chip = QLabel("Disconnected")
-        self.overview_arm_chip = QLabel("DISARMED")
-        self.overview_failsafe_chip = QLabel("NONE")
-        self.overview_mode_chip = QLabel("IDLE")
-        self.overview_stream_chip = QLabel("STREAM OFF")
-        self.overview_imu_chip = QLabel("DIRECT")
-        self.overview_result_label = QLabel("-")
-        self.overview_result_label.setWordWrap(True)
-
-        for title, widget in (
-            ("Link", self.overview_connection_chip),
-            ("Arm", self.overview_arm_chip),
-            ("Failsafe", self.overview_failsafe_chip),
-            ("Mode", self.overview_mode_chip),
-            ("Stream", self.overview_stream_chip),
-            ("IMU", self.overview_imu_chip),
-        ):
-            layout.addWidget(QLabel(title))
-            layout.addWidget(widget)
-
-        layout.addStretch(1)
-        layout.addWidget(QLabel("Last Result"))
-        layout.addWidget(self.overview_result_label, 1)
-
-        _set_badge(self.overview_connection_chip, "Disconnected", "neutral")
-        _set_badge(self.overview_arm_chip, "DISARMED", "neutral")
-        _set_badge(self.overview_failsafe_chip, "NONE", "neutral")
-        _set_badge(self.overview_mode_chip, "IDLE", "neutral")
-        _set_badge(self.overview_stream_chip, "STREAM OFF", "neutral")
-        _set_badge(self.overview_imu_chip, "-", "neutral")
-        return frame
-
-    def _build_left_panel(self) -> QWidget:
+    def _build_right_workbench(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-        layout.addWidget(self._build_connection_group())
-        layout.addWidget(self._build_safety_group())
-        layout.addWidget(self._build_debug_group())
-        layout.addStretch(1)
-        return panel
-
-    def _build_center_panel(self) -> QWidget:
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.addWidget(self._build_telemetry_group())
-        layout.addWidget(self._build_charts_group())
-        return panel
-
-    def _build_right_panel(self) -> QWidget:
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.addWidget(self._build_params_group())
+        layout.setSpacing(8)
+        self.right_splitter = QSplitter(Qt.Vertical)
+        self.right_splitter.setChildrenCollapsible(False)
+        self.right_splitter.setOpaqueResize(False)
+        self.status_group = self._build_status_group()
+        self.params_group = self._build_params_group()
+        self.right_splitter.addWidget(self.status_group)
+        self.right_splitter.addWidget(self.params_group)
+        self.right_splitter.setStretchFactor(0, 0)
+        self.right_splitter.setStretchFactor(1, 1)
+        self.right_splitter.setSizes([200, 660])
+        layout.addWidget(self.right_splitter)
         return panel
 
     def _build_bottom_panel(self) -> QWidget:
-        group = QGroupBox("Event Log / Errors / Recent Result")
+        group = QGroupBox()
         layout = QVBoxLayout(group)
 
         bar = QHBoxLayout()
-        self.clear_log_button = QPushButton("Clear Log")
-        self.copy_log_button = QPushButton("Copy Log")
-        self.save_log_button = QPushButton("Save Log")
+        self.log_toggle_button = QToolButton()
+        self.log_toggle_button.setCheckable(True)
+        self.log_toggle_button.setArrowType(Qt.RightArrow)
+        self.log_toggle_button.setChecked(False)
+        self.clear_log_button = QPushButton()
+        self.copy_log_button = QPushButton()
+        self.save_log_button = QPushButton()
+        self.last_result_title_label = QLabel()
         self.last_result_label = QLabel("-")
         self.last_result_label.setWordWrap(True)
+        bar.addWidget(self.log_toggle_button)
         bar.addWidget(self.clear_log_button)
         bar.addWidget(self.copy_log_button)
         bar.addWidget(self.save_log_button)
-        bar.addWidget(QLabel("Last Result"))
+        bar.addWidget(self.last_result_title_label)
         bar.addWidget(self.last_result_label, 1)
         layout.addLayout(bar)
 
         self.event_log_edit = QPlainTextEdit()
         self.event_log_edit.setReadOnly(True)
         self.event_log_edit.setLineWrapMode(QPlainTextEdit.NoWrap)
-        self.event_log_edit.setPlaceholderText("Connection events, command results, and errors will appear here.")
+        self.event_log_edit.document().setMaximumBlockCount(300)
         layout.addWidget(self.event_log_edit, 1)
 
         summary = QGridLayout()
@@ -573,112 +1244,123 @@ class MainWindow(QMainWindow):
         self.last_error_label = QLabel("-")
         self.last_error_label.setWordWrap(True)
         self.last_error_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        summary.addWidget(QLabel("Last Log"), 0, 0)
+        self.last_log_title_label = QLabel()
+        self.last_error_title_label = QLabel()
+        summary.addWidget(self.last_log_title_label, 0, 0)
         summary.addWidget(self.last_log_path_label, 0, 1)
-        summary.addWidget(QLabel("Last Error"), 1, 0)
+        summary.addWidget(self.last_error_title_label, 1, 0)
         summary.addWidget(self.last_error_label, 1, 1)
         layout.addLayout(summary)
         return group
 
     def _build_connection_group(self) -> QGroupBox:
-        group = QGroupBox("Connection")
+        group = QGroupBox()
         layout = QGridLayout(group)
 
         self.link_type_combo = QComboBox()
         self.link_type_combo.addItems(["serial", "udp"])
 
+        self.link_type_label = QLabel()
+        self.serial_port_label = QLabel()
+        self.baud_label = QLabel()
+        self.udp_host_label = QLabel()
+        self.udp_port_label = QLabel()
+        self.session_title_label = QLabel()
+        self.last_conn_error_title_label = QLabel()
+
         self.serial_port_combo = QComboBox()
         self.serial_port_combo.setEditable(True)
         self.serial_port_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.refresh_ports_button = QPushButton("Refresh")
+        self.refresh_ports_button = QPushButton()
 
         self.baudrate_spin = QSpinBox()
         self.baudrate_spin.setRange(9600, 2000000)
         self.baudrate_spin.setValue(115200)
 
+        self.transport_stack = QStackedWidget()
+
+        serial_page = QWidget()
+        serial_form = QGridLayout(serial_page)
+        serial_form.setContentsMargins(0, 0, 0, 0)
+        self.serial_port_row = QWidget()
+        serial_port_row_layout = QHBoxLayout(self.serial_port_row)
+        serial_port_row_layout.setContentsMargins(0, 0, 0, 0)
+        serial_port_row_layout.addWidget(self.serial_port_combo, 1)
+        serial_port_row_layout.addWidget(self.refresh_ports_button)
+        serial_form.addWidget(self.serial_port_label, 0, 0)
+        serial_form.addWidget(self.serial_port_row, 0, 1)
+        serial_form.addWidget(self.baud_label, 1, 0)
+        serial_form.addWidget(self.baudrate_spin, 1, 1)
+        self.transport_stack.addWidget(serial_page)
+
+        udp_page = QWidget()
+        udp_form = QGridLayout(udp_page)
+        udp_form.setContentsMargins(0, 0, 0, 0)
         self.udp_host_edit = QLineEdit("192.168.4.1")
         self.udp_port_spin = QSpinBox()
         self.udp_port_spin.setRange(1, 65535)
         self.udp_port_spin.setValue(2391)
+        udp_form.addWidget(self.udp_host_label, 0, 0)
+        udp_form.addWidget(self.udp_host_edit, 0, 1)
+        udp_form.addWidget(self.udp_port_label, 1, 0)
+        udp_form.addWidget(self.udp_port_spin, 1, 1)
+        self.transport_stack.addWidget(udp_page)
 
-        self.connect_button = QPushButton("Connect")
-        self.disconnect_button = QPushButton("Disconnect")
+        self.connect_button = QPushButton()
+        self.disconnect_button = QPushButton()
 
-        self.connection_status_chip = QLabel("Disconnected")
-        _set_badge(self.connection_status_chip, "Disconnected", "neutral")
-        self.connection_info_label = QLabel("No active device session.")
+        self.connection_status_chip = QLabel()
+        self.connection_info_label = QLabel()
         self.connection_info_label.setWordWrap(True)
-        self.connection_error_detail = QLabel("No connection error.")
+        self.connection_error_detail = QLabel()
         self.connection_error_detail.setWordWrap(True)
         self.connection_error_detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
-        layout.addWidget(QLabel("Link"), 0, 0)
+        layout.addWidget(self.link_type_label, 0, 0)
         layout.addWidget(self.link_type_combo, 0, 1)
         layout.addWidget(self.connection_status_chip, 0, 2)
-        layout.addWidget(QLabel("Serial Port"), 1, 0)
-        layout.addWidget(self.serial_port_combo, 1, 1)
-        layout.addWidget(self.refresh_ports_button, 1, 2)
-        layout.addWidget(QLabel("Baud"), 2, 0)
-        layout.addWidget(self.baudrate_spin, 2, 1)
-        layout.addWidget(QLabel("UDP Host"), 3, 0)
-        layout.addWidget(self.udp_host_edit, 3, 1, 1, 2)
-        layout.addWidget(QLabel("UDP Port"), 4, 0)
-        layout.addWidget(self.udp_port_spin, 4, 1)
-        layout.addWidget(self.connect_button, 5, 1)
-        layout.addWidget(self.disconnect_button, 5, 2)
-        layout.addWidget(QLabel("Session"), 6, 0)
-        layout.addWidget(self.connection_info_label, 6, 1, 1, 2)
-        layout.addWidget(QLabel("Last Connection Error"), 7, 0)
-        layout.addWidget(self.connection_error_detail, 7, 1, 1, 2)
+        layout.addWidget(self.transport_stack, 1, 0, 1, 3)
+        layout.addWidget(self.connect_button, 2, 1)
+        layout.addWidget(self.disconnect_button, 2, 2)
+        layout.addWidget(self.session_title_label, 3, 0)
+        layout.addWidget(self.connection_info_label, 3, 1, 1, 2)
+        layout.addWidget(self.last_conn_error_title_label, 4, 0)
+        layout.addWidget(self.connection_error_detail, 4, 1, 1, 2)
         return group
 
     def _build_safety_group(self) -> QGroupBox:
-        group = QGroupBox("Safety Control")
+        group = QGroupBox()
         layout = QGridLayout(group)
 
-        self.arm_button = QPushButton("Arm")
-        self.disarm_button = QPushButton("Disarm")
-        self.kill_button = QPushButton("Kill")
+        self.arm_button = QPushButton()
+        self.disarm_button = QPushButton()
+        self.kill_button = QPushButton()
         self.kill_button.setStyleSheet("background:#C62828;color:white;font-weight:700;")
-        self.reboot_button = QPushButton("Reboot")
-
-        self.arm_state_chip = QLabel("-")
-        self.failsafe_chip = QLabel("-")
-        self.control_mode_chip = QLabel("-")
-        self.stream_chip = QLabel("-")
-        self.imu_mode_chip = QLabel("-")
+        self.reboot_button = QPushButton()
 
         layout.addWidget(self.arm_button, 0, 0)
         layout.addWidget(self.disarm_button, 0, 1)
-        layout.addWidget(self.kill_button, 0, 2)
-        layout.addWidget(self.reboot_button, 0, 3)
-        layout.addWidget(QLabel("arm_state"), 1, 0)
-        layout.addWidget(self.arm_state_chip, 1, 1)
-        layout.addWidget(QLabel("failsafe_reason"), 1, 2)
-        layout.addWidget(self.failsafe_chip, 1, 3)
-        layout.addWidget(QLabel("control_mode"), 2, 0)
-        layout.addWidget(self.control_mode_chip, 2, 1)
-        layout.addWidget(QLabel("imu_mode"), 2, 2)
-        layout.addWidget(self.imu_mode_chip, 2, 3)
-        layout.addWidget(QLabel("stream"), 3, 0)
-        layout.addWidget(self.stream_chip, 3, 1)
+        layout.addWidget(self.kill_button, 1, 0, 1, 2)
+        layout.addWidget(self.reboot_button, 2, 0, 1, 2)
         return group
 
     def _build_telemetry_group(self) -> QGroupBox:
-        group = QGroupBox("Realtime Telemetry")
+        group = QGroupBox()
         layout = QVBoxLayout(group)
+        layout.setSpacing(6)
 
         bar = QHBoxLayout()
-        self.stream_on_button = QPushButton("Stream On")
-        self.stream_off_button = QPushButton("Stream Off")
+        self.stream_on_button = QPushButton()
+        self.stream_off_button = QPushButton()
         self.stream_rate_spin = QSpinBox()
         self.stream_rate_spin.setRange(1, 200)
         self.stream_rate_spin.setValue(200)
-        self.apply_stream_rate_button = QPushButton("Apply Hz")
-        self.copy_telemetry_button = QPushButton("Copy Selected")
+        self.apply_stream_rate_button = QPushButton()
+        self.copy_telemetry_button = QPushButton()
+        self.target_hz_label = QLabel()
         bar.addWidget(self.stream_on_button)
         bar.addWidget(self.stream_off_button)
-        bar.addWidget(QLabel("Target Hz"))
+        bar.addWidget(self.target_hz_label)
         bar.addWidget(self.stream_rate_spin)
         bar.addWidget(self.apply_stream_rate_button)
         bar.addStretch(1)
@@ -693,6 +1375,7 @@ class MainWindow(QMainWindow):
         self.telemetry_table.setAlternatingRowColors(True)
         self.telemetry_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.telemetry_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.telemetry_table.setMinimumHeight(230)
         for row, name in enumerate(self.TELEMETRY_FIELDS):
             field_item = QTableWidgetItem(name)
             value_item = QTableWidgetItem("-")
@@ -702,78 +1385,64 @@ class MainWindow(QMainWindow):
         return group
 
     def _build_charts_group(self) -> QGroupBox:
-        group = QGroupBox("Charts")
+        group = QGroupBox()
         layout = QVBoxLayout(group)
 
         control_bar = QHBoxLayout()
-        self.chart_toggle_button = QPushButton("Pause Charts")
-        self.clear_charts_button = QPushButton("Clear Charts")
+        self.chart_group_label = QLabel()
+        self.chart_group_combo = QComboBox()
+        self.chart_toggle_button = QPushButton()
+        self.clear_charts_button = QPushButton()
+        self.auto_scale_button = QPushButton()
+        self.reset_view_button = QPushButton()
+        self.chart_window_label = QLabel()
         self.chart_window_combo = QComboBox()
         self.chart_window_combo.addItem("5 s", 5.0)
         self.chart_window_combo.addItem("10 s", 10.0)
         self.chart_window_combo.addItem("30 s", 30.0)
         self.chart_window_combo.setCurrentIndex(1)
+        self.chart_group_combo.addItems(["gyro", "attitude", "motors", "battery"])
+        control_bar.addWidget(self.chart_group_label)
+        control_bar.addWidget(self.chart_group_combo)
         control_bar.addWidget(self.chart_toggle_button)
         control_bar.addWidget(self.clear_charts_button)
-        control_bar.addWidget(QLabel("Window"))
+        control_bar.addWidget(self.auto_scale_button)
+        control_bar.addWidget(self.reset_view_button)
+        control_bar.addWidget(self.chart_window_label)
         control_bar.addWidget(self.chart_window_combo)
         control_bar.addStretch(1)
         layout.addLayout(control_bar)
 
-        grid = QGridLayout()
-        for index, spec in enumerate(self.CHART_SPECS):
-            box = QGroupBox(spec.title)
-            box_layout = QVBoxLayout(box)
+        self.chart_channel_bar = QHBoxLayout()
+        self.chart_channel_bar.addStretch(1)
+        layout.addLayout(self.chart_channel_bar)
 
-            checkbox_bar = QHBoxLayout()
-            plot = pg.PlotWidget()
-            plot.setBackground("#0f1722")
-            plot.showGrid(x=True, y=True, alpha=0.25)
-            plot.setLabel("left", spec.y_label)
-            plot.setLabel("bottom", "time", units="s")
-            plot.addLegend(offset=(10, 10))
-            plot.setMenuEnabled(False)
-            plot.getAxis("left").setTextPen("#dbeafe")
-            plot.getAxis("bottom").setTextPen("#dbeafe")
-            plot.getAxis("left").setPen(pg.mkPen("#4b5d75"))
-            plot.getAxis("bottom").setPen(pg.mkPen("#4b5d75"))
-
-            curves: dict[str, object] = {}
-            checks: dict[str, QCheckBox] = {}
-            for field_index, (field_name, field_label) in enumerate(spec.fields):
-                checkbox = QCheckBox(field_label)
-                checkbox.setChecked(True)
-                checks[field_name] = checkbox
-                checkbox_bar.addWidget(checkbox)
-                pen = pg.mkPen(self.CHART_COLORS[field_index % len(self.CHART_COLORS)], width=2)
-                curves[field_name] = plot.plot([], [], pen=pen, name=field_label)
-            checkbox_bar.addStretch(1)
-            box_layout.addLayout(checkbox_bar)
-            box_layout.addWidget(plot, 1)
-
-            self._chart_bundles[spec.title] = {
-                "spec": spec,
-                "plot": plot,
-                "curves": curves,
-                "checks": checks,
-            }
-            grid.addWidget(box, index // 2, index % 2)
-
-        layout.addLayout(grid)
+        self.main_plot = pg.PlotWidget()
+        self.main_plot.setMinimumHeight(430)
+        self.main_plot.setBackground("#0f1722")
+        self.main_plot.showGrid(x=True, y=True, alpha=0.25)
+        self.main_plot.addLegend(offset=(10, 10))
+        self.main_plot.setMenuEnabled(False)
+        self.main_plot.setClipToView(True)
+        self.main_plot.getAxis("left").setTextPen("#dbeafe")
+        self.main_plot.getAxis("bottom").setTextPen("#dbeafe")
+        self.main_plot.getAxis("left").setPen(pg.mkPen("#4b5d75"))
+        self.main_plot.getAxis("bottom").setPen(pg.mkPen("#4b5d75"))
+        layout.addWidget(self.main_plot, 1)
         return group
 
     def _build_params_group(self) -> QGroupBox:
-        group = QGroupBox("Parameters")
+        group = QGroupBox()
         layout = QVBoxLayout(group)
+        layout.setSpacing(6)
 
         top_bar = QHBoxLayout()
         self.param_search_edit = QLineEdit()
-        self.param_search_edit.setPlaceholderText("Search parameter...")
-        self.refresh_params_button = QPushButton("Refresh")
-        self.save_params_button = QPushButton("Save")
-        self.reset_params_button = QPushButton("Reset")
-        self.export_params_button = QPushButton("Export JSON")
-        self.import_params_button = QPushButton("Import JSON")
+        self.refresh_params_button = QPushButton()
+        self.save_params_button = QPushButton()
+        self.reset_params_button = QPushButton()
+        self.export_params_button = QPushButton()
+        self.import_params_button = QPushButton()
         top_bar.addWidget(self.param_search_edit, 1)
         top_bar.addWidget(self.refresh_params_button)
         top_bar.addWidget(self.save_params_button)
@@ -799,43 +1468,47 @@ class MainWindow(QMainWindow):
         detail = QWidget()
         detail_layout = QVBoxLayout(detail)
         form = QFormLayout()
+        self.param_name_title_label = QLabel()
+        self.param_type_title_label = QLabel()
+        self.param_current_title_label = QLabel()
         self.param_name_label = QLabel("-")
         self.param_type_label = QLabel("-")
         self.param_current_value_label = QLabel("-")
         self.param_new_value_edit = QLineEdit()
-        self.param_new_value_edit.setPlaceholderText("New value for selected parameter")
-        self.param_hint_label = QLabel("Select a parameter to see a local hint. Device-side validation remains authoritative.")
+        self.param_hint_label = QLabel()
         self.param_hint_label.setWordWrap(True)
         self.param_help_text = QPlainTextEdit()
         self.param_help_text.setReadOnly(True)
-        self.param_help_text.setPlaceholderText("Parameter description placeholder")
-        self.param_help_text.setMaximumHeight(120)
-        form.addRow("Name", self.param_name_label)
-        form.addRow("Type", self.param_type_label)
-        form.addRow("Current", self.param_current_value_label)
-        form.addRow("New Value", self.param_new_value_edit)
+        self.param_help_text.setMaximumHeight(72)
+        form.addRow(self.param_name_title_label, self.param_name_label)
+        form.addRow(self.param_type_title_label, self.param_type_label)
+        form.addRow(self.param_current_title_label, self.param_current_value_label)
+        self.param_new_value_title_label = QLabel()
+        form.addRow(self.param_new_value_title_label, self.param_new_value_edit)
         detail_layout.addLayout(form)
         detail_layout.addWidget(self.param_hint_label)
-        detail_layout.addWidget(QLabel("Description"))
+        self.param_desc_title_label = QLabel()
+        detail_layout.addWidget(self.param_desc_title_label)
         detail_layout.addWidget(self.param_help_text)
-        self.set_param_button = QPushButton("Set Selected")
+        self.set_param_button = QPushButton()
         detail_layout.addWidget(self.set_param_button)
         self.params_splitter.addWidget(detail)
-        self.params_splitter.setStretchFactor(0, 1)
+        self.params_splitter.setStretchFactor(0, 4)
         self.params_splitter.setStretchFactor(1, 0)
         layout.addWidget(self.params_splitter, 1)
         return group
 
     def _build_debug_group(self) -> QGroupBox:
-        group = QGroupBox("Debug Actions")
+        group = QGroupBox()
         layout = QVBoxLayout(group)
 
-        warning = QLabel("Bench only: keep props removed or the frame restrained. Motor/rate tests default to conservative values.")
+        self.debug_warning_label = QLabel()
+        warning = self.debug_warning_label
         warning.setWordWrap(True)
         warning.setStyleSheet("color:#E65100;font-weight:600;")
         layout.addWidget(warning)
 
-        motor_box = QGroupBox("motor_test")
+        motor_box = QGroupBox()
         motor_layout = QGridLayout(motor_box)
         self.motor_combo = QComboBox()
         self.motor_combo.addItems(["m1", "m2", "m3", "m4"])
@@ -844,26 +1517,30 @@ class MainWindow(QMainWindow):
         self.motor_duty_spin.setDecimals(3)
         self.motor_duty_spin.setSingleStep(0.01)
         self.motor_duty_spin.setValue(0.05)
-        self.motor_start_button = QPushButton("Start")
-        self.motor_stop_button = QPushButton("Stop")
-        motor_layout.addWidget(QLabel("Motor"), 0, 0)
+        self.motor_group = motor_box
+        self.motor_start_button = QPushButton()
+        self.motor_stop_button = QPushButton()
+        self.motor_label = QLabel()
+        self.duty_label = QLabel()
+        motor_layout.addWidget(self.motor_label, 0, 0)
         motor_layout.addWidget(self.motor_combo, 0, 1)
-        motor_layout.addWidget(QLabel("Duty"), 0, 2)
+        motor_layout.addWidget(self.duty_label, 0, 2)
         motor_layout.addWidget(self.motor_duty_spin, 0, 3)
         motor_layout.addWidget(self.motor_start_button, 0, 4)
         motor_layout.addWidget(self.motor_stop_button, 0, 5)
         layout.addWidget(motor_box)
 
-        calib_box = QGroupBox("Calibration")
+        calib_box = QGroupBox()
         calib_layout = QHBoxLayout(calib_box)
-        self.calib_gyro_button = QPushButton("Calib Gyro")
-        self.calib_level_button = QPushButton("Calib Level")
+        self.calib_group = calib_box
+        self.calib_gyro_button = QPushButton()
+        self.calib_level_button = QPushButton()
         calib_layout.addWidget(self.calib_gyro_button)
         calib_layout.addWidget(self.calib_level_button)
         calib_layout.addStretch(1)
         layout.addWidget(calib_box)
 
-        rate_box = QGroupBox("rate_test")
+        rate_box = QGroupBox()
         rate_layout = QGridLayout(rate_box)
         self.rate_axis_combo = QComboBox()
         self.rate_axis_combo.addItems(["roll", "pitch", "yaw"])
@@ -872,40 +1549,77 @@ class MainWindow(QMainWindow):
         self.rate_value_spin.setDecimals(1)
         self.rate_value_spin.setSingleStep(5.0)
         self.rate_value_spin.setValue(20.0)
-        self.rate_start_button = QPushButton("Start")
-        self.rate_stop_button = QPushButton("Stop")
-        rate_layout.addWidget(QLabel("Axis"), 0, 0)
+        self.rate_group = rate_box
+        self.rate_start_button = QPushButton()
+        self.rate_stop_button = QPushButton()
+        self.rate_axis_label = QLabel()
+        self.rate_dps_label = QLabel()
+        rate_layout.addWidget(self.rate_axis_label, 0, 0)
         rate_layout.addWidget(self.rate_axis_combo, 0, 1)
-        rate_layout.addWidget(QLabel("Rate dps"), 0, 2)
+        rate_layout.addWidget(self.rate_dps_label, 0, 2)
         rate_layout.addWidget(self.rate_value_spin, 0, 3)
         rate_layout.addWidget(self.rate_start_button, 0, 4)
         rate_layout.addWidget(self.rate_stop_button, 0, 5)
         layout.addWidget(rate_box)
 
-        log_box = QGroupBox("CSV / Log")
+        log_box = QGroupBox()
         log_layout = QGridLayout(log_box)
         self.log_path_edit = QLineEdit(str(Path.cwd() / "telemetry.csv"))
-        self.log_browse_button = QPushButton("Browse")
-        self.start_log_button = QPushButton("Start Log")
-        self.stop_log_button = QPushButton("Stop Log")
+        self.csv_group = log_box
+        self.log_browse_button = QPushButton()
+        self.start_log_button = QPushButton()
+        self.stop_log_button = QPushButton()
         self.dump_duration_spin = QDoubleSpinBox()
         self.dump_duration_spin.setRange(0.5, 300.0)
         self.dump_duration_spin.setDecimals(1)
         self.dump_duration_spin.setValue(5.0)
-        self.dump_csv_button = QPushButton("Dump CSV")
-        log_layout.addWidget(QLabel("Output"), 0, 0)
+        self.dump_csv_button = QPushButton()
+        self.output_label = QLabel()
+        self.dump_s_label = QLabel()
+        log_layout.addWidget(self.output_label, 0, 0)
         log_layout.addWidget(self.log_path_edit, 0, 1, 1, 4)
         log_layout.addWidget(self.log_browse_button, 0, 5)
         log_layout.addWidget(self.start_log_button, 1, 0)
         log_layout.addWidget(self.stop_log_button, 1, 1)
-        log_layout.addWidget(QLabel("Dump s"), 1, 2)
+        log_layout.addWidget(self.dump_s_label, 1, 2)
         log_layout.addWidget(self.dump_duration_spin, 1, 3)
         log_layout.addWidget(self.dump_csv_button, 1, 4)
         layout.addWidget(log_box)
 
         return group
 
+    def _build_status_group(self) -> QGroupBox:
+        group = QGroupBox()
+        layout = QGridLayout(group)
+        self.status_cards: dict[str, tuple[QLabel, QLabel]] = {}
+        cards = [
+            ("arm_state", 0, 0),
+            ("failsafe_reason", 0, 1),
+            ("control_mode", 1, 0),
+            ("imu_mode", 1, 1),
+            ("stream", 2, 0),
+            ("battery_voltage", 2, 1),
+            ("imu_age_us", 3, 0),
+            ("loop_dt_us", 3, 1),
+        ]
+        for key, row, col in cards:
+            card = QFrame()
+            card.setStyleSheet("QFrame {background:#0f1722;border:1px solid #253447;border-radius:8px;}")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(10, 8, 10, 8)
+            title = QLabel(key)
+            title.setStyleSheet("color:#93c5fd;font-size:11px;font-weight:600;")
+            value = QLabel("-")
+            value.setStyleSheet("font-size:14px;font-weight:700;color:#f8fafc;")
+            value.setWordWrap(True)
+            card_layout.addWidget(title)
+            card_layout.addWidget(value)
+            self.status_cards[key] = (title, value)
+            layout.addWidget(card, row, col)
+        return group
+
     def _wire_signals(self) -> None:
+        self.language_combo.currentIndexChanged.connect(self._change_language)
         self.link_type_combo.currentTextChanged.connect(self._update_link_inputs)
         self.refresh_ports_button.clicked.connect(self._refresh_serial_ports)
         self.connect_button.clicked.connect(self._connect_requested)
@@ -923,11 +1637,15 @@ class MainWindow(QMainWindow):
 
         self.chart_toggle_button.clicked.connect(self._toggle_charts)
         self.clear_charts_button.clicked.connect(self._clear_charts)
+        self.auto_scale_button.clicked.connect(self._auto_scale_plot)
+        self.reset_view_button.clicked.connect(self._reset_plot_view)
         self.chart_window_combo.currentIndexChanged.connect(self._save_settings)
+        self.chart_group_combo.currentTextChanged.connect(self._change_chart_group)
 
         self.refresh_params_button.clicked.connect(self._refresh_params)
         self.param_search_edit.textChanged.connect(self._filter_params_table)
         self.params_table.itemSelectionChanged.connect(self._handle_param_selection)
+        self.params_table.itemDoubleClicked.connect(lambda *_args: self.param_new_value_edit.setFocus())
         self.param_new_value_edit.textChanged.connect(self._update_param_hint)
         self.set_param_button.clicked.connect(self._set_selected_param)
         self.save_params_button.clicked.connect(lambda: self._run_session_action("save_params", self._session.save_params))
@@ -946,6 +1664,7 @@ class MainWindow(QMainWindow):
         self.stop_log_button.clicked.connect(self._stop_log)
         self.dump_csv_button.clicked.connect(self._dump_csv)
 
+        self.log_toggle_button.clicked.connect(self._toggle_log_panel)
         self.clear_log_button.clicked.connect(self.event_log_edit.clear)
         self.copy_log_button.clicked.connect(lambda: QApplication.clipboard().setText(self.event_log_edit.toPlainText()))
         self.save_log_button.clicked.connect(self._save_event_log)
@@ -957,33 +1676,244 @@ class MainWindow(QMainWindow):
         self._bridge.error_raised.connect(self._on_error)
 
     def _run_session_action(self, label: str, callback) -> None:
-        self._set_last_result(f"{label} ...")
+        self._set_last_result(self._t("msg.command_running", label=label))
         self._bridge.run_async(label, callback)
 
     def _set_last_result(self, text: str) -> None:
         self._last_result = text
         self.last_result_label.setText(text)
-        self.overview_result_label.setText(text)
 
     def _append_log(self, text: str) -> None:
         stamp = time.strftime("%H:%M:%S")
         self.event_log_edit.appendPlainText(f"[{stamp}] {text}")
 
     def _save_event_log(self) -> None:
-        output, _ = QFileDialog.getSaveFileName(self, "Save Event Log", "esp-drone-gui.log", "Log Files (*.log *.txt)")
+        output, _ = QFileDialog.getSaveFileName(
+            self,
+            self._t("button.save_log"),
+            "esp-drone-gui.log",
+            "Log Files (*.log *.txt)",
+        )
         if not output:
             return
         Path(output).write_text(self.event_log_edit.toPlainText(), encoding="utf-8")
-        self._append_log(f"saved event log to {output}")
+        self._append_log(self._t("msg.saved_log", path=output))
 
     def _update_link_inputs(self) -> None:
-        is_serial = self.link_type_combo.currentText() == "serial"
-        self.serial_port_combo.setEnabled(is_serial)
-        self.refresh_ports_button.setEnabled(is_serial)
-        self.baudrate_spin.setEnabled(is_serial)
-        self.udp_host_edit.setEnabled(not is_serial)
-        self.udp_port_spin.setEnabled(not is_serial)
+        is_serial = self._combo_data(self.link_type_combo) == "serial"
+        self.transport_stack.setCurrentIndex(0 if is_serial else 1)
         self._save_settings()
+
+    def _change_language(self) -> None:
+        self._language = "zh" if self.language_combo.currentIndex() == 0 else "en"
+        self._apply_language()
+        self._save_settings()
+
+    def _status_text(self, mapping: dict[int, tuple[str, str]], value: int) -> tuple[str, str]:
+        key, role = _status_from_map(mapping, value)
+        return self._t(key), role
+
+    def _apply_language(self) -> None:
+        self.setWindowTitle(self._t("window.title"))
+        self.window_title_label.setText(self._t("window.title"))
+        self.language_label.setText(self._t("toolbar.language"))
+        self.language_combo.blockSignals(True)
+        self.language_combo.clear()
+        self.language_combo.addItems([self._t("lang.zh"), self._t("lang.en")])
+        self.language_combo.setCurrentIndex(0 if self._language == "zh" else 1)
+        self.language_combo.blockSignals(False)
+
+        self.connection_group.setTitle(self._t("group.connection"))
+        self.safety_group.setTitle(self._t("group.safety"))
+        self.debug_group.setTitle(self._t("group.debug"))
+        self.chart_group.setTitle(self._t("group.chart"))
+        self.realtime_group.setTitle(self._t("group.realtime"))
+        self.status_group.setTitle(self._t("group.status"))
+        self.params_group.setTitle(self._t("group.params"))
+        self.bottom_panel.setTitle(self._t("group.log"))
+        self.motor_group.setTitle(self._t("group.motor"))
+        self.calib_group.setTitle(self._t("group.calib"))
+        self.rate_group.setTitle(self._t("group.rate"))
+        self.csv_group.setTitle(self._t("group.csv"))
+
+        self.link_type_label.setText(self._t("label.link"))
+        self.serial_port_label.setText(self._t("label.serial_port"))
+        self.baud_label.setText(self._t("label.baud"))
+        self.udp_host_label.setText(self._t("label.udp_host"))
+        self.udp_port_label.setText(self._t("label.udp_port"))
+        self.session_title_label.setText(self._t("label.session"))
+        self.last_conn_error_title_label.setText(self._t("label.last_conn_error"))
+        self.connect_button.setText(self._t("button.connect"))
+        self.disconnect_button.setText(self._t("button.disconnect"))
+        self.refresh_ports_button.setText(self._t("button.refresh"))
+
+        self.arm_button.setText(self._t("button.arm"))
+        self.disarm_button.setText(self._t("button.disarm"))
+        self.kill_button.setText(self._t("button.kill"))
+        self.reboot_button.setText(self._t("button.reboot"))
+
+        self.debug_warning_label.setText(self._t("warn.bench"))
+        self.motor_label.setText(self._t("label.motor"))
+        self.duty_label.setText(self._t("label.duty"))
+        self.motor_start_button.setText(self._t("button.start"))
+        self.motor_stop_button.setText(self._t("button.stop"))
+        self.calib_gyro_button.setText(self._t("button.calib_gyro"))
+        self.calib_level_button.setText(self._t("button.calib_level"))
+        self.rate_axis_label.setText(self._t("label.axis"))
+        self.rate_dps_label.setText(self._t("label.rate_dps"))
+        self.rate_start_button.setText(self._t("button.start"))
+        self.rate_stop_button.setText(self._t("button.stop"))
+        self.output_label.setText(self._t("label.output"))
+        self.dump_s_label.setText(self._t("label.dump_s"))
+        self.log_browse_button.setText(self._t("button.browse"))
+        self.start_log_button.setText(self._t("button.start_log"))
+        self.stop_log_button.setText(self._t("button.stop_log"))
+        self.dump_csv_button.setText(self._t("button.dump_csv"))
+
+        self.stream_on_button.setText(self._t("button.stream_on"))
+        self.stream_off_button.setText(self._t("button.stream_off"))
+        self.target_hz_label.setText(self._t("label.target_hz"))
+        self.apply_stream_rate_button.setText(self._t("button.apply_hz"))
+        self.copy_telemetry_button.setText(self._t("button.copy_selected"))
+        self.telemetry_table.setHorizontalHeaderLabels([self._t("label.name"), self._t("label.current")])
+        for row, name in enumerate(self.TELEMETRY_FIELDS):
+            item = self.telemetry_table.item(row, 0)
+            if item is not None:
+                item.setText(self._t(TELEMETRY_FIELD_KEYS.get(name, name)))
+
+        current_link = self._combo_data(self.link_type_combo) if self.link_type_combo.count() else "serial"
+        self.link_type_combo.blockSignals(True)
+        self.link_type_combo.clear()
+        self.link_type_combo.addItem(self._t("transport.serial"), "serial")
+        self.link_type_combo.addItem("UDP", "udp")
+        self.link_type_combo.setCurrentIndex(0 if current_link == "serial" else 1)
+        self.link_type_combo.blockSignals(False)
+
+        current_axis = self.rate_axis_combo.currentIndex()
+        self.rate_axis_combo.blockSignals(True)
+        self.rate_axis_combo.clear()
+        self.rate_axis_combo.addItem(self._t("axis.roll"), 0)
+        self.rate_axis_combo.addItem(self._t("axis.pitch"), 1)
+        self.rate_axis_combo.addItem(self._t("axis.yaw"), 2)
+        self.rate_axis_combo.setCurrentIndex(max(0, min(current_axis, 2)))
+        self.rate_axis_combo.blockSignals(False)
+
+        self.chart_group_label.setText(self._t("label.chart_group"))
+        current_group = self._current_chart_group
+        self.chart_group_combo.blockSignals(True)
+        self.chart_group_combo.clear()
+        for group_key in self.CHART_GROUPS:
+            self.chart_group_combo.addItem(self._t(self.CHART_GROUPS[group_key].title), group_key)
+        chart_index = self.chart_group_combo.findData(current_group)
+        self.chart_group_combo.setCurrentIndex(chart_index if chart_index >= 0 else 0)
+        self.chart_group_combo.blockSignals(False)
+        self.chart_toggle_button.setText(self._t("button.pause_charts") if self._charts_running else self._t("button.resume_charts"))
+        self.clear_charts_button.setText(self._t("button.clear_charts"))
+        self.auto_scale_button.setText(self._t("button.auto_scale"))
+        self.reset_view_button.setText(self._t("button.reset_view"))
+        self.chart_window_label.setText(self._t("label.window"))
+
+        self.param_search_edit.setPlaceholderText(self._t("placeholder.search"))
+        self.refresh_params_button.setText(self._t("button.refresh"))
+        self.save_params_button.setText(self._t("button.save"))
+        self.reset_params_button.setText(self._t("button.reset"))
+        self.export_params_button.setText(self._t("button.export_json"))
+        self.import_params_button.setText(self._t("button.import_json"))
+        self.params_table.setHorizontalHeaderLabels([self._t("label.name"), self._t("label.type"), self._t("label.current")])
+        self.param_name_title_label.setText(self._t("label.name"))
+        self.param_type_title_label.setText(self._t("label.type"))
+        self.param_current_title_label.setText(self._t("label.current"))
+        self.param_new_value_title_label.setText(self._t("label.new_value"))
+        self.param_new_value_edit.setPlaceholderText(self._t("placeholder.new_value"))
+        self.param_desc_title_label.setText(self._t("label.description"))
+        self.param_help_text.setPlaceholderText(self._t("placeholder.desc"))
+        self.set_param_button.setText(self._t("button.set_selected"))
+
+        self.last_result_title_label.setText(self._t("label.last_result"))
+        self.last_log_title_label.setText(self._t("label.last_log"))
+        self.last_error_title_label.setText(self._t("label.last_error"))
+        self.clear_log_button.setText(self._t("button.clear_log"))
+        self.copy_log_button.setText(self._t("button.copy_log"))
+        self.save_log_button.setText(self._t("button.save_log"))
+        self.event_log_edit.setPlaceholderText(self._t("placeholder.event_log"))
+
+        for key, (title, _value) in self.status_cards.items():
+            title.setText(self._t(TELEMETRY_FIELD_KEYS.get(key, f"field.{key}")))
+
+        self._rebuild_chart_channels()
+        self._update_stream_chip()
+        if self._last_telemetry is None:
+            self._refresh_status_cards_from_none()
+
+    def _rebuild_chart_channels(self) -> None:
+        current_group = self.chart_group_combo.currentData() or self._current_chart_group
+        if current_group not in self.CHART_GROUPS:
+            current_group = "gyro"
+        self._current_chart_group = str(current_group)
+        spec = self.CHART_GROUPS[self._current_chart_group]
+
+        while self.chart_channel_bar.count():
+            item = self.chart_channel_bar.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        self.main_plot.clear()
+        plot_item = self.main_plot.getPlotItem()
+        if plot_item.legend is not None:
+            plot_item.legend.scene().removeItem(plot_item.legend)
+            plot_item.legend = None
+        plot_item.addLegend(offset=(12, 12))
+        plot_item.setLabel("left", self._t(spec.y_label))
+        plot_item.setLabel("bottom", self._t("chart.time"))
+        plot_item.setTitle(self._t(spec.title), color="#f8fafc", size="14pt")
+
+        self._chart_curves.clear()
+        self._chart_channel_checks.clear()
+        for index, (field_name, label_key) in enumerate(spec.fields):
+            checkbox = QCheckBox(self._t(label_key))
+            checkbox.setChecked(True)
+            checkbox.stateChanged.connect(self._refresh_plots)
+            self.chart_channel_bar.addWidget(checkbox)
+            self._chart_channel_checks[field_name] = checkbox
+            self._chart_curves[field_name] = self.main_plot.plot(
+                [],
+                [],
+                name=self._t(label_key),
+                pen=pg.mkPen(self.CHART_COLORS[index % len(self.CHART_COLORS)], width=2.2),
+            )
+        self.chart_channel_bar.addStretch(1)
+        self._reset_plot_view()
+
+    def _change_chart_group(self) -> None:
+        self._rebuild_chart_channels()
+        self._save_settings()
+
+    def _toggle_log_panel(self) -> None:
+        self._log_collapsed = not self._log_collapsed
+        self.log_body.setVisible(not self._log_collapsed)
+        self.log_toggle_button.setArrowType(Qt.RightArrow if self._log_collapsed else Qt.DownArrow)
+        self.log_toggle_button.setText(self._t("button.expand_log") if self._log_collapsed else self._t("button.collapse_log"))
+        if self._log_collapsed:
+            self.vertical_splitter.setSizes([960, 34])
+        else:
+            self.vertical_splitter.setSizes([880, 130])
+        self._save_settings()
+
+    def _auto_scale_plot(self) -> None:
+        self.main_plot.enableAutoRange(axis="y", enable=True)
+        self.main_plot.autoRange()
+
+    def _reset_plot_view(self) -> None:
+        window = self._current_chart_window()
+        self.main_plot.setXRange(-window, 0.0, padding=0.01)
+        self.main_plot.enableAutoRange(axis="y", enable=True)
+        self.main_plot.autoRange()
+
+    def _refresh_status_cards_from_none(self) -> None:
+        for _key, (_title, value) in self.status_cards.items():
+            value.setText(self._t("status.no_value"))
+            value.setStyleSheet("font-size:14px;font-weight:700;color:#f8fafc;")
 
     def _refresh_serial_ports(self) -> None:
         current = self.serial_port_combo.currentText().strip()
@@ -1007,10 +1937,10 @@ class MainWindow(QMainWindow):
         self.serial_port_combo.blockSignals(False)
 
     def _connect_requested(self) -> None:
-        if self.link_type_combo.currentText() == "serial":
+        if (self.link_type_combo.currentData() or self.link_type_combo.currentText()) == "serial":
             port = self.serial_port_combo.currentText().strip()
             if not port:
-                self._on_error("connect_serial: no serial port selected")
+                self._on_error(self._t("msg.connect_no_port"))
                 return
             baudrate = int(self.baudrate_spin.value())
             self._run_session_action(
@@ -1021,7 +1951,7 @@ class MainWindow(QMainWindow):
 
         host = self.udp_host_edit.text().strip()
         if not host:
-            self._on_error("connect_udp: no UDP host provided")
+            self._on_error(self._t("msg.connect_no_host"))
             return
         port = int(self.udp_port_spin.value())
         self._run_session_action(
@@ -1033,7 +1963,8 @@ class MainWindow(QMainWindow):
         self._run_session_action("disconnect", lambda: self._session.disconnect())
 
     def _apply_stream_rate(self) -> None:
-        name = "telemetry_usb_hz" if self.link_type_combo.currentText() == "serial" else "telemetry_udp_hz"
+        link_value = self.link_type_combo.currentData() or self.link_type_combo.currentText()
+        name = "telemetry_usb_hz" if link_value == "serial" else "telemetry_udp_hz"
         value = str(int(self.stream_rate_spin.value()))
         self._run_session_action(
             f"set_param:{name}",
@@ -1067,54 +1998,54 @@ class MainWindow(QMainWindow):
             self.param_current_value_label.setText("-")
             self.param_new_value_edit.clear()
             self.param_help_text.setPlainText("")
-            self.param_hint_label.setText("Select a parameter to see a local hint. Device-side validation remains authoritative.")
+            self.param_hint_label.setText(self._t("hint.param_default"))
             return
         self._selected_param = self._params[row]
         self.param_name_label.setText(self._selected_param.name)
         self.param_type_label.setText(TYPE_NAMES.get(self._selected_param.type_id, str(self._selected_param.type_id)))
         self.param_current_value_label.setText(_format_value(self._selected_param.name, self._selected_param.value))
         self.param_new_value_edit.setText(str(self._selected_param.value))
-        self.param_help_text.setPlainText(self.PARAM_HELP.get(self._selected_param.name, "No local note yet. Device-side validation remains authoritative."))
+        self.param_help_text.setPlainText(self.PARAM_HELP.get(self._selected_param.name, self._t("param.help.default")))
         self._update_param_hint()
 
     def _local_param_hint(self, param: ParamValue | None, value_text: str) -> str:
         if param is None:
-            return "Select a parameter to see a local hint. Device-side validation remains authoritative."
+            return self._t("hint.param_default")
         if not value_text:
-            return "Enter a new value. Device-side validation remains authoritative."
+            return self._t("hint.param_default")
         name = param.name
         try:
             if name.startswith("motor_") or name == "bringup_test_base_duty":
                 value = float(value_text)
                 if not 0.0 <= value <= 1.0:
-                    return "Expected normalized duty in the range 0..1."
-                return "Normalized duty looks locally valid. Device-side validation still applies."
+                    return "期望归一化 duty 范围为 0..1。" if self._language == "zh" else "Expected normalized duty in the range 0..1."
+                return "本地看起来是合法 duty。" if self._language == "zh" else "Normalized duty looks locally valid."
             if name == "imu_return_rate_code":
                 value = int(value_text, 0)
                 if not 0x00 <= value <= 0x09:
-                    return "Expected IMU return-rate code in the range 0x00..0x09."
-                return "IMU return-rate code looks locally valid."
+                    return "期望 IMU 回传码范围 0x00..0x09。" if self._language == "zh" else "Expected IMU return-rate code in the range 0x00..0x09."
+                return "本地看起来是合法 IMU 回传码。" if self._language == "zh" else "IMU return-rate code looks locally valid."
             if name in {"telemetry_usb_hz", "telemetry_udp_hz"}:
                 value = int(value_text, 0)
                 if name == "telemetry_usb_hz" and not 1 <= value <= 200:
-                    return "telemetry_usb_hz should stay within 1..200."
+                    return "telemetry_usb_hz 建议保持在 1..200。" if self._language == "zh" else "telemetry_usb_hz should stay within 1..200."
                 if name == "telemetry_udp_hz" and not 1 <= value <= 100:
-                    return "telemetry_udp_hz should stay within 1..100."
-                return "Telemetry rate looks locally valid."
+                    return "telemetry_udp_hz 建议保持在 1..100。" if self._language == "zh" else "telemetry_udp_hz should stay within 1..100."
+                return "本地看起来是合法遥测频率。" if self._language == "zh" else "Telemetry rate looks locally valid."
         except ValueError:
-            return "Could not parse the value locally. Device-side validation will reject malformed data."
-        return self.PARAM_HELP.get(name, "No local note yet. Device-side validation remains authoritative.")
+            return "本地无法解析该值。" if self._language == "zh" else "Could not parse the value locally."
+        return self.PARAM_HELP.get(name, self._t("param.help.default"))
 
     def _update_param_hint(self) -> None:
         self.param_hint_label.setText(self._local_param_hint(self._selected_param, self.param_new_value_edit.text().strip()))
 
     def _set_selected_param(self) -> None:
         if self._selected_param is None:
-            self._on_error("set_param: no parameter selected")
+            self._on_error(self._t("msg.set_param_no_select"))
             return
         value_text = self.param_new_value_edit.text().strip()
         if not value_text:
-            self._on_error("set_param: no new value provided")
+            self._on_error(self._t("msg.set_param_no_value"))
             return
         name = self._selected_param.name
         type_id = self._selected_param.type_id
@@ -1124,14 +2055,14 @@ class MainWindow(QMainWindow):
         )
 
     def _export_params(self) -> None:
-        output, _ = QFileDialog.getSaveFileName(self, "Export Parameters", "params.json", "JSON Files (*.json)")
+        output, _ = QFileDialog.getSaveFileName(self, self._t("button.export_json"), "params.json", "JSON Files (*.json)")
         if not output:
             return
         output_path = Path(output)
         self._run_session_action("export_params", lambda: self._session.export_params(output_path))
 
     def _import_params(self) -> None:
-        input_path, _ = QFileDialog.getOpenFileName(self, "Import Parameters", "", "JSON Files (*.json)")
+        input_path, _ = QFileDialog.getOpenFileName(self, self._t("button.import_json"), "", "JSON Files (*.json)")
         if not input_path:
             return
         path_obj = Path(input_path)
@@ -1156,7 +2087,7 @@ class MainWindow(QMainWindow):
         self._run_session_action("rate_test_stop", lambda: self._session.rate_test(index, 0.0))
 
     def _browse_log_path(self) -> None:
-        output, _ = QFileDialog.getSaveFileName(self, "Select CSV Output", self.log_path_edit.text(), "CSV Files (*.csv)")
+        output, _ = QFileDialog.getSaveFileName(self, self._t("label.output"), self.log_path_edit.text(), "CSV Files (*.csv)")
         if output:
             self.log_path_edit.setText(output)
 
@@ -1177,16 +2108,14 @@ class MainWindow(QMainWindow):
 
     def _toggle_charts(self) -> None:
         self._charts_running = not self._charts_running
-        self.chart_toggle_button.setText("Pause Charts" if self._charts_running else "Resume Charts")
-        self._append_log("chart updates resumed" if self._charts_running else "chart updates paused")
+        self.chart_toggle_button.setText(self._t("button.pause_charts") if self._charts_running else self._t("button.resume_charts"))
+        self._append_log(self._t("msg.chart_resumed") if self._charts_running else self._t("msg.chart_paused"))
 
     def _clear_charts(self) -> None:
         self._history.clear()
-        for bundle in self._chart_bundles.values():
-            curves = bundle["curves"]
-            for curve in curves.values():
-                curve.setData([], [])
-        self._append_log("chart history cleared")
+        for curve in self._chart_curves.values():
+            curve.setData([], [])
+        self._append_log(self._t("msg.chart_cleared"))
 
     def _current_chart_window(self) -> float:
         return float(self.chart_window_combo.currentData() or 10.0)
@@ -1195,19 +2124,18 @@ class MainWindow(QMainWindow):
         if not self._charts_running:
             return
         window = self._current_chart_window()
-        for bundle in self._chart_bundles.values():
-            plot = bundle["plot"]
-            checks = bundle["checks"]
-            curves = bundle["curves"]
-            spec = bundle["spec"]
-            for field_name, _field_label in spec.fields:
-                xs, ys = self._history.slice(field_name, window)
-                curve = curves[field_name]
-                if checks[field_name].isChecked():
-                    curve.setData(xs, ys)
-                else:
-                    curve.setData([], [])
-            plot.setXRange(-window, 0.0, padding=0.01)
+        spec = self.CHART_GROUPS[self._current_chart_group]
+        for field_name, _field_label in spec.fields:
+            xs, ys = self._history.slice(field_name, window)
+            curve = self._chart_curves.get(field_name)
+            checkbox = self._chart_channel_checks.get(field_name)
+            if curve is None:
+                continue
+            if checkbox is not None and checkbox.isChecked():
+                curve.setData(xs, ys)
+            else:
+                curve.setData([], [])
+        self.main_plot.setXRange(-window, 0.0, padding=0.01)
 
     def _refresh_enabled_state(self) -> None:
         connected = bool(getattr(self._session, "is_connected", False))
@@ -1240,13 +2168,8 @@ class MainWindow(QMainWindow):
         ):
             button.setEnabled(connected)
 
-        is_serial = self.link_type_combo.currentText() == "serial"
         self.link_type_combo.setEnabled(not connected)
-        self.serial_port_combo.setEnabled(not connected and is_serial)
-        self.refresh_ports_button.setEnabled(not connected and is_serial)
-        self.baudrate_spin.setEnabled(not connected and is_serial)
-        self.udp_host_edit.setEnabled(not connected and not is_serial)
-        self.udp_port_spin.setEnabled(not connected and not is_serial)
+        self.transport_stack.setEnabled(not connected)
 
     def _apply_status_to_row(self, row: int, role: str) -> None:
         foreground, background = ROW_STYLE.get(role, ROW_STYLE["neutral"])
@@ -1261,37 +2184,35 @@ class MainWindow(QMainWindow):
         error = payload.get("error")
         info = payload.get("device_info")
         if connected:
-            _set_badge(self.connection_status_chip, "Connected", "ok")
-            _set_badge(self.overview_connection_chip, "Connected", "ok")
+            _set_badge(self.connection_status_chip, self._t("status.connected"), "ok")
             self.connection_info_label.setText(_device_info_text(info))
-            self.connection_error_detail.setText("No connection error.")
-            self.last_error_label.setText("-")
+            self.connection_error_detail.setText(self._t("status.no_conn_error"))
+            self.last_error_label.setText(self._t("status.no_error"))
             if hasattr(info, "stream_enabled"):
                 self._stream_enabled = bool(getattr(info, "stream_enabled"))
-            self._append_log(f"connected: {_device_info_text(info)}")
+            self._append_log(self._t("msg.connected", info=_device_info_text(info)))
             self._run_session_action("list_params", lambda: self._session.list_params(timeout=3.0))
         else:
-            _set_badge(self.connection_status_chip, "Disconnected", "neutral" if not error else "warn")
-            _set_badge(self.overview_connection_chip, "Disconnected", "neutral" if not error else "warn")
-            self.connection_info_label.setText("No active device session.")
+            _set_badge(self.connection_status_chip, self._t("status.disconnected"), "neutral" if not error else "warn")
+            self.connection_info_label.setText(self._t("status.no_session"))
             self._stream_enabled = False
             if error:
                 message = str(error)
                 self.connection_error_detail.setText(message)
                 self.last_error_label.setText(message)
-                self._append_log(f"connection error: {message}")
+                self._append_log(message)
             elif not self._closing:
-                self._append_log("disconnected")
+                self.connection_error_detail.setText(self._t("status.no_conn_error"))
+                self.last_error_label.setText(self._t("status.no_error"))
+                self._append_log(self._t("msg.disconnected"))
         self._update_stream_chip()
         self._refresh_enabled_state()
 
     def _update_stream_chip(self) -> None:
         if self._stream_enabled:
-            _set_badge(self.stream_chip, "STREAM ON", "active")
-            _set_badge(self.overview_stream_chip, "STREAM ON", "active")
+            _set_badge(self.status_cards["stream"][1], self._t("status.stream_on"), "active")
         else:
-            _set_badge(self.stream_chip, "STREAM OFF", "neutral")
-            _set_badge(self.overview_stream_chip, "STREAM OFF", "neutral")
+            _set_badge(self.status_cards["stream"][1], self._t("status.stream_off"), "neutral")
 
     def _on_telemetry_received(self, sample: TelemetrySample) -> None:
         self._last_telemetry = sample
@@ -1309,21 +2230,21 @@ class MainWindow(QMainWindow):
             else:
                 label, role = role_info
                 if value_item is not None:
-                    value_item.setText(f"{label} [{value}]")
+                    value_item.setText(f"{self._t(label)} [{value}]")
                 self._apply_status_to_row(row, role)
 
-        arm_text, arm_role = _status_from_map(ARM_STATE_TEXT, sample.arm_state)
-        failsafe_text, failsafe_role = _status_from_map(FAILSAFE_TEXT, sample.failsafe_reason)
-        control_text, control_role = _status_from_map(CONTROL_MODE_TEXT, sample.control_mode)
-        imu_text, imu_role = _status_from_map(IMU_MODE_TEXT, sample.imu_mode)
-        _set_badge(self.arm_state_chip, arm_text, arm_role)
-        _set_badge(self.failsafe_chip, failsafe_text, failsafe_role)
-        _set_badge(self.control_mode_chip, control_text, control_role)
-        _set_badge(self.imu_mode_chip, imu_text, imu_role)
-        _set_badge(self.overview_arm_chip, arm_text, arm_role)
-        _set_badge(self.overview_failsafe_chip, failsafe_text, failsafe_role)
-        _set_badge(self.overview_mode_chip, control_text, control_role)
-        _set_badge(self.overview_imu_chip, imu_text, imu_role)
+        arm_text, arm_role = self._status_text(ARM_STATE_TEXT, sample.arm_state)
+        failsafe_text, failsafe_role = self._status_text(FAILSAFE_TEXT, sample.failsafe_reason)
+        control_text, control_role = self._status_text(CONTROL_MODE_TEXT, sample.control_mode)
+        imu_text, imu_role = self._status_text(IMU_MODE_TEXT, sample.imu_mode)
+        _set_badge(self.status_cards["arm_state"][1], arm_text, arm_role)
+        _set_badge(self.status_cards["failsafe_reason"][1], failsafe_text, failsafe_role)
+        _set_badge(self.status_cards["control_mode"][1], control_text, control_role)
+        _set_badge(self.status_cards["imu_mode"][1], imu_text, imu_role)
+        self.status_cards["battery_voltage"][1].setText(f"{sample.battery_voltage:.3f} V")
+        self.status_cards["imu_age_us"][1].setText(f"{sample.imu_age_us} us")
+        self.status_cards["loop_dt_us"][1].setText(f"{sample.loop_dt_us} us")
+        self._update_stream_chip()
 
     def _on_event_received(self, message: str) -> None:
         self._append_log(message)
@@ -1337,19 +2258,19 @@ class MainWindow(QMainWindow):
         if label == "stream_on":
             self._stream_enabled = True
             self._update_stream_chip()
-            self._set_last_result("stream enabled")
-            self._append_log("stream enabled")
+            self._set_last_result(self._t("status.stream_on"))
+            self._append_log(self._t("status.stream_on"))
             return
         if label == "stream_off":
             self._stream_enabled = False
             self._update_stream_chip()
-            self._set_last_result("stream disabled")
-            self._append_log("stream disabled")
+            self._set_last_result(self._t("status.stream_off"))
+            self._append_log(self._t("status.stream_off"))
             return
         if label == "list_params" and isinstance(result, list):
             self._populate_params_table(result)
-            self._set_last_result(f"loaded {len(result)} params")
-            self._append_log(f"loaded {len(result)} params")
+            self._set_last_result(self._t("msg.loaded_params", count=len(result)))
+            self._append_log(self._t("msg.loaded_params", count=len(result)))
             return
         if label.startswith("set_param:") and isinstance(result, ParamValue):
             updated = False
@@ -1365,110 +2286,113 @@ class MainWindow(QMainWindow):
                 if param.name == result.name:
                     self.params_table.selectRow(row)
                     break
-            self._set_last_result(f"{result.name} updated")
-            self._append_log(f"set {result.name} -> {result.value}")
+            self._set_last_result(self._t("msg.param_updated", name=result.name, value=result.value))
+            self._append_log(self._t("msg.param_updated", name=result.name, value=result.value))
             return
         if label == "export_params":
-            self._set_last_result("parameter snapshot exported")
-            self._append_log("parameter snapshot exported")
+            self._set_last_result(self._t("msg.export_done"))
+            self._append_log(self._t("msg.export_done"))
             return
         if label == "import_params":
             applied = len(result or [])
-            self._set_last_result(f"imported {applied} params")
-            self._append_log(f"imported {applied} params from JSON snapshot")
+            self._set_last_result(self._t("msg.import_done", count=applied))
+            self._append_log(self._t("msg.import_done", count=applied))
             self._run_session_action("list_params", lambda: self._session.list_params(timeout=3.0))
             return
         if label == "start_csv_log":
             path = Path(result) if result else Path(self.log_path_edit.text().strip())
             self.last_log_path_label.setText(str(path))
-            self._set_last_result(f"logging to {path}")
-            self._append_log(f"started CSV log at {path}")
+            self._set_last_result(self._t("msg.logging_to", path=path))
+            self._append_log(self._t("msg.logging_to", path=path))
             return
         if label == "stop_csv_log":
-            path_text = "-" if result is None else str(result)
+            path_text = self._t("status.no_log") if result is None else str(result)
             self.last_log_path_label.setText(path_text)
-            self._set_last_result(f"stopped CSV log ({path_text})")
-            self._append_log(f"stopped CSV log ({path_text})")
+            self._set_last_result(self._t("msg.log_stopped", path=path_text))
+            self._append_log(self._t("msg.log_stopped", path=path_text))
             return
         if label == "dump_csv" and isinstance(result, dict):
             path = result.get("path")
             rows = result.get("rows")
             self.last_log_path_label.setText(str(path))
-            self._set_last_result(f"dumped {rows} telemetry rows to {path}")
-            self._append_log(f"dumped {rows} telemetry rows to {path}")
+            self._set_last_result(self._t("msg.dump_csv_done", rows=rows, path=path))
+            self._append_log(self._t("msg.dump_csv_done", rows=rows, path=path))
             return
         if label in {"connect_serial", "connect_udp", "disconnect", "arm", "disarm", "kill", "reboot", "save_params", "reset_params", "motor_test_start", "motor_test_stop", "calib_gyro", "calib_level", "rate_test_start", "rate_test_stop"}:
             summary = label.replace("_", " ")
             if label == "connect_serial":
-                summary = f"connected via serial: {_device_info_text(result)}"
+                summary = f"serial: {_device_info_text(result)}"
             elif label == "connect_udp":
-                summary = f"connected via udp: {_device_info_text(result)}"
+                summary = f"udp: {_device_info_text(result)}"
             elif label == "disconnect":
-                summary = "disconnect complete"
+                summary = self._t("msg.disconnect_done")
             elif label == "arm":
-                summary = f"arm -> status {result}"
+                summary = self._t("msg.command_ok", label=self._t("button.arm"))
             elif label == "disarm":
-                summary = f"disarm -> status {result}"
+                summary = self._t("msg.command_ok", label=self._t("button.disarm"))
             elif label == "kill":
-                summary = f"kill -> status {result}"
+                summary = self._t("msg.command_ok", label=self._t("button.kill"))
             elif label == "reboot":
-                summary = f"reboot -> status {result}"
+                summary = self._t("msg.command_ok", label=self._t("button.reboot"))
             elif label == "save_params":
-                summary = "params saved to device"
+                summary = self._t("msg.command_ok", label=self._t("button.save"))
             elif label == "reset_params":
-                summary = "params reset on device"
+                summary = self._t("msg.command_ok", label=self._t("button.reset"))
             elif label == "motor_test_start":
-                summary = f"motor_test start -> status {result}"
+                summary = self._t("msg.command_ok", label=f"{self._t('group.motor')} {self._t('button.start')}")
             elif label == "motor_test_stop":
-                summary = f"motor_test stop -> status {result}"
+                summary = self._t("msg.command_ok", label=f"{self._t('group.motor')} {self._t('button.stop')}")
             elif label == "calib_gyro":
-                summary = f"calib gyro -> status {result}"
+                summary = self._t("msg.command_ok", label=self.calib_gyro_button.text())
             elif label == "calib_level":
-                summary = f"calib level -> status {result}"
+                summary = self._t("msg.command_ok", label=self.calib_level_button.text())
             elif label == "rate_test_start":
-                summary = f"rate_test start -> status {result}"
+                summary = self._t("msg.command_ok", label=f"{self._t('group.rate')} {self._t('button.start')}")
             elif label == "rate_test_stop":
-                summary = f"rate_test stop -> status {result}"
+                summary = self._t("msg.command_ok", label=f"{self._t('group.rate')} {self._t('button.stop')}")
             self._set_last_result(summary)
             self._append_log(summary)
             return
 
-        self._set_last_result(f"{label} complete")
-        self._append_log(f"{label} complete")
+        self._set_last_result(self._t("msg.command_ok", label=label))
+        self._append_log(self._t("msg.command_ok", label=label))
 
     def _save_settings(self) -> None:
         self._settings.setValue("window/geometry", self.saveGeometry())
         self._settings.setValue("window/state", self.saveState())
-        self._settings.setValue("splitter/root", self.root_splitter.saveState())
-        self._settings.setValue("splitter/workspace", self.workspace_splitter.saveState())
+        self._settings.setValue("splitter/main", self.main_splitter.saveState())
+        self._settings.setValue("splitter/vertical", self.vertical_splitter.saveState())
+        self._settings.setValue("splitter/center", self.center_splitter.saveState())
+        self._settings.setValue("splitter/right", self.right_splitter.saveState())
         self._settings.setValue("splitter/params", self.params_splitter.saveState())
-        self._settings.setValue("link/type", self.link_type_combo.currentText())
+        self._settings.setValue("ui/language", self._language)
+        self._settings.setValue("link/type", self.link_type_combo.currentData() or self.link_type_combo.currentText())
         self._settings.setValue("serial/port", self.serial_port_combo.currentText())
         self._settings.setValue("serial/baudrate", self.baudrate_spin.value())
         self._settings.setValue("udp/host", self.udp_host_edit.text())
         self._settings.setValue("udp/port", self.udp_port_spin.value())
         self._settings.setValue("chart/window_index", self.chart_window_combo.currentIndex())
-        self._settings.setValue("tabs/display", self.display_tabs.currentIndex())
-        self._settings.setValue("tabs/info", self.info_tabs.currentIndex())
+        self._settings.setValue("chart/group", self._current_chart_group)
         self._settings.setValue("params/search", self.param_search_edit.text())
         self._settings.setValue("log/path", self.log_path_edit.text())
+        self._settings.setValue("log/collapsed", self._log_collapsed)
 
     def _load_settings(self) -> None:
         geometry = self._settings.value("window/geometry", type=QByteArray)
         state = self._settings.value("window/state", type=QByteArray)
-        root_splitter_state = self._settings.value("splitter/root", type=QByteArray)
-        workspace_splitter_state = self._settings.value("splitter/workspace", type=QByteArray)
+        main_splitter_state = self._settings.value("splitter/main", type=QByteArray)
+        vertical_splitter_state = self._settings.value("splitter/vertical", type=QByteArray)
+        center_splitter_state = self._settings.value("splitter/center", type=QByteArray)
+        right_splitter_state = self._settings.value("splitter/right", type=QByteArray)
         params_splitter_state = self._settings.value("splitter/params", type=QByteArray)
         if geometry:
             self.restoreGeometry(geometry)
         if state:
             self.restoreState(state)
-        if root_splitter_state:
-            self.root_splitter.restoreState(root_splitter_state)
-        if workspace_splitter_state:
-            self.workspace_splitter.restoreState(workspace_splitter_state)
-        if params_splitter_state:
-            self.params_splitter.restoreState(params_splitter_state)
+        language = str(self._settings.value("ui/language", self._language))
+        if language in {"zh", "en"}:
+            self._language = language
+            self._apply_language()
 
         link_type = self._settings.value("link/type", "serial")
         serial_port = self._settings.value("serial/port", "")
@@ -1476,22 +2400,36 @@ class MainWindow(QMainWindow):
         udp_host = self._settings.value("udp/host", "192.168.4.1")
         udp_port = int(self._settings.value("udp/port", 2391))
         chart_index = int(self._settings.value("chart/window_index", 1))
-        display_tab_index = int(self._settings.value("tabs/display", 0))
-        info_tab_index = int(self._settings.value("tabs/info", 0))
+        chart_group = str(self._settings.value("chart/group", self._current_chart_group))
         param_search = self._settings.value("params/search", "")
         log_path = self._settings.value("log/path", self.log_path_edit.text())
+        log_collapsed = bool(self._settings.value("log/collapsed", False, type=bool))
 
-        self.link_type_combo.setCurrentText(str(link_type))
+        link_index = self.link_type_combo.findData(str(link_type))
+        self.link_type_combo.setCurrentIndex(link_index if link_index >= 0 else 0)
         self.serial_port_combo.setCurrentText(str(serial_port))
         self.baudrate_spin.setValue(baudrate)
         self.udp_host_edit.setText(str(udp_host))
         self.udp_port_spin.setValue(udp_port)
         self.chart_window_combo.setCurrentIndex(max(0, min(chart_index, self.chart_window_combo.count() - 1)))
-        self.display_tabs.setCurrentIndex(max(0, min(display_tab_index, self.display_tabs.count() - 1)))
-        self.info_tabs.setCurrentIndex(max(0, min(info_tab_index, self.info_tabs.count() - 1)))
+        chart_group_index = self.chart_group_combo.findData(chart_group)
+        self.chart_group_combo.setCurrentIndex(chart_group_index if chart_group_index >= 0 else 0)
         self.param_search_edit.setText(str(param_search))
         self.log_path_edit.setText(str(log_path))
+        if main_splitter_state:
+            self.main_splitter.restoreState(main_splitter_state)
+        if vertical_splitter_state:
+            self.vertical_splitter.restoreState(vertical_splitter_state)
+        if center_splitter_state:
+            self.center_splitter.restoreState(center_splitter_state)
+        if right_splitter_state:
+            self.right_splitter.restoreState(right_splitter_state)
+        if params_splitter_state:
+            self.params_splitter.restoreState(params_splitter_state)
         self._update_link_inputs()
+        self._rebuild_chart_channels()
+        if log_collapsed:
+            self._toggle_log_panel()
 
     def closeEvent(self, event) -> None:  # pragma: no cover - exercised by smoke tests
         self._closing = True
@@ -1506,6 +2444,7 @@ class MainWindow(QMainWindow):
 
 def run_gui(_argv: list[str] | None = None) -> int:
     app = QApplication.instance() or QApplication([])
+    app.setFont(QFont("Microsoft YaHei", 10))
     pg.setConfigOptions(antialias=True, foreground="#dbeafe", background="#0f1722")
     window = MainWindow()
     window.show()

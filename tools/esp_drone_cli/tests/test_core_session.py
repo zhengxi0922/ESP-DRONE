@@ -358,7 +358,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     window.connect_button.click()
     app.processEvents()
     assert ("connect_serial", ("COM9", 115200, 0.2), {}) in session.calls
-    assert "Connected" in window.connection_status_chip.text()
+    assert window.connection_status_chip.text() == window._t("status.connected")
     assert window.params_table.rowCount() == 2
     session.calls.clear()
 
@@ -367,7 +367,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     session.emit_event("imu healthy")
     app.processEvents()
     assert window.telemetry_table.item(0, 1).text() == "1.000"
-    assert window.arm_state_chip.text() == "DISARMED"
+    assert window.status_cards["arm_state"][1].text() == window._t("arm.disarmed")
     assert "imu healthy" in window.event_log_edit.toPlainText()
 
     window.stream_on_button.click()
@@ -410,7 +410,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
 
     window.disconnect_button.click()
     app.processEvents()
-    window.link_type_combo.setCurrentText("udp")
+    window.link_type_combo.setCurrentIndex(window.link_type_combo.findData("udp"))
     window.udp_host_edit.setText("192.168.4.1")
     window.udp_port_spin.setValue(2391)
     window.connect_button.click()
