@@ -324,7 +324,7 @@ def test_gui_startup_without_device_or_missing_pyqt5(monkeypatch):
 def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
-    from PyQt5.QtCore import QSettings
+    from PyQt5.QtCore import QSettings, Qt
     from PyQt5.QtWidgets import QApplication, QFileDialog, QGroupBox, QLabel, QPushButton, QSizePolicy
 
     from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
@@ -366,6 +366,13 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert window.center_panel.minimumWidth() >= 780
     assert window.right_panel.minimumWidth() >= 360
     assert window.left_panel.sizePolicy().horizontalPolicy() != QSizePolicy.Fixed
+    assert window.left_panel.verticalScrollBarPolicy() == Qt.ScrollBarAsNeeded
+    assert window.connection_section.is_expanded() is True
+    assert window.safety_section.is_expanded() is True
+    assert window.motor_section.is_expanded() is True
+    assert window.calib_section.is_expanded() is False
+    assert window.rate_section.is_expanded() is False
+    assert window.csv_section.is_expanded() is False
     assert window.params_table.rowCount() == 2
     session.calls.clear()
 

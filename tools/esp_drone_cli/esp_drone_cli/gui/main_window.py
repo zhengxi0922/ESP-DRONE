@@ -930,6 +930,62 @@ class TelemetryHistory:
         return xs, ys
 
 
+class CollapsibleSection(QWidget):
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, title: str = "", expanded: bool = True, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._expanded = expanded
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self.toggle_button = QToolButton()
+        self.toggle_button.setCheckable(True)
+        self.toggle_button.setChecked(expanded)
+        self.toggle_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.toggle_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.toggle_button.setStyleSheet(
+            "QToolButton {text-align:left; font-weight:600; padding:4px 6px; border:none; color:#e5eef9;}"
+        )
+        layout.addWidget(self.toggle_button)
+
+        self.body = QWidget()
+        self.body_layout = QVBoxLayout(self.body)
+        self.body_layout.setContentsMargins(0, 0, 0, 0)
+        self.body_layout.setSpacing(0)
+        layout.addWidget(self.body)
+
+        self.toggle_button.toggled.connect(self.set_expanded)
+        self.set_title(title)
+        self.set_expanded(expanded)
+
+    def set_title(self, title: str) -> None:
+        self.toggle_button.setText(title)
+
+    def set_content(self, widget: QWidget) -> None:
+        while self.body_layout.count():
+            item = self.body_layout.takeAt(0)
+            old = item.widget()
+            if old is not None:
+                old.setParent(None)
+        self.body_layout.addWidget(widget)
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def set_expanded(self, expanded: bool) -> None:
+        expanded = bool(expanded)
+        self._expanded = expanded
+        self.toggle_button.blockSignals(True)
+        self.toggle_button.setChecked(expanded)
+        self.toggle_button.blockSignals(False)
+        self.toggle_button.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self.body.setVisible(expanded)
+        self.toggled.emit(expanded)
+
+
 @dataclass(slots=True)
 class ChartSpec:
     title: str
@@ -1159,14 +1215,19 @@ class MainWindow(QMainWindow):
 
     def _build_left_panel(self) -> QWidget:
         content = QWidget()
+        content.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         self.connection_group = self._build_connection_group()
         self.safety_group = self._build_safety_group()
         self.debug_group = self._build_debug_group()
-        layout.addWidget(self.connection_group)
-        layout.addWidget(self.safety_group)
+        self.connection_section = CollapsibleSection(expanded=True)
+        self.connection_section.set_content(self.connection_group)
+        self.safety_section = CollapsibleSection(expanded=True)
+        self.safety_section.set_content(self.safety_group)
+        layout.addWidget(self.connection_section)
+        layout.addWidget(self.safety_section)
         layout.addWidget(self.debug_group)
         layout.addStretch(1)
 
@@ -1174,9 +1235,11 @@ class MainWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setMinimumWidth(320)
         scroll.setMaximumWidth(420)
         scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         scroll.setWidget(content)
         return scroll
 
@@ -1572,7 +1635,7 @@ class MainWindow(QMainWindow):
         warning.setStyleSheet("color:#E65100;font-weight:600;")
         layout.addWidget(warning)
 
-        motor_box = QGroupBox()
+        motor_box = QWidget()
         motor_layout = QGridLayout(motor_box)
         motor_layout.setColumnStretch(1, 1)
         motor_layout.setColumnStretch(3, 1)
@@ -1596,9 +1659,11 @@ class MainWindow(QMainWindow):
         motor_layout.addWidget(self.motor_duty_spin, 0, 3)
         motor_layout.addWidget(self.motor_start_button, 0, 4)
         motor_layout.addWidget(self.motor_stop_button, 0, 5)
-        layout.addWidget(motor_box)
+        self.motor_section = CollapsibleSection(expanded=True)
+        self.motor_section.set_content(motor_box)
+        layout.addWidget(self.motor_section)
 
-        calib_box = QGroupBox()
+        calib_box = QWidget()
         calib_layout = QHBoxLayout(calib_box)
         self.calib_group = calib_box
         self.calib_gyro_button = QPushButton()
@@ -1608,9 +1673,11 @@ class MainWindow(QMainWindow):
         calib_layout.addWidget(self.calib_gyro_button)
         calib_layout.addWidget(self.calib_level_button)
         calib_layout.addStretch(1)
-        layout.addWidget(calib_box)
+        self.calib_section = CollapsibleSection(expanded=False)
+        self.calib_section.set_content(calib_box)
+        layout.addWidget(self.calib_section)
 
-        rate_box = QGroupBox()
+        rate_box = QWidget()
         rate_layout = QGridLayout(rate_box)
         rate_layout.setColumnStretch(1, 1)
         rate_layout.setColumnStretch(3, 1)
@@ -1634,9 +1701,11 @@ class MainWindow(QMainWindow):
         rate_layout.addWidget(self.rate_value_spin, 0, 3)
         rate_layout.addWidget(self.rate_start_button, 0, 4)
         rate_layout.addWidget(self.rate_stop_button, 0, 5)
-        layout.addWidget(rate_box)
+        self.rate_section = CollapsibleSection(expanded=False)
+        self.rate_section.set_content(rate_box)
+        layout.addWidget(self.rate_section)
 
-        log_box = QGroupBox()
+        log_box = QWidget()
         log_layout = QGridLayout(log_box)
         log_layout.setColumnStretch(1, 1)
         self.log_path_edit = QLineEdit(str(Path.cwd() / "telemetry.csv"))
@@ -1663,7 +1732,9 @@ class MainWindow(QMainWindow):
         log_layout.addWidget(self.dump_s_label, 1, 2)
         log_layout.addWidget(self.dump_duration_spin, 1, 3)
         log_layout.addWidget(self.dump_csv_button, 1, 4)
-        layout.addWidget(log_box)
+        self.csv_section = CollapsibleSection(expanded=False)
+        self.csv_section.set_content(log_box)
+        layout.addWidget(self.csv_section)
 
         return group
 
@@ -1706,6 +1777,12 @@ class MainWindow(QMainWindow):
         self.center_splitter.splitterMoved.connect(lambda *_args: self._save_settings())
         self.right_splitter.splitterMoved.connect(lambda *_args: self._save_settings())
         self.params_splitter.splitterMoved.connect(lambda *_args: self._save_settings())
+        self.connection_section.toggled.connect(lambda *_args: self._save_settings())
+        self.safety_section.toggled.connect(lambda *_args: self._save_settings())
+        self.motor_section.toggled.connect(lambda *_args: self._save_settings())
+        self.calib_section.toggled.connect(lambda *_args: self._save_settings())
+        self.rate_section.toggled.connect(lambda *_args: self._save_settings())
+        self.csv_section.toggled.connect(lambda *_args: self._save_settings())
         self.refresh_ports_button.clicked.connect(self._refresh_serial_ports)
         self.connect_button.clicked.connect(self._connect_requested)
         self.disconnect_button.clicked.connect(self._disconnect_requested)
@@ -1745,6 +1822,7 @@ class MainWindow(QMainWindow):
         self.rate_start_button.clicked.connect(self._start_rate_test)
         self.rate_stop_button.clicked.connect(self._stop_rate_test)
         self.log_browse_button.clicked.connect(self._browse_log_path)
+        self.log_path_edit.textChanged.connect(self._sync_log_path_tooltip)
         self.start_log_button.clicked.connect(self._start_log)
         self.stop_log_button.clicked.connect(self._stop_log)
         self.dump_csv_button.clicked.connect(self._dump_csv)
@@ -1766,6 +1844,9 @@ class MainWindow(QMainWindow):
     def _set_last_result(self, text: str) -> None:
         self._last_result = text
         self.last_result_label.setText(text)
+
+    def _sync_log_path_tooltip(self) -> None:
+        self.log_path_edit.setToolTip(self.log_path_edit.text().strip())
 
     def _append_log(self, text: str) -> None:
         stamp = time.strftime("%H:%M:%S")
@@ -1807,18 +1888,20 @@ class MainWindow(QMainWindow):
         self.language_combo.setCurrentIndex(0 if self._language == "zh" else 1)
         self.language_combo.blockSignals(False)
 
-        self.connection_group.setTitle(self._t("group.connection"))
-        self.safety_group.setTitle(self._t("group.safety"))
+        self.connection_group.setTitle("")
+        self.safety_group.setTitle("")
+        self.connection_section.set_title(self._t("group.connection"))
+        self.safety_section.set_title(self._t("group.safety"))
         self.debug_group.setTitle(self._t("group.debug"))
         self.chart_group.setTitle(self._t("group.chart"))
         self.realtime_group.setTitle(self._t("group.realtime"))
         self.status_group.setTitle(self._t("group.status"))
         self.params_group.setTitle("")
         self.bottom_panel.setTitle("")
-        self.motor_group.setTitle(self._t("group.motor"))
-        self.calib_group.setTitle(self._t("group.calib"))
-        self.rate_group.setTitle(self._t("group.rate"))
-        self.csv_group.setTitle(self._t("group.csv"))
+        self.motor_section.set_title(self._t("group.motor"))
+        self.calib_section.set_title(self._t("group.calib"))
+        self.rate_section.set_title(self._t("group.rate"))
+        self.csv_section.set_title(self._t("group.csv"))
 
         self.link_type_label.setText(self._t("label.link"))
         self.serial_port_label.setText(self._t("label.serial_port"))
@@ -2171,6 +2254,7 @@ class MainWindow(QMainWindow):
         output, _ = QFileDialog.getSaveFileName(self, self._t("label.output"), self.log_path_edit.text(), "CSV Files (*.csv)")
         if output:
             self.log_path_edit.setText(output)
+            self._sync_log_path_tooltip()
 
     def _start_log(self) -> None:
         path = Path(self.log_path_edit.text().strip())
@@ -2455,6 +2539,12 @@ class MainWindow(QMainWindow):
         self._settings.setValue("chart/group", self._current_chart_group)
         self._settings.setValue("params/search", self.param_search_edit.text())
         self._settings.setValue("log/path", self.log_path_edit.text())
+        self._settings.setValue("section/connection", self.connection_section.is_expanded())
+        self._settings.setValue("section/safety", self.safety_section.is_expanded())
+        self._settings.setValue("section/motor", self.motor_section.is_expanded())
+        self._settings.setValue("section/calib", self.calib_section.is_expanded())
+        self._settings.setValue("section/rate", self.rate_section.is_expanded())
+        self._settings.setValue("section/csv", self.csv_section.is_expanded())
 
     def _load_settings(self) -> None:
         geometry = self._settings.value("window/geometry", type=QByteArray)
@@ -2481,6 +2571,12 @@ class MainWindow(QMainWindow):
         chart_group = str(self._settings.value("chart/group", self._current_chart_group))
         param_search = self._settings.value("params/search", "")
         log_path = self._settings.value("log/path", self.log_path_edit.text())
+        section_connection = bool(self._settings.value("section/connection", True, type=bool))
+        section_safety = bool(self._settings.value("section/safety", True, type=bool))
+        section_motor = bool(self._settings.value("section/motor", True, type=bool))
+        section_calib = bool(self._settings.value("section/calib", False, type=bool))
+        section_rate = bool(self._settings.value("section/rate", False, type=bool))
+        section_csv = bool(self._settings.value("section/csv", False, type=bool))
 
         link_index = self.link_type_combo.findData(str(link_type))
         self.link_type_combo.setCurrentIndex(link_index if link_index >= 0 else 0)
@@ -2493,6 +2589,13 @@ class MainWindow(QMainWindow):
         self.chart_group_combo.setCurrentIndex(chart_group_index if chart_group_index >= 0 else 0)
         self.param_search_edit.setText(str(param_search))
         self.log_path_edit.setText(str(log_path))
+        self._sync_log_path_tooltip()
+        self.connection_section.set_expanded(section_connection)
+        self.safety_section.set_expanded(section_safety)
+        self.motor_section.set_expanded(section_motor)
+        self.calib_section.set_expanded(section_calib)
+        self.rate_section.set_expanded(section_rate)
+        self.csv_section.set_expanded(section_csv)
         if main_splitter_state:
             self.main_splitter.restoreState(main_splitter_state)
         else:
