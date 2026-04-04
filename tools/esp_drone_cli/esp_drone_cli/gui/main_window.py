@@ -1139,6 +1139,7 @@ class MainWindow(QMainWindow):
         self.main_splitter = QSplitter(Qt.Horizontal)
         self.main_splitter.setChildrenCollapsible(False)
         self.main_splitter.setOpaqueResize(False)
+        self.main_splitter.setHandleWidth(8)
 
         self.left_panel = self._build_left_panel()
         self.center_panel = self._build_center_workbench()
@@ -1148,10 +1149,10 @@ class MainWindow(QMainWindow):
         self.main_splitter.addWidget(self.left_panel)
         self.main_splitter.addWidget(self.center_panel)
         self.main_splitter.addWidget(self.right_panel)
-        self.main_splitter.setStretchFactor(0, 0)
-        self.main_splitter.setStretchFactor(1, 2)
-        self.main_splitter.setStretchFactor(2, 0)
-        self.main_splitter.setSizes([250, 1230, 350])
+        self.main_splitter.setStretchFactor(0, 1)
+        self.main_splitter.setStretchFactor(1, 4)
+        self.main_splitter.setStretchFactor(2, 1)
+        self._apply_default_main_splitter_sizes()
 
         layout.addWidget(self.main_splitter, 1)
         self.setCentralWidget(root)
@@ -1173,14 +1174,15 @@ class MainWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setMinimumWidth(228)
-        scroll.setMaximumWidth(288)
-        scroll.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        scroll.setMinimumWidth(320)
+        scroll.setMaximumWidth(420)
+        scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         scroll.setWidget(content)
         return scroll
 
     def _build_center_workbench(self) -> QWidget:
         panel = QWidget()
+        panel.setMinimumWidth(780)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -1203,7 +1205,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
-        panel.setMinimumWidth(320)
+        panel.setMinimumWidth(360)
         panel.setMaximumWidth(420)
         self.right_splitter = QSplitter(Qt.Vertical)
         self.right_splitter.setChildrenCollapsible(False)
@@ -1222,6 +1224,25 @@ class MainWindow(QMainWindow):
         self.right_splitter.setSizes([152, 698])
         layout.addWidget(self.right_splitter)
         return panel
+
+    def _apply_default_main_splitter_sizes(self) -> None:
+        self.main_splitter.setSizes([340, 980, 360])
+
+    def _normalize_main_splitter_sizes(self) -> None:
+        sizes = self.main_splitter.sizes()
+        if len(sizes) != 3:
+            self._apply_default_main_splitter_sizes()
+            return
+        min_left = self.left_panel.minimumWidth()
+        min_center = self.center_panel.minimumWidth()
+        min_right = self.right_panel.minimumWidth()
+        if (
+            sizes[0] < min_left
+            or sizes[1] < min_center
+            or sizes[2] < min_right
+            or sizes[1] <= max(sizes[0], sizes[2])
+        ):
+            self._apply_default_main_splitter_sizes()
 
     def _build_bottom_panel(self) -> QWidget:
         group = QGroupBox()
@@ -1267,6 +1288,7 @@ class MainWindow(QMainWindow):
     def _build_connection_group(self) -> QGroupBox:
         group = QGroupBox()
         layout = QGridLayout(group)
+        layout.setColumnStretch(1, 1)
 
         self.link_type_combo = QComboBox()
         self.link_type_combo.addItems(["serial", "udp"])
@@ -1296,8 +1318,11 @@ class MainWindow(QMainWindow):
         self.serial_port_row = QWidget()
         serial_port_row_layout = QHBoxLayout(self.serial_port_row)
         serial_port_row_layout.setContentsMargins(0, 0, 0, 0)
+        serial_port_row_layout.setSpacing(6)
         serial_port_row_layout.addWidget(self.serial_port_combo, 1)
         serial_port_row_layout.addWidget(self.refresh_ports_button)
+        self.refresh_ports_button.setMaximumWidth(72)
+        serial_form.setColumnStretch(1, 1)
         serial_form.addWidget(self.serial_port_label, 0, 0)
         serial_form.addWidget(self.serial_port_row, 0, 1)
         serial_form.addWidget(self.baud_label, 1, 0)
@@ -1311,6 +1336,7 @@ class MainWindow(QMainWindow):
         self.udp_port_spin = QSpinBox()
         self.udp_port_spin.setRange(1, 65535)
         self.udp_port_spin.setValue(2391)
+        udp_form.setColumnStretch(1, 1)
         udp_form.addWidget(self.udp_host_label, 0, 0)
         udp_form.addWidget(self.udp_host_edit, 0, 1)
         udp_form.addWidget(self.udp_port_label, 1, 0)
@@ -1319,6 +1345,8 @@ class MainWindow(QMainWindow):
 
         self.connect_button = QPushButton()
         self.disconnect_button = QPushButton()
+        self.connect_button.setMaximumWidth(96)
+        self.disconnect_button.setMaximumWidth(96)
 
         self.connection_status_chip = QLabel()
         self.connection_info_label = QLabel()
@@ -1344,14 +1372,16 @@ class MainWindow(QMainWindow):
         layout = QGridLayout(group)
         layout.setHorizontalSpacing(6)
         layout.setVerticalSpacing(6)
+        layout.setColumnStretch(0, 1)
+        layout.setColumnStretch(1, 1)
 
         self.arm_button = QPushButton()
         self.disarm_button = QPushButton()
         self.kill_button = QPushButton()
         self.kill_button.setStyleSheet("background:#C62828;color:white;font-weight:700;")
         self.reboot_button = QPushButton()
-        self.arm_button.setMaximumWidth(92)
-        self.disarm_button.setMaximumWidth(92)
+        self.arm_button.setMaximumWidth(112)
+        self.disarm_button.setMaximumWidth(112)
         self.reboot_button.setMaximumWidth(92)
         self.kill_button.setMinimumWidth(110)
 
@@ -1544,6 +1574,8 @@ class MainWindow(QMainWindow):
 
         motor_box = QGroupBox()
         motor_layout = QGridLayout(motor_box)
+        motor_layout.setColumnStretch(1, 1)
+        motor_layout.setColumnStretch(3, 1)
         self.motor_combo = QComboBox()
         self.motor_combo.addItems(["m1", "m2", "m3", "m4"])
         self.motor_duty_spin = QDoubleSpinBox()
@@ -1580,6 +1612,8 @@ class MainWindow(QMainWindow):
 
         rate_box = QGroupBox()
         rate_layout = QGridLayout(rate_box)
+        rate_layout.setColumnStretch(1, 1)
+        rate_layout.setColumnStretch(3, 1)
         self.rate_axis_combo = QComboBox()
         self.rate_axis_combo.addItems(["roll", "pitch", "yaw"])
         self.rate_value_spin = QDoubleSpinBox()
@@ -1604,6 +1638,7 @@ class MainWindow(QMainWindow):
 
         log_box = QGroupBox()
         log_layout = QGridLayout(log_box)
+        log_layout.setColumnStretch(1, 1)
         self.log_path_edit = QLineEdit(str(Path.cwd() / "telemetry.csv"))
         self.csv_group = log_box
         self.log_browse_button = QPushButton()
@@ -1667,6 +1702,10 @@ class MainWindow(QMainWindow):
     def _wire_signals(self) -> None:
         self.language_combo.currentIndexChanged.connect(self._change_language)
         self.link_type_combo.currentTextChanged.connect(self._update_link_inputs)
+        self.main_splitter.splitterMoved.connect(lambda *_args: self._save_settings())
+        self.center_splitter.splitterMoved.connect(lambda *_args: self._save_settings())
+        self.right_splitter.splitterMoved.connect(lambda *_args: self._save_settings())
+        self.params_splitter.splitterMoved.connect(lambda *_args: self._save_settings())
         self.refresh_ports_button.clicked.connect(self._refresh_serial_ports)
         self.connect_button.clicked.connect(self._connect_requested)
         self.disconnect_button.clicked.connect(self._disconnect_requested)
@@ -2456,6 +2495,9 @@ class MainWindow(QMainWindow):
         self.log_path_edit.setText(str(log_path))
         if main_splitter_state:
             self.main_splitter.restoreState(main_splitter_state)
+        else:
+            self._apply_default_main_splitter_sizes()
+        self._normalize_main_splitter_sizes()
         if center_splitter_state:
             self.center_splitter.restoreState(center_splitter_state)
         if right_splitter_state:

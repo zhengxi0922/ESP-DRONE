@@ -325,7 +325,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
     from PyQt5.QtCore import QSettings
-    from PyQt5.QtWidgets import QApplication, QFileDialog, QGroupBox, QLabel, QPushButton
+    from PyQt5.QtWidgets import QApplication, QFileDialog, QGroupBox, QLabel, QPushButton, QSizePolicy
 
     from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
 
@@ -362,6 +362,10 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert window.right_tabs.currentIndex() == 0
     assert window.right_tabs.tabText(0) == window._t("tab.params")
     assert window.right_tabs.tabText(1) == window._t("tab.events")
+    assert window.left_panel.minimumWidth() >= 320
+    assert window.center_panel.minimumWidth() >= 780
+    assert window.right_panel.minimumWidth() >= 360
+    assert window.left_panel.sizePolicy().horizontalPolicy() != QSizePolicy.Fixed
     assert window.params_table.rowCount() == 2
     session.calls.clear()
 
