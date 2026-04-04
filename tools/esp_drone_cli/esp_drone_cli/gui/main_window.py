@@ -381,8 +381,13 @@ TRANSLATIONS = {
         "group.status": "关键状态",
         "group.params": "参数调试",
         "group.log": "事件日志",
+        "group.tools": "工具",
+        "group.session_info": "连接摘要",
         "tab.params": "参数",
         "tab.events": "日志",
+        "tab.tools": "工具",
+        "tab.motor": "电机测试",
+        "tab.rate": "速率测试",
         "group.motor": "电机测试",
         "group.calib": "校准",
         "group.rate": "速率测试",
@@ -550,10 +555,17 @@ TRANSLATIONS = {
         "group.status": "Key Status",
         "group.params": "Parameters",
         "group.log": "Event Log",
+        "group.tools": "Tools",
+        "group.session_info": "Session",
         "group.motor": "Motor Test",
         "group.calib": "Calibration",
         "group.rate": "Rate Test",
         "group.csv": "Log Export",
+        "tab.params": "Parameters",
+        "tab.events": "Events",
+        "tab.tools": "Tools",
+        "tab.motor": "Motor Test",
+        "tab.rate": "Rate Test",
         "label.link": "Link",
         "label.serial_port": "Serial Port",
         "label.baud": "Baud",
@@ -1275,10 +1287,12 @@ class MainWindow(QMainWindow):
         self.right_splitter.setOpaqueResize(False)
         self.status_group = self._build_status_group()
         self.params_group = self._build_params_group()
+        self.tools_panel = self._build_tools_panel()
         self.right_tabs = QTabWidget()
         self.right_tabs.setDocumentMode(True)
         self.right_tabs.addTab(self.params_group, "")
         self.right_tabs.addTab(self.bottom_panel, "")
+        self.right_tabs.addTab(self.tools_panel, "")
         self.right_tabs.setCurrentIndex(0)
         self.right_splitter.addWidget(self.status_group)
         self.right_splitter.addWidget(self.right_tabs)
@@ -1286,6 +1300,29 @@ class MainWindow(QMainWindow):
         self.right_splitter.setStretchFactor(1, 1)
         self.right_splitter.setSizes([152, 698])
         layout.addWidget(self.right_splitter)
+        return panel
+
+    def _build_tools_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        self.session_info_group = QGroupBox()
+        session_layout = QGridLayout(self.session_info_group)
+        session_layout.setColumnStretch(1, 1)
+        session_layout.addWidget(self.session_title_label, 0, 0)
+        session_layout.addWidget(self.connection_info_label, 0, 1)
+        session_layout.addWidget(self.last_conn_error_title_label, 1, 0)
+        session_layout.addWidget(self.connection_error_detail, 1, 1)
+
+        self.calib_group = self._build_calibration_panel()
+        self.csv_group = self._build_log_export_panel()
+
+        layout.addWidget(self.session_info_group)
+        layout.addWidget(self.calib_group)
+        layout.addWidget(self.csv_group)
+        layout.addStretch(1)
         return panel
 
     def _apply_default_main_splitter_sizes(self) -> None:
@@ -1424,10 +1461,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.transport_stack, 1, 0, 1, 3)
         layout.addWidget(self.connect_button, 2, 1)
         layout.addWidget(self.disconnect_button, 2, 2)
-        layout.addWidget(self.session_title_label, 3, 0)
-        layout.addWidget(self.connection_info_label, 3, 1, 1, 2)
-        layout.addWidget(self.last_conn_error_title_label, 4, 0)
-        layout.addWidget(self.connection_error_detail, 4, 1, 1, 2)
         return group
 
     def _build_safety_group(self) -> QGroupBox:
@@ -1635,6 +1668,9 @@ class MainWindow(QMainWindow):
         warning.setStyleSheet("color:#E65100;font-weight:600;")
         layout.addWidget(warning)
 
+        self.debug_action_tabs = QTabWidget()
+        self.debug_action_tabs.setDocumentMode(True)
+
         motor_box = QWidget()
         motor_layout = QGridLayout(motor_box)
         motor_layout.setColumnStretch(1, 1)
@@ -1659,23 +1695,7 @@ class MainWindow(QMainWindow):
         motor_layout.addWidget(self.motor_duty_spin, 0, 3)
         motor_layout.addWidget(self.motor_start_button, 0, 4)
         motor_layout.addWidget(self.motor_stop_button, 0, 5)
-        self.motor_section = CollapsibleSection(expanded=True)
-        self.motor_section.set_content(motor_box)
-        layout.addWidget(self.motor_section)
-
-        calib_box = QWidget()
-        calib_layout = QHBoxLayout(calib_box)
-        self.calib_group = calib_box
-        self.calib_gyro_button = QPushButton()
-        self.calib_level_button = QPushButton()
-        self.calib_gyro_button.setMaximumWidth(84)
-        self.calib_level_button.setMaximumWidth(84)
-        calib_layout.addWidget(self.calib_gyro_button)
-        calib_layout.addWidget(self.calib_level_button)
-        calib_layout.addStretch(1)
-        self.calib_section = CollapsibleSection(expanded=False)
-        self.calib_section.set_content(calib_box)
-        layout.addWidget(self.calib_section)
+        self.motor_group = motor_box
 
         rate_box = QWidget()
         rate_layout = QGridLayout(rate_box)
@@ -1701,15 +1721,33 @@ class MainWindow(QMainWindow):
         rate_layout.addWidget(self.rate_value_spin, 0, 3)
         rate_layout.addWidget(self.rate_start_button, 0, 4)
         rate_layout.addWidget(self.rate_stop_button, 0, 5)
-        self.rate_section = CollapsibleSection(expanded=False)
-        self.rate_section.set_content(rate_box)
-        layout.addWidget(self.rate_section)
+        self.rate_group = rate_box
 
-        log_box = QWidget()
-        log_layout = QGridLayout(log_box)
-        log_layout.setColumnStretch(1, 1)
+        self.debug_action_tabs.addTab(motor_box, "")
+        self.debug_action_tabs.addTab(rate_box, "")
+        layout.addWidget(self.debug_action_tabs)
+
+        return group
+
+    def _build_calibration_panel(self) -> QGroupBox:
+        group = QGroupBox()
+        layout = QHBoxLayout(group)
+        self.calib_group = group
+        self.calib_gyro_button = QPushButton()
+        self.calib_level_button = QPushButton()
+        self.calib_gyro_button.setMaximumWidth(96)
+        self.calib_level_button.setMaximumWidth(96)
+        layout.addWidget(self.calib_gyro_button)
+        layout.addWidget(self.calib_level_button)
+        layout.addStretch(1)
+        return group
+
+    def _build_log_export_panel(self) -> QGroupBox:
+        group = QGroupBox()
+        layout = QGridLayout(group)
+        layout.setColumnStretch(1, 1)
         self.log_path_edit = QLineEdit(str(Path.cwd() / "telemetry.csv"))
-        self.csv_group = log_box
+        self.csv_group = group
         self.log_browse_button = QPushButton()
         self.start_log_button = QPushButton()
         self.stop_log_button = QPushButton()
@@ -1724,18 +1762,14 @@ class MainWindow(QMainWindow):
         self.start_log_button.setMaximumWidth(82)
         self.stop_log_button.setMaximumWidth(82)
         self.dump_csv_button.setMaximumWidth(82)
-        log_layout.addWidget(self.output_label, 0, 0)
-        log_layout.addWidget(self.log_path_edit, 0, 1, 1, 4)
-        log_layout.addWidget(self.log_browse_button, 0, 5)
-        log_layout.addWidget(self.start_log_button, 1, 0)
-        log_layout.addWidget(self.stop_log_button, 1, 1)
-        log_layout.addWidget(self.dump_s_label, 1, 2)
-        log_layout.addWidget(self.dump_duration_spin, 1, 3)
-        log_layout.addWidget(self.dump_csv_button, 1, 4)
-        self.csv_section = CollapsibleSection(expanded=False)
-        self.csv_section.set_content(log_box)
-        layout.addWidget(self.csv_section)
-
+        layout.addWidget(self.output_label, 0, 0)
+        layout.addWidget(self.log_path_edit, 0, 1, 1, 4)
+        layout.addWidget(self.log_browse_button, 0, 5)
+        layout.addWidget(self.start_log_button, 1, 0)
+        layout.addWidget(self.stop_log_button, 1, 1)
+        layout.addWidget(self.dump_s_label, 1, 2)
+        layout.addWidget(self.dump_duration_spin, 1, 3)
+        layout.addWidget(self.dump_csv_button, 1, 4)
         return group
 
     def _build_status_group(self) -> QGroupBox:
@@ -1779,10 +1813,7 @@ class MainWindow(QMainWindow):
         self.params_splitter.splitterMoved.connect(lambda *_args: self._save_settings())
         self.connection_section.toggled.connect(lambda *_args: self._save_settings())
         self.safety_section.toggled.connect(lambda *_args: self._save_settings())
-        self.motor_section.toggled.connect(lambda *_args: self._save_settings())
-        self.calib_section.toggled.connect(lambda *_args: self._save_settings())
-        self.rate_section.toggled.connect(lambda *_args: self._save_settings())
-        self.csv_section.toggled.connect(lambda *_args: self._save_settings())
+        self.debug_action_tabs.currentChanged.connect(lambda *_args: self._save_settings())
         self.refresh_ports_button.clicked.connect(self._refresh_serial_ports)
         self.connect_button.clicked.connect(self._connect_requested)
         self.disconnect_button.clicked.connect(self._disconnect_requested)
@@ -1898,10 +1929,9 @@ class MainWindow(QMainWindow):
         self.status_group.setTitle(self._t("group.status"))
         self.params_group.setTitle("")
         self.bottom_panel.setTitle("")
-        self.motor_section.set_title(self._t("group.motor"))
-        self.calib_section.set_title(self._t("group.calib"))
-        self.rate_section.set_title(self._t("group.rate"))
-        self.csv_section.set_title(self._t("group.csv"))
+        self.session_info_group.setTitle(self._t("group.session_info"))
+        self.calib_group.setTitle(self._t("group.calib"))
+        self.csv_group.setTitle(self._t("group.csv"))
 
         self.link_type_label.setText(self._t("label.link"))
         self.serial_port_label.setText(self._t("label.serial_port"))
@@ -1938,6 +1968,8 @@ class MainWindow(QMainWindow):
         self.start_log_button.setText(self._t("button.start_log"))
         self.stop_log_button.setText(self._t("button.stop_log"))
         self.dump_csv_button.setText(self._t("button.dump_csv"))
+        self.debug_action_tabs.setTabText(0, self._t("tab.motor"))
+        self.debug_action_tabs.setTabText(1, self._t("tab.rate"))
 
         self.stream_on_button.setText(self._t("button.stream_on"))
         self.stream_off_button.setText(self._t("button.stream_off"))
@@ -1990,6 +2022,7 @@ class MainWindow(QMainWindow):
         self.import_params_button.setText(self._t("button.import_json"))
         self.right_tabs.setTabText(0, self._t("tab.params"))
         self.right_tabs.setTabText(1, self._t("tab.events"))
+        self.right_tabs.setTabText(2, self._t("tab.tools"))
         self.params_table.setHorizontalHeaderLabels([self._t("label.name"), self._t("label.type"), self._t("label.current")])
         self.param_name_title_label.setText(self._t("label.name"))
         self.param_type_title_label.setText(self._t("label.type"))
@@ -2541,10 +2574,7 @@ class MainWindow(QMainWindow):
         self._settings.setValue("log/path", self.log_path_edit.text())
         self._settings.setValue("section/connection", self.connection_section.is_expanded())
         self._settings.setValue("section/safety", self.safety_section.is_expanded())
-        self._settings.setValue("section/motor", self.motor_section.is_expanded())
-        self._settings.setValue("section/calib", self.calib_section.is_expanded())
-        self._settings.setValue("section/rate", self.rate_section.is_expanded())
-        self._settings.setValue("section/csv", self.csv_section.is_expanded())
+        self._settings.setValue("debug/action_index", self.debug_action_tabs.currentIndex())
 
     def _load_settings(self) -> None:
         geometry = self._settings.value("window/geometry", type=QByteArray)
@@ -2573,10 +2603,7 @@ class MainWindow(QMainWindow):
         log_path = self._settings.value("log/path", self.log_path_edit.text())
         section_connection = bool(self._settings.value("section/connection", True, type=bool))
         section_safety = bool(self._settings.value("section/safety", True, type=bool))
-        section_motor = bool(self._settings.value("section/motor", True, type=bool))
-        section_calib = bool(self._settings.value("section/calib", False, type=bool))
-        section_rate = bool(self._settings.value("section/rate", False, type=bool))
-        section_csv = bool(self._settings.value("section/csv", False, type=bool))
+        debug_action_index = int(self._settings.value("debug/action_index", 0))
 
         link_index = self.link_type_combo.findData(str(link_type))
         self.link_type_combo.setCurrentIndex(link_index if link_index >= 0 else 0)
@@ -2592,10 +2619,7 @@ class MainWindow(QMainWindow):
         self._sync_log_path_tooltip()
         self.connection_section.set_expanded(section_connection)
         self.safety_section.set_expanded(section_safety)
-        self.motor_section.set_expanded(section_motor)
-        self.calib_section.set_expanded(section_calib)
-        self.rate_section.set_expanded(section_rate)
-        self.csv_section.set_expanded(section_csv)
+        self.debug_action_tabs.setCurrentIndex(max(0, min(debug_action_index, self.debug_action_tabs.count() - 1)))
         if main_splitter_state:
             self.main_splitter.restoreState(main_splitter_state)
         else:

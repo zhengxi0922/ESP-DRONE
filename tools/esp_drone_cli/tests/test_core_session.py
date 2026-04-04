@@ -362,6 +362,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert window.right_tabs.currentIndex() == 0
     assert window.right_tabs.tabText(0) == window._t("tab.params")
     assert window.right_tabs.tabText(1) == window._t("tab.events")
+    assert window.right_tabs.tabText(2) == window._t("tab.tools")
     assert window.left_panel.minimumWidth() >= 320
     assert window.center_panel.minimumWidth() >= 780
     assert window.right_panel.minimumWidth() >= 360
@@ -369,10 +370,10 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert window.left_panel.verticalScrollBarPolicy() == Qt.ScrollBarAsNeeded
     assert window.connection_section.is_expanded() is True
     assert window.safety_section.is_expanded() is True
-    assert window.motor_section.is_expanded() is True
-    assert window.calib_section.is_expanded() is False
-    assert window.rate_section.is_expanded() is False
-    assert window.csv_section.is_expanded() is False
+    assert window.debug_action_tabs.count() == 2
+    assert window.debug_action_tabs.tabText(0) == window._t("tab.motor")
+    assert window.debug_action_tabs.tabText(1) == window._t("tab.rate")
+    assert window.debug_action_tabs.currentIndex() == 0
     assert window.params_table.rowCount() == 2
     session.calls.clear()
 
@@ -397,6 +398,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
             window.calib_gyro_button.toolTip(),
             window.calib_level_button.toolTip(),
             *(window.right_tabs.tabText(i) for i in range(window.right_tabs.count())),
+            *(window.debug_action_tabs.tabText(i) for i in range(window.debug_action_tabs.count())),
         ]
     )
     raw_tokens = [
