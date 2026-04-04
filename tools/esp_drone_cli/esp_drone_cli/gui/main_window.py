@@ -124,6 +124,8 @@ TRANSLATIONS = {
         "button.stop": "停止",
         "button.calib_gyro": "校准陀螺仪",
         "button.calib_level": "校准水平",
+        "button.calib_gyro_short": "校陀螺",
+        "button.calib_level_short": "校水平",
         "button.start_log": "开始记录",
         "button.stop_log": "停止记录",
         "button.dump_csv": "导出 CSV",
@@ -222,6 +224,8 @@ TRANSLATIONS = {
         "group.status": "Key Status",
         "group.params": "Parameters",
         "group.log": "Event Log",
+        "tab.params": "Parameters",
+        "tab.events": "Events",
         "group.motor": "Motor Test",
         "group.calib": "Calibration",
         "group.rate": "Rate Test",
@@ -377,6 +381,8 @@ TRANSLATIONS = {
         "group.status": "关键状态",
         "group.params": "参数调试",
         "group.log": "事件日志",
+        "tab.params": "参数",
+        "tab.events": "日志",
         "group.motor": "电机测试",
         "group.calib": "校准",
         "group.rate": "速率测试",
@@ -434,6 +440,13 @@ TRANSLATIONS = {
         "button.set_selected": "设置当前参数",
         "button.start": "开始",
         "button.stop": "停止",
+        "button.calib_gyro": "校准陀螺仪",
+        "button.calib_level": "校准水平",
+        "button.calib_gyro_short": "校陀螺",
+        "button.calib_level_short": "校水平",
+        "button.start_log": "开始记录",
+        "button.stop_log": "停止记录",
+        "button.dump_csv": "导出 CSV",
         "button.browse": "浏览",
         "button.clear_log": "清空日志",
         "button.copy_log": "复制日志",
@@ -596,6 +609,8 @@ TRANSLATIONS = {
         "button.stop": "Stop",
         "button.calib_gyro": "Calib Gyro",
         "button.calib_level": "Calib Level",
+        "button.calib_gyro_short": "Gyro",
+        "button.calib_level_short": "Level",
         "button.start_log": "Start Log",
         "button.stop_log": "Stop Log",
         "button.dump_csv": "Dump CSV",
@@ -980,7 +995,6 @@ class MainWindow(QMainWindow):
         self._current_chart_group = "gyro"
         self._chart_curves: dict[str, object] = {}
         self._chart_channel_checks: dict[str, QCheckBox] = {}
-        self._log_collapsed = False
 
         self._build_ui()
         self._wire_signals()
@@ -1122,41 +1136,31 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.language_combo)
         layout.addLayout(top_bar)
 
-        self.vertical_splitter = QSplitter(Qt.Vertical)
-        self.vertical_splitter.setChildrenCollapsible(False)
-        self.vertical_splitter.setOpaqueResize(False)
-
         self.main_splitter = QSplitter(Qt.Horizontal)
         self.main_splitter.setChildrenCollapsible(False)
         self.main_splitter.setOpaqueResize(False)
 
         self.left_panel = self._build_left_panel()
         self.center_panel = self._build_center_workbench()
-        self.right_panel = self._build_right_workbench()
         self.bottom_panel = self._build_bottom_panel()
+        self.right_panel = self._build_right_workbench()
 
         self.main_splitter.addWidget(self.left_panel)
         self.main_splitter.addWidget(self.center_panel)
         self.main_splitter.addWidget(self.right_panel)
         self.main_splitter.setStretchFactor(0, 0)
-        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setStretchFactor(1, 2)
         self.main_splitter.setStretchFactor(2, 0)
-        self.main_splitter.setSizes([310, 960, 420])
+        self.main_splitter.setSizes([250, 1230, 350])
 
-        self.vertical_splitter.addWidget(self.main_splitter)
-        self.vertical_splitter.addWidget(self.bottom_panel)
-        self.vertical_splitter.setStretchFactor(0, 1)
-        self.vertical_splitter.setStretchFactor(1, 0)
-        self.vertical_splitter.setSizes([860, 150])
-
-        layout.addWidget(self.vertical_splitter, 1)
+        layout.addWidget(self.main_splitter, 1)
         self.setCentralWidget(root)
 
     def _build_left_panel(self) -> QWidget:
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
         self.connection_group = self._build_connection_group()
         self.safety_group = self._build_safety_group()
         self.debug_group = self._build_debug_group()
@@ -1169,6 +1173,9 @@ class MainWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setMinimumWidth(228)
+        scroll.setMaximumWidth(288)
+        scroll.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         scroll.setWidget(content)
         return scroll
 
@@ -1185,9 +1192,9 @@ class MainWindow(QMainWindow):
         self.realtime_group = self._build_telemetry_group()
         self.center_splitter.addWidget(self.chart_group)
         self.center_splitter.addWidget(self.realtime_group)
-        self.center_splitter.setStretchFactor(0, 4)
+        self.center_splitter.setStretchFactor(0, 8)
         self.center_splitter.setStretchFactor(1, 2)
-        self.center_splitter.setSizes([620, 240])
+        self.center_splitter.setSizes([760, 170])
         layout.addWidget(self.center_splitter)
         return panel
 
@@ -1196,35 +1203,39 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
+        panel.setMinimumWidth(320)
+        panel.setMaximumWidth(420)
         self.right_splitter = QSplitter(Qt.Vertical)
         self.right_splitter.setChildrenCollapsible(False)
         self.right_splitter.setOpaqueResize(False)
         self.status_group = self._build_status_group()
         self.params_group = self._build_params_group()
+        self.right_tabs = QTabWidget()
+        self.right_tabs.setDocumentMode(True)
+        self.right_tabs.addTab(self.params_group, "")
+        self.right_tabs.addTab(self.bottom_panel, "")
+        self.right_tabs.setCurrentIndex(0)
         self.right_splitter.addWidget(self.status_group)
-        self.right_splitter.addWidget(self.params_group)
+        self.right_splitter.addWidget(self.right_tabs)
         self.right_splitter.setStretchFactor(0, 0)
         self.right_splitter.setStretchFactor(1, 1)
-        self.right_splitter.setSizes([200, 660])
+        self.right_splitter.setSizes([152, 698])
         layout.addWidget(self.right_splitter)
         return panel
 
     def _build_bottom_panel(self) -> QWidget:
         group = QGroupBox()
         layout = QVBoxLayout(group)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
         bar = QHBoxLayout()
-        self.log_toggle_button = QToolButton()
-        self.log_toggle_button.setCheckable(True)
-        self.log_toggle_button.setArrowType(Qt.RightArrow)
-        self.log_toggle_button.setChecked(False)
         self.clear_log_button = QPushButton()
         self.copy_log_button = QPushButton()
         self.save_log_button = QPushButton()
         self.last_result_title_label = QLabel()
         self.last_result_label = QLabel("-")
         self.last_result_label.setWordWrap(True)
-        bar.addWidget(self.log_toggle_button)
         bar.addWidget(self.clear_log_button)
         bar.addWidget(self.copy_log_button)
         bar.addWidget(self.save_log_button)
@@ -1331,25 +1342,32 @@ class MainWindow(QMainWindow):
     def _build_safety_group(self) -> QGroupBox:
         group = QGroupBox()
         layout = QGridLayout(group)
+        layout.setHorizontalSpacing(6)
+        layout.setVerticalSpacing(6)
 
         self.arm_button = QPushButton()
         self.disarm_button = QPushButton()
         self.kill_button = QPushButton()
         self.kill_button.setStyleSheet("background:#C62828;color:white;font-weight:700;")
         self.reboot_button = QPushButton()
+        self.arm_button.setMaximumWidth(92)
+        self.disarm_button.setMaximumWidth(92)
+        self.reboot_button.setMaximumWidth(92)
+        self.kill_button.setMinimumWidth(110)
 
         layout.addWidget(self.arm_button, 0, 0)
         layout.addWidget(self.disarm_button, 0, 1)
-        layout.addWidget(self.kill_button, 1, 0, 1, 2)
-        layout.addWidget(self.reboot_button, 2, 0, 1, 2)
+        layout.addWidget(self.kill_button, 1, 0)
+        layout.addWidget(self.reboot_button, 1, 1)
         return group
 
     def _build_telemetry_group(self) -> QGroupBox:
         group = QGroupBox()
         layout = QVBoxLayout(group)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
 
         bar = QHBoxLayout()
+        bar.setSpacing(6)
         self.stream_on_button = QPushButton()
         self.stream_off_button = QPushButton()
         self.stream_rate_spin = QSpinBox()
@@ -1375,7 +1393,7 @@ class MainWindow(QMainWindow):
         self.telemetry_table.setAlternatingRowColors(True)
         self.telemetry_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.telemetry_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.telemetry_table.setMinimumHeight(230)
+        self.telemetry_table.setMinimumHeight(150)
         for row, name in enumerate(self.TELEMETRY_FIELDS):
             field_item = QTableWidgetItem(name)
             value_item = QTableWidgetItem("-")
@@ -1387,21 +1405,32 @@ class MainWindow(QMainWindow):
     def _build_charts_group(self) -> QGroupBox:
         group = QGroupBox()
         layout = QVBoxLayout(group)
+        layout.setSpacing(4)
 
         control_bar = QHBoxLayout()
+        control_bar.setSpacing(6)
         self.chart_group_label = QLabel()
         self.chart_group_combo = QComboBox()
+        self.chart_group_combo.setMaximumWidth(140)
         self.chart_toggle_button = QPushButton()
         self.clear_charts_button = QPushButton()
         self.auto_scale_button = QPushButton()
         self.reset_view_button = QPushButton()
         self.chart_window_label = QLabel()
         self.chart_window_combo = QComboBox()
+        self.chart_window_combo.setMaximumWidth(92)
         self.chart_window_combo.addItem("5 s", 5.0)
         self.chart_window_combo.addItem("10 s", 10.0)
         self.chart_window_combo.addItem("30 s", 30.0)
         self.chart_window_combo.setCurrentIndex(1)
         self.chart_group_combo.addItems(["gyro", "attitude", "motors", "battery"])
+        for button in (
+            self.chart_toggle_button,
+            self.clear_charts_button,
+            self.auto_scale_button,
+            self.reset_view_button,
+        ):
+            button.setMaximumWidth(96)
         control_bar.addWidget(self.chart_group_label)
         control_bar.addWidget(self.chart_group_combo)
         control_bar.addWidget(self.chart_toggle_button)
@@ -1418,7 +1447,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(self.chart_channel_bar)
 
         self.main_plot = pg.PlotWidget()
-        self.main_plot.setMinimumHeight(430)
+        self.main_plot.setMinimumHeight(520)
         self.main_plot.setBackground("#0f1722")
         self.main_plot.showGrid(x=True, y=True, alpha=0.25)
         self.main_plot.addLegend(offset=(10, 10))
@@ -1434,7 +1463,7 @@ class MainWindow(QMainWindow):
     def _build_params_group(self) -> QGroupBox:
         group = QGroupBox()
         layout = QVBoxLayout(group)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
 
         top_bar = QHBoxLayout()
         self.param_search_edit = QLineEdit()
@@ -1467,7 +1496,9 @@ class MainWindow(QMainWindow):
 
         detail = QWidget()
         detail_layout = QVBoxLayout(detail)
+        detail_layout.setSpacing(4)
         form = QFormLayout()
+        form.setVerticalSpacing(4)
         self.param_name_title_label = QLabel()
         self.param_type_title_label = QLabel()
         self.param_current_title_label = QLabel()
@@ -1477,9 +1508,10 @@ class MainWindow(QMainWindow):
         self.param_new_value_edit = QLineEdit()
         self.param_hint_label = QLabel()
         self.param_hint_label.setWordWrap(True)
+        self.param_hint_label.setMaximumHeight(38)
         self.param_help_text = QPlainTextEdit()
         self.param_help_text.setReadOnly(True)
-        self.param_help_text.setMaximumHeight(72)
+        self.param_help_text.setMaximumHeight(54)
         form.addRow(self.param_name_title_label, self.param_name_label)
         form.addRow(self.param_type_title_label, self.param_type_label)
         form.addRow(self.param_current_title_label, self.param_current_value_label)
@@ -1493,14 +1525,16 @@ class MainWindow(QMainWindow):
         self.set_param_button = QPushButton()
         detail_layout.addWidget(self.set_param_button)
         self.params_splitter.addWidget(detail)
-        self.params_splitter.setStretchFactor(0, 4)
-        self.params_splitter.setStretchFactor(1, 0)
+        self.params_splitter.setStretchFactor(0, 7)
+        self.params_splitter.setStretchFactor(1, 1)
+        self.params_splitter.setSizes([620, 150])
         layout.addWidget(self.params_splitter, 1)
         return group
 
     def _build_debug_group(self) -> QGroupBox:
         group = QGroupBox()
         layout = QVBoxLayout(group)
+        layout.setSpacing(6)
 
         self.debug_warning_label = QLabel()
         warning = self.debug_warning_label
@@ -1522,6 +1556,8 @@ class MainWindow(QMainWindow):
         self.motor_stop_button = QPushButton()
         self.motor_label = QLabel()
         self.duty_label = QLabel()
+        self.motor_start_button.setMaximumWidth(68)
+        self.motor_stop_button.setMaximumWidth(68)
         motor_layout.addWidget(self.motor_label, 0, 0)
         motor_layout.addWidget(self.motor_combo, 0, 1)
         motor_layout.addWidget(self.duty_label, 0, 2)
@@ -1535,6 +1571,8 @@ class MainWindow(QMainWindow):
         self.calib_group = calib_box
         self.calib_gyro_button = QPushButton()
         self.calib_level_button = QPushButton()
+        self.calib_gyro_button.setMaximumWidth(84)
+        self.calib_level_button.setMaximumWidth(84)
         calib_layout.addWidget(self.calib_gyro_button)
         calib_layout.addWidget(self.calib_level_button)
         calib_layout.addStretch(1)
@@ -1554,6 +1592,8 @@ class MainWindow(QMainWindow):
         self.rate_stop_button = QPushButton()
         self.rate_axis_label = QLabel()
         self.rate_dps_label = QLabel()
+        self.rate_start_button.setMaximumWidth(68)
+        self.rate_stop_button.setMaximumWidth(68)
         rate_layout.addWidget(self.rate_axis_label, 0, 0)
         rate_layout.addWidget(self.rate_axis_combo, 0, 1)
         rate_layout.addWidget(self.rate_dps_label, 0, 2)
@@ -1576,6 +1616,10 @@ class MainWindow(QMainWindow):
         self.dump_csv_button = QPushButton()
         self.output_label = QLabel()
         self.dump_s_label = QLabel()
+        self.log_browse_button.setMaximumWidth(64)
+        self.start_log_button.setMaximumWidth(82)
+        self.stop_log_button.setMaximumWidth(82)
+        self.dump_csv_button.setMaximumWidth(82)
         log_layout.addWidget(self.output_label, 0, 0)
         log_layout.addWidget(self.log_path_edit, 0, 1, 1, 4)
         log_layout.addWidget(self.log_browse_button, 0, 5)
@@ -1591,6 +1635,8 @@ class MainWindow(QMainWindow):
     def _build_status_group(self) -> QGroupBox:
         group = QGroupBox()
         layout = QGridLayout(group)
+        layout.setHorizontalSpacing(6)
+        layout.setVerticalSpacing(6)
         self.status_cards: dict[str, tuple[QLabel, QLabel]] = {}
         cards = [
             ("arm_state", 0, 0),
@@ -1606,11 +1652,11 @@ class MainWindow(QMainWindow):
             card = QFrame()
             card.setStyleSheet("QFrame {background:#0f1722;border:1px solid #253447;border-radius:8px;}")
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(10, 8, 10, 8)
+            card_layout.setContentsMargins(8, 6, 8, 6)
             title = QLabel(key)
-            title.setStyleSheet("color:#93c5fd;font-size:11px;font-weight:600;")
+            title.setStyleSheet("color:#93c5fd;font-size:10px;font-weight:600;")
             value = QLabel("-")
-            value.setStyleSheet("font-size:14px;font-weight:700;color:#f8fafc;")
+            value.setStyleSheet("font-size:12px;font-weight:700;color:#f8fafc;")
             value.setWordWrap(True)
             card_layout.addWidget(title)
             card_layout.addWidget(value)
@@ -1664,7 +1710,6 @@ class MainWindow(QMainWindow):
         self.stop_log_button.clicked.connect(self._stop_log)
         self.dump_csv_button.clicked.connect(self._dump_csv)
 
-        self.log_toggle_button.clicked.connect(self._toggle_log_panel)
         self.clear_log_button.clicked.connect(self.event_log_edit.clear)
         self.copy_log_button.clicked.connect(lambda: QApplication.clipboard().setText(self.event_log_edit.toPlainText()))
         self.save_log_button.clicked.connect(self._save_event_log)
@@ -1729,8 +1774,8 @@ class MainWindow(QMainWindow):
         self.chart_group.setTitle(self._t("group.chart"))
         self.realtime_group.setTitle(self._t("group.realtime"))
         self.status_group.setTitle(self._t("group.status"))
-        self.params_group.setTitle(self._t("group.params"))
-        self.bottom_panel.setTitle(self._t("group.log"))
+        self.params_group.setTitle("")
+        self.bottom_panel.setTitle("")
         self.motor_group.setTitle(self._t("group.motor"))
         self.calib_group.setTitle(self._t("group.calib"))
         self.rate_group.setTitle(self._t("group.rate"))
@@ -1757,8 +1802,10 @@ class MainWindow(QMainWindow):
         self.duty_label.setText(self._t("label.duty"))
         self.motor_start_button.setText(self._t("button.start"))
         self.motor_stop_button.setText(self._t("button.stop"))
-        self.calib_gyro_button.setText(self._t("button.calib_gyro"))
-        self.calib_level_button.setText(self._t("button.calib_level"))
+        self.calib_gyro_button.setText(self._t("button.calib_gyro_short"))
+        self.calib_level_button.setText(self._t("button.calib_level_short"))
+        self.calib_gyro_button.setToolTip(self._t("button.calib_gyro"))
+        self.calib_level_button.setToolTip(self._t("button.calib_level"))
         self.rate_axis_label.setText(self._t("label.axis"))
         self.rate_dps_label.setText(self._t("label.rate_dps"))
         self.rate_start_button.setText(self._t("button.start"))
@@ -1819,6 +1866,8 @@ class MainWindow(QMainWindow):
         self.reset_params_button.setText(self._t("button.reset"))
         self.export_params_button.setText(self._t("button.export_json"))
         self.import_params_button.setText(self._t("button.import_json"))
+        self.right_tabs.setTabText(0, self._t("tab.params"))
+        self.right_tabs.setTabText(1, self._t("tab.events"))
         self.params_table.setHorizontalHeaderLabels([self._t("label.name"), self._t("label.type"), self._t("label.current")])
         self.param_name_title_label.setText(self._t("label.name"))
         self.param_type_title_label.setText(self._t("label.type"))
@@ -1890,15 +1939,8 @@ class MainWindow(QMainWindow):
         self._save_settings()
 
     def _toggle_log_panel(self) -> None:
-        self._log_collapsed = not self._log_collapsed
-        self.log_body.setVisible(not self._log_collapsed)
-        self.log_toggle_button.setArrowType(Qt.RightArrow if self._log_collapsed else Qt.DownArrow)
-        self.log_toggle_button.setText(self._t("button.expand_log") if self._log_collapsed else self._t("button.collapse_log"))
-        if self._log_collapsed:
-            self.vertical_splitter.setSizes([960, 34])
-        else:
-            self.vertical_splitter.setSizes([880, 130])
-        self._save_settings()
+        if hasattr(self, "right_tabs"):
+            self.right_tabs.setCurrentIndex(1)
 
     def _auto_scale_plot(self) -> None:
         self.main_plot.enableAutoRange(axis="y", enable=True)
@@ -2361,7 +2403,6 @@ class MainWindow(QMainWindow):
         self._settings.setValue("window/geometry", self.saveGeometry())
         self._settings.setValue("window/state", self.saveState())
         self._settings.setValue("splitter/main", self.main_splitter.saveState())
-        self._settings.setValue("splitter/vertical", self.vertical_splitter.saveState())
         self._settings.setValue("splitter/center", self.center_splitter.saveState())
         self._settings.setValue("splitter/right", self.right_splitter.saveState())
         self._settings.setValue("splitter/params", self.params_splitter.saveState())
@@ -2375,13 +2416,11 @@ class MainWindow(QMainWindow):
         self._settings.setValue("chart/group", self._current_chart_group)
         self._settings.setValue("params/search", self.param_search_edit.text())
         self._settings.setValue("log/path", self.log_path_edit.text())
-        self._settings.setValue("log/collapsed", self._log_collapsed)
 
     def _load_settings(self) -> None:
         geometry = self._settings.value("window/geometry", type=QByteArray)
         state = self._settings.value("window/state", type=QByteArray)
         main_splitter_state = self._settings.value("splitter/main", type=QByteArray)
-        vertical_splitter_state = self._settings.value("splitter/vertical", type=QByteArray)
         center_splitter_state = self._settings.value("splitter/center", type=QByteArray)
         right_splitter_state = self._settings.value("splitter/right", type=QByteArray)
         params_splitter_state = self._settings.value("splitter/params", type=QByteArray)
@@ -2403,7 +2442,6 @@ class MainWindow(QMainWindow):
         chart_group = str(self._settings.value("chart/group", self._current_chart_group))
         param_search = self._settings.value("params/search", "")
         log_path = self._settings.value("log/path", self.log_path_edit.text())
-        log_collapsed = bool(self._settings.value("log/collapsed", False, type=bool))
 
         link_index = self.link_type_combo.findData(str(link_type))
         self.link_type_combo.setCurrentIndex(link_index if link_index >= 0 else 0)
@@ -2418,8 +2456,6 @@ class MainWindow(QMainWindow):
         self.log_path_edit.setText(str(log_path))
         if main_splitter_state:
             self.main_splitter.restoreState(main_splitter_state)
-        if vertical_splitter_state:
-            self.vertical_splitter.restoreState(vertical_splitter_state)
         if center_splitter_state:
             self.center_splitter.restoreState(center_splitter_state)
         if right_splitter_state:
@@ -2428,8 +2464,6 @@ class MainWindow(QMainWindow):
             self.params_splitter.restoreState(params_splitter_state)
         self._update_link_inputs()
         self._rebuild_chart_channels()
-        if log_collapsed:
-            self._toggle_log_panel()
 
     def closeEvent(self, event) -> None:  # pragma: no cover - exercised by smoke tests
         self._closing = True

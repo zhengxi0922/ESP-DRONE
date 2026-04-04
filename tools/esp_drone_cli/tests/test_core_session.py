@@ -325,7 +325,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
     from PyQt5.QtCore import QSettings
-    from PyQt5.QtWidgets import QApplication, QFileDialog
+    from PyQt5.QtWidgets import QApplication, QFileDialog, QGroupBox, QLabel, QPushButton
 
     from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
 
@@ -359,6 +359,9 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     app.processEvents()
     assert ("connect_serial", ("COM9", 115200, 0.2), {}) in session.calls
     assert window.connection_status_chip.text() == window._t("status.connected")
+    assert window.right_tabs.currentIndex() == 0
+    assert window.right_tabs.tabText(0) == window._t("tab.params")
+    assert window.right_tabs.tabText(1) == window._t("tab.events")
     assert window.params_table.rowCount() == 2
     session.calls.clear()
 
@@ -369,6 +372,28 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert window.telemetry_table.item(0, 1).text() == "1.000"
     assert window.status_cards["arm_state"][1].text() == window._t("arm.disarmed")
     assert "imu healthy" in window.event_log_edit.toPlainText()
+    localized_texts = []
+    for widget in window.findChildren((QPushButton, QLabel, QGroupBox)):
+        text = widget.title() if isinstance(widget, QGroupBox) else widget.text()
+        text = text.strip()
+        if text:
+            localized_texts.append(text)
+    localized_texts.extend(
+        [
+            window.param_search_edit.placeholderText(),
+            window.param_new_value_edit.placeholderText(),
+            window.event_log_edit.placeholderText(),
+            window.calib_gyro_button.toolTip(),
+            window.calib_level_button.toolTip(),
+            *(window.right_tabs.tabText(i) for i in range(window.right_tabs.count())),
+        ]
+    )
+    raw_tokens = [
+        text
+        for text in localized_texts
+        if text.startswith(("button.", "group.", "label.", "placeholder.", "tab."))
+    ]
+    assert raw_tokens == []
 
     window.stream_on_button.click()
     window.stream_off_button.click()
