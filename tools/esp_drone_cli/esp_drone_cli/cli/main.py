@@ -1,11 +1,4 @@
-# ============================================================
-# @file main.py
-# @brief ESP-DRONE CLI ????
-# @details ????????????? DeviceSession ?????????????????
-# @author Codex
-# @date 2026-04-05
-# @version 1.0
-# ============================================================
+"""命令行前端实现。"""
 
 from __future__ import annotations
 
@@ -19,6 +12,18 @@ from esp_drone_cli.core import DeviceSession, TelemetrySample
 
 
 def axis_name_to_index(name: str) -> int:
+    """将轴名称转换为协议使用的轴编号。
+
+    Args:
+        name: 轴名称，只支持 `roll`、`pitch` 或 `yaw`。
+
+    Returns:
+        对应的轴编号，范围为 `0` 到 `2`。
+
+    Raises:
+        SystemExit: 轴名称不受支持时抛出。
+    """
+
     names = {"roll": 0, "pitch": 1, "yaw": 2}
     if name not in names:
         raise SystemExit(f"unsupported axis {name}")
@@ -26,6 +31,20 @@ def axis_name_to_index(name: str) -> int:
 
 
 def connect_session_from_args(args) -> DeviceSession:
+    """根据命令行参数创建并连接设备会话。
+
+    Args:
+        args: `argparse` 解析后的参数对象，需包含 `serial`、`udp` 和 `baudrate` 字段。
+
+    Returns:
+        已建立连接的 `DeviceSession`。
+
+    Raises:
+        SystemExit: 未提供 `--serial` 或 `--udp` 时抛出。
+        ValueError: UDP 端口无法转换为整数时抛出。
+        RuntimeError: 设备连接或握手失败时由下层会话抛出。
+    """
+
     session = DeviceSession()
     if args.serial:
         session.connect_serial(args.serial, baudrate=args.baudrate)
@@ -38,72 +57,222 @@ def connect_session_from_args(args) -> DeviceSession:
 
 
 def add_common_transport_args(parser: argparse.ArgumentParser) -> None:
+    """为命令解析器补充通用连接参数。
+
+    Args:
+        parser: 目标解析器。
+
+    Returns:
+        None.
+    """
+
     parser.add_argument("--serial", help="Serial port, for example COM7")
     parser.add_argument("--baudrate", type=int, default=115200)
     parser.add_argument("--udp", help="UDP endpoint host[:port], default port 2391")
 
 
 def cmd_connect(session: DeviceSession, _args) -> int:
+    """执行握手并打印设备摘要。
+
+    Args:
+        session: 已连接的设备会话。
+        _args: 当前命令未使用的参数对象。
+
+    Returns:
+        固定返回 `0`。
+    """
+
     print(session.device_info or session.hello())
     return 0
 
 
 def cmd_arm(session: DeviceSession, _args) -> int:
+    """发送解锁命令。
+
+    Args:
+        session: 已连接的设备会话。
+        _args: 当前命令未使用的参数对象。
+
+    Returns:
+        设备返回的命令状态码。
+    """
+
     return session.arm()
 
 
 def cmd_disarm(session: DeviceSession, _args) -> int:
+    """发送上锁命令。
+
+    Args:
+        session: 已连接的设备会话。
+        _args: 当前命令未使用的参数对象。
+
+    Returns:
+        设备返回的命令状态码。
+    """
+
     return session.disarm()
 
 
 def cmd_kill(session: DeviceSession, _args) -> int:
+    """发送急停命令。
+
+    Args:
+        session: 已连接的设备会话。
+        _args: 当前命令未使用的参数对象。
+
+    Returns:
+        设备返回的命令状态码。
+    """
+
     return session.kill()
 
 
 def cmd_reboot(session: DeviceSession, _args) -> int:
+    """发送重启命令。
+
+    Args:
+        session: 已连接的设备会话。
+        _args: 当前命令未使用的参数对象。
+
+    Returns:
+        设备返回的命令状态码。
+    """
+
     return session.reboot()
 
 
 def cmd_get(session: DeviceSession, args) -> int:
+    """读取并打印单个参数。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `name`。
+
+    Returns:
+        固定返回 `0`。
+    """
+
     print(session.get_param(args.name))
     return 0
 
 
 def cmd_set(session: DeviceSession, args) -> int:
+    """写入单个参数并打印设备回显值。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `name`、`type` 和 `value`。
+
+    Returns:
+        固定返回 `0`。
+
+    Raises:
+        KeyError: 参数类型不在支持集合内时抛出。
+        ValueError: 文本值无法转换为目标参数类型时抛出。
+    """
+
     type_id = {"bool": 0, "u8": 1, "u32": 2, "i32": 3, "float": 4}[args.type]
     print(session.set_param(args.name, type_id, args.value))
     return 0
 
 
 def cmd_list(session: DeviceSession, _args) -> int:
+    """枚举并打印全部参数。
+
+    Args:
+        session: 已连接的设备会话。
+        _args: 当前命令未使用的参数对象。
+
+    Returns:
+        固定返回 `0`。
+    """
+
     for item in session.list_params(timeout=3.0):
         print(item)
     return 0
 
 
 def cmd_save(session: DeviceSession, _args) -> int:
+    """请求设备持久化当前参数。
+
+    Args:
+        session: 已连接的设备会话。
+        _args: 当前命令未使用的参数对象。
+
+    Returns:
+        固定返回 `0`。
+    """
+
     session.save_params()
     return 0
 
 
 def cmd_reset(session: DeviceSession, _args) -> int:
+    """请求设备恢复默认参数。
+
+    Args:
+        session: 已连接的设备会话。
+        _args: 当前命令未使用的参数对象。
+
+    Returns:
+        固定返回 `0`。
+    """
+
     session.reset_params()
     return 0
 
 
 def cmd_export(session: DeviceSession, args) -> int:
+    """导出当前参数快照到 JSON 文件。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `output`。
+
+    Returns:
+        固定返回 `0`。
+
+    Raises:
+        OSError: 输出文件不可写时抛出。
+    """
+
     session.export_params(Path(args.output))
     print(args.output)
     return 0
 
 
 def cmd_import(session: DeviceSession, args) -> int:
+    """从 JSON 文件导入参数。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `input` 和 `save`。
+
+    Returns:
+        固定返回 `0`。
+
+    Raises:
+        OSError: 输入文件不可读时抛出。
+        ValueError: 文件内容无法转换为协议参数值时抛出。
+    """
+
     applied = session.import_params(Path(args.input), save_after=args.save)
     print(f"applied {len(applied)} parameters from {args.input}")
     return 0
 
 
 def cmd_stream(session: DeviceSession, args) -> int:
+    """打开或关闭遥测流。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `state`，取值为 `on` 或 `off`。
+
+    Returns:
+        固定返回 `0`。
+    """
+
     if args.state == "on":
         session.start_stream()
     else:
@@ -112,6 +281,19 @@ def cmd_stream(session: DeviceSession, args) -> int:
 
 
 def cmd_log(session: DeviceSession, args) -> int:
+    """在给定时长内打印事件日志，可选打印遥测。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `timeout` 和 `telemetry`。
+
+    Returns:
+        固定返回 `0`。
+
+    注意:
+        若开启 `--telemetry`，该命令会主动打开遥测流，但不会在结束时显式停流。
+    """
+
     def on_event(message: str) -> None:
         print(f"EVENT {message}")
 
@@ -133,12 +315,35 @@ def cmd_log(session: DeviceSession, args) -> int:
 
 
 def cmd_dump_csv(session: DeviceSession, args) -> int:
+    """在指定时长内采集遥测并导出 CSV。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `output` 和 `duration`。
+
+    Returns:
+        固定返回 `0`。
+    """
+
     count = session.dump_csv(Path(args.output), duration_s=args.duration)
     print(f"wrote {count} telemetry rows to {args.output}")
     return 0
 
 
 def cmd_baro(session: DeviceSession, args) -> int:
+    """在限定时间内观察气压计遥测。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `timeout`。
+
+    Returns:
+        `0` 表示收到有效气压计数据，`1` 表示协议版本不支持、超时或始终无有效数据。
+
+    注意:
+        该命令会在退出前主动停止遥测流。
+    """
+
     info = session.device_info or session.hello()
     if info.protocol_version < 2:
         print("current firmware does not advertise baro telemetry support")
@@ -190,23 +395,72 @@ def cmd_baro(session: DeviceSession, args) -> int:
 
 
 def cmd_motor_test(session: DeviceSession, args) -> int:
+    """执行单电机点动测试。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `motor` 和 `duty`。
+
+    Returns:
+        设备返回的命令状态码。
+
+    注意:
+        `motor` 同时支持 `m1` 这类名称和纯数字索引。
+    """
+
     motor_index = int(args.motor[1]) - 1 if args.motor.lower().startswith("m") else int(args.motor)
     return session.motor_test(motor_index, float(args.duty))
 
 
 def cmd_axis_test(session: DeviceSession, args) -> int:
+    """执行开环轴向测试。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `axis` 和 `value`。
+
+    Returns:
+        设备返回的命令状态码。
+    """
+
     return session.axis_test(axis_name_to_index(args.axis), float(args.value))
 
 
 def cmd_rate_test(session: DeviceSession, args) -> int:
+    """执行速率环测试。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `axis` 和 `value`。
+
+    Returns:
+        设备返回的命令状态码。
+    """
+
     return session.rate_test(axis_name_to_index(args.axis), float(args.value))
 
 
 def cmd_calib(session: DeviceSession, args) -> int:
+    """执行陀螺或水平校准。
+
+    Args:
+        session: 已连接的设备会话。
+        args: 命令参数，需包含 `kind`，取值为 `gyro` 或 `level`。
+
+    Returns:
+        设备返回的命令状态码。
+    """
+
     return session.calib_gyro() if args.kind == "gyro" else session.calib_level()
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """构建 CLI 命令解析器。
+
+    Returns:
+        已配置全部子命令和连接参数的解析器对象。
+    """
+
     parser = argparse.ArgumentParser(prog="esp-drone-cli")
     add_common_transport_args(parser)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -269,6 +523,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """执行 CLI 主流程。
+
+    Args:
+        argv: 可选命令行参数列表；为 `None` 时读取进程实际参数。
+
+    Returns:
+        命令返回码。成功通常为 `0`，设备命令失败时返回设备状态码或子命令定义的错误码。
+
+    Raises:
+        SystemExit: `argparse` 参数校验失败时抛出。
+        TimeoutError: 设备在规定时间内未返回预期响应时由底层会话抛出。
+
+    注意:
+        函数结束时始终会关闭设备会话。
+    """
+
     parser = build_parser()
     args = parser.parse_args(argv)
     session = connect_session_from_args(args)

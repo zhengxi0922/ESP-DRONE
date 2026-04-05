@@ -1,11 +1,8 @@
-# ============================================================
-# @file main_window.py
-# @brief ESP-DRONE GUI ?????
-# @details ???? PyQt5 ? bench ??????????????????????
-# @author Codex
-# @date 2026-04-05
-# @version 1.0
-# ============================================================
+"""ESP-DRONE 图形调试工作台。
+
+本模块提供基于 PyQt5 的桌面调试界面，负责布局、图表和交互编排。
+所有设备通信与协议细节仍统一委托给 `esp_drone_cli.core.DeviceSession`。
+"""
 
 from __future__ import annotations
 
@@ -59,12 +56,6 @@ from esp_drone_cli.core import DeviceSession, ParamValue, TelemetrySample
 
 APP_ORG = "ESP-DRONE"
 APP_NAME = "ESP-DRONE GUI"
-
-"""GUI 只是 DeviceSession 的桌面工作台外壳。
-
-这里负责布局、翻译、图表和交互，不负责协议编码、transport 访问或设备命令所有权。
-所有设备动作都必须回到 core.DeviceSession。
-"""
 
 TRANSLATIONS = {
     "zh": {
@@ -933,13 +924,23 @@ def _row_role_for_field(name: str, raw_value: object) -> tuple[str, str] | None:
 
 
 class CopyableTableWidget(QTableWidget):
+    """支持将当前表格选区复制为制表符文本。"""
+
     def keyPressEvent(self, event) -> None:  # pragma: no cover - UI handling
+        """拦截复制快捷键并转发到 `copy_selection()`。"""
+
         if event.matches(QKeySequence.Copy):
             self.copy_selection()
             return
         super().keyPressEvent(event)
 
     def copy_selection(self) -> None:
+        """将首个连续选区复制到系统剪贴板。
+
+        Note:
+            当前实现只处理 `selectedRanges()` 返回的第一个矩形区域。
+        """
+
         ranges = self.selectedRanges()
         if not ranges:
             return
@@ -955,6 +956,8 @@ class CopyableTableWidget(QTableWidget):
 
 
 class QtSessionBridge(QObject):
+    """将 `DeviceSession` 的订阅回调桥接为 Qt 信号。"""
+
     connection_changed = pyqtSignal(object)
     telemetry_received = pyqtSignal(object)
     event_received = pyqtSignal(str)
@@ -962,6 +965,12 @@ class QtSessionBridge(QObject):
     error_raised = pyqtSignal(str)
 
     def __init__(self, session: DeviceSession) -> None:
+        """创建桥接对象并注册会话订阅。
+
+        Args:
+            session: 需要桥接到 Qt 事件系统的设备会话。
+        """
+
         super().__init__()
         self._session = session
         self._connection_token = self._session.subscribe_connection_state(
@@ -975,11 +984,27 @@ class QtSessionBridge(QObject):
         )
 
     def dispose(self) -> None:
+        """移除已注册的会话订阅。
+
+        Note:
+            窗口关闭前应调用本方法，避免会话继续向已销毁对象分发事件。
+        """
+
         self._session.unsubscribe(self._connection_token)
         self._session.unsubscribe(self._telemetry_token)
         self._session.unsubscribe(self._event_token)
 
     def run_async(self, label: str, callback) -> None:
+        """在后台线程执行会话操作并回传结果。
+
+        Args:
+            label: 操作标识，会随结果或错误一起发回。
+            callback: 需要异步执行的无参回调。
+
+        Note:
+            回调异常不会向调用栈继续抛出，而是转成 `error_raised` 信号。
+        """
+
         def worker() -> None:
             try:
                 result = callback()
@@ -991,11 +1016,25 @@ class QtSessionBridge(QObject):
 
 
 class TelemetryHistory:
+    """按字段缓存近期遥测样本，供图表窗口切片显示。"""
+
     def __init__(self, max_samples: int = 12000) -> None:
+        """初始化历史缓存。
+
+        Args:
+            max_samples: 每个字段最多保留的样本数。
+        """
+
         self._series: dict[str, deque[tuple[float, float]]] = {}
         self._max_samples = max_samples
 
     def append(self, sample: TelemetrySample) -> None:
+        """追加一帧遥测样本中的数值字段。
+
+        Args:
+            sample: 待写入缓存的遥测样本。
+        """
+
         values = sample.to_display_map()
         timestamp = time.monotonic()
         for key, value in values.items():
@@ -1006,9 +1045,22 @@ class TelemetryHistory:
             self._series[key].append((timestamp, float(value)))
 
     def clear(self) -> None:
+        """清空全部历史样本。"""
+
         self._series.clear()
 
     def slice(self, name: str, window_s: float) -> tuple[list[float], list[float]]:
+        """返回指定字段在时间窗口内的绘图数据。
+
+        Args:
+            name: 遥测字段名。
+            window_s: 回看窗口，单位为秒。
+
+        Returns:
+            `(xs, ys)` 二元组，其中 `xs` 以最新样本时间为 `0`，向过去为负值。
+            字段不存在或窗口内无数据时返回两个空列表。
+        """
+
         samples = list(self._series.get(name, ()))
         if not samples:
             return [], []
@@ -1025,9 +1077,19 @@ class TelemetryHistory:
 
 
 class CollapsibleSection(QWidget):
+    """带标题栏的可折叠内容容器。"""
+
     toggled = pyqtSignal(bool)
 
     def __init__(self, title: str = "", expanded: bool = True, parent: QWidget | None = None) -> None:
+        """初始化折叠面板。
+
+        Args:
+            title: 标题文本。
+            expanded: 初始展开状态。
+            parent: Qt 父对象。
+        """
+
         super().__init__(parent)
         self._expanded = expanded
 
@@ -1056,9 +1118,21 @@ class CollapsibleSection(QWidget):
         self.set_expanded(expanded)
 
     def set_title(self, title: str) -> None:
+        """更新标题栏文本。
+
+        Args:
+            title: 新标题。
+        """
+
         self.toggle_button.setText(title)
 
     def set_content(self, widget: QWidget) -> None:
+        """替换折叠体中的内容控件。
+
+        Args:
+            widget: 需要嵌入面板主体的新控件。
+        """
+
         while self.body_layout.count():
             item = self.body_layout.takeAt(0)
             old = item.widget()
@@ -1067,9 +1141,17 @@ class CollapsibleSection(QWidget):
         self.body_layout.addWidget(widget)
 
     def is_expanded(self) -> bool:
+        """返回当前是否处于展开状态。"""
+
         return self._expanded
 
     def set_expanded(self, expanded: bool) -> None:
+        """设置展开状态并同步箭头与可见性。
+
+        Args:
+            expanded: 目标展开状态。
+        """
+
         expanded = bool(expanded)
         self._expanded = expanded
         self.toggle_button.blockSignals(True)
@@ -1082,12 +1164,20 @@ class CollapsibleSection(QWidget):
 
 @dataclass(slots=True)
 class ChartSpec:
+    """描述图表分组的标题、字段集合和纵轴标签。"""
+
     title: str
     fields: list[tuple[str, str]]
     y_label: str
 
 
 class MainWindow(QMainWindow):
+    """ESP-DRONE 桌面调试主窗口。
+
+    窗口负责组织连接、遥测图表、参数调试和日志导出等界面元素，
+    但设备通信仍通过 `DeviceSession` 与 `QtSessionBridge` 完成。
+    """
+
     TELEMETRY_FIELDS = [
         "gyro_x", "gyro_y", "gyro_z",
         "roll_deg", "pitch_deg", "yaw_deg",
@@ -1135,6 +1225,15 @@ class MainWindow(QMainWindow):
         serial_port_provider: Callable[[], Iterable] | None = None,
         settings: QSettings | None = None,
     ) -> None:
+        """初始化主窗口。
+
+        Args:
+            session: 可选的设备会话实例。未提供时会创建默认会话。
+            bridge_cls: 会话桥接类型，测试或替换桥接策略时可注入。
+            serial_port_provider: 串口枚举函数，默认使用 `serial.tools.list_ports.comports`。
+            settings: 可选的 `QSettings` 对象，用于持久化窗口与表单状态。
+        """
+
         super().__init__()
         self.setWindowTitle("ESP-DRONE Bench Debugger")
         self.resize(1660, 980)
@@ -2736,6 +2835,12 @@ class MainWindow(QMainWindow):
         self._rebuild_chart_channels()
 
     def closeEvent(self, event) -> None:  # pragma: no cover - exercised by smoke tests
+        """关闭窗口前保存状态并释放设备会话。
+
+        Args:
+            event: Qt 关闭事件对象。
+        """
+
         self._closing = True
         self._plot_timer.stop()
         self._save_settings()
@@ -2747,6 +2852,15 @@ class MainWindow(QMainWindow):
 
 
 def run_gui(_argv: list[str] | None = None) -> int:
+    """启动 GUI 应用并进入 Qt 事件循环。
+
+    Args:
+        _argv: 保留参数，当前实现未使用。
+
+    Returns:
+        Qt 应用退出码。
+    """
+
     app = QApplication.instance() or QApplication([])
     app.setFont(QFont("Microsoft YaHei", 10))
     pg.setConfigOptions(antialias=True, foreground="#dbeafe", background="#0f1722")

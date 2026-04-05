@@ -1,11 +1,4 @@
-# ============================================================
-# @file messages.py
-# @brief ESP-DRONE ????????
-# @details ????????? ID ???????
-# @author Codex
-# @date 2026-04-05
-# @version 1.0
-# ============================================================
+"""协议消息类型与帧结构定义。"""
 
 from __future__ import annotations
 
@@ -17,6 +10,8 @@ FRAME_VERSION = 0x01
 
 
 class MsgType:
+    """设备控制台协议的消息类型常量。"""
+
     HELLO_REQ = 0x01
     HELLO_RESP = 0x02
     CMD_REQ = 0x10
@@ -35,6 +30,8 @@ class MsgType:
 
 
 class CmdId:
+    """设备命令编号常量。"""
+
     ARM = 1
     DISARM = 2
     KILL = 3
@@ -48,6 +45,8 @@ class CmdId:
 
 @dataclass(slots=True)
 class Frame:
+    """一帧已通过基础校验的协议消息。"""
+
     msg_type: int
     flags: int
     seq: int

@@ -1,12 +1,3 @@
-# ============================================================
-# @file serial_link.py
-# @brief ESP-DRONE ????????
-# @details ??????????? transport ??????? core ???
-# @author Codex
-# @date 2026-04-05
-# @version 1.0
-# ============================================================
-
-"""Compatibility shim re-exporting SerialTransport from esp_drone_cli.core."""
+"""兼容旧导入路径的串口传输重导出层。"""
 
 from esp_drone_cli.core.transport.serial_link import *  # noqa: F401,F403

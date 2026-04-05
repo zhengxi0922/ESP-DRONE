@@ -1,12 +1,3 @@
-# ============================================================
-# @file base.py
-# @brief ESP-DRONE ????????
-# @details ????????? transport ????????? core ???
-# @author Codex
-# @date 2026-04-05
-# @version 1.0
-# ============================================================
-
-"""Compatibility shim re-exporting transport interfaces from esp_drone_cli.core."""
+"""兼容旧导入路径的传输接口重导出层。"""
 
 from esp_drone_cli.core.transport.base import *  # noqa: F401,F403

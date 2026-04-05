@@ -1,11 +1,4 @@
-# ============================================================
-# @file models.py
-# @brief ESP-DRONE Python 数据模型
-# @details 统一定义 DeviceSession / CLI / GUI 共用的 telemetry、参数快照和设备信息结构。
-# @author Codex
-# @date 2026-04-05
-# @version 1.0
-# ============================================================
+"""CLI、GUI 与脚本共享的数据模型。"""
 
 from __future__ import annotations
 
@@ -41,14 +34,11 @@ TELEMETRY_CSV_FIELDS = [
     "baro_update_age_us", "baro_valid", "baro_health",
 ]
 
-"""这里定义的是 Python 工具链共享的数据模型。
-
-CLI、GUI、CSV 导出都以这些结构为准，避免同一份 telemetry 在不同界面里各自维护字段表。
-"""
-
 
 @dataclass(slots=True)
 class ParamValue:
+    """参数项的名称、类型和值。"""
+
     name: str
     type_id: int
     value: object
@@ -56,6 +46,8 @@ class ParamValue:
 
 @dataclass(slots=True)
 class DeviceInfo:
+    """握手阶段返回的设备摘要信息。"""
+
     protocol_version: int
     imu_mode: int
     arm_state: int
@@ -65,16 +57,39 @@ class DeviceInfo:
 
 @dataclass(slots=True)
 class ParamSnapshot:
+    """参数导出快照。
+
+    Attributes:
+        schema: 导出文件格式版本。
+        firmware: 设备侧固件摘要信息。
+        params: 参数列表，每一项包含名称、类型和值。
+    """
+
     schema: int
     firmware: dict[str, object]
     params: list[dict[str, object]]
 
     def write_json(self, path: Path) -> None:
+        """将快照写入 JSON 文件。
+
+        Args:
+            path: 输出文件路径。父目录需要已存在。
+
+        Returns:
+            None.
+
+        Raises:
+            OSError: 目标文件不可写时抛出。
+            TypeError: 快照中包含不可序列化对象时抛出。
+        """
+
         path.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
 @dataclass(slots=True)
 class TelemetrySample:
+    """一帧遥测样本的结构化表示。"""
+
     timestamp_us: int
     gyro_x: float
     gyro_y: float
@@ -130,11 +145,19 @@ class TelemetrySample:
 
     @classmethod
     def from_payload(cls, payload: bytes) -> "TelemetrySample":
-        """统一解析 telemetry。
+        """从设备 payload 解析遥测样本。
 
-        当前仓库同时兼容：
-        - V1: 不带气压计字段的旧 telemetry 结构
-        - V2: 在旧结构尾部追加 barometer 字段的新结构
+        Args:
+            payload: 设备协议返回的原始遥测负载。
+
+        Returns:
+            解析后的遥测样本对象。
+
+        Raises:
+            ValueError: 负载长度既不匹配 V1 也不匹配 V2 结构时抛出。
+
+        注意:
+            当前仓库同时兼容旧版无气压计字段的 V1 结构和追加气压计字段的 V2 结构。
         """
 
         if len(payload) == TELEMETRY_STRUCT_V2.size:
@@ -146,13 +169,13 @@ class TelemetrySample:
             values = list(TELEMETRY_STRUCT_V1.unpack(payload))
             trimmed = values[:45]
             trimmed.extend([
-                0.0,  # baro_pressure_pa
-                0.0,  # baro_temperature_c
-                0.0,  # baro_altitude_m
-                0.0,  # baro_vspeed_mps
-                0,    # baro_update_age_us
-                0,    # baro_valid
-                0,    # baro_health
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0,
+                0,
+                0,
             ])
             return cls(*trimmed)
 
@@ -162,13 +185,38 @@ class TelemetrySample:
         )
 
     def to_csv_row(self) -> list[object]:
+        """按 CSV 列顺序导出当前样本。
+
+        Returns:
+            与 `TELEMETRY_CSV_FIELDS` 一一对应的值列表。
+        """
+
         return [getattr(self, name) for name in TELEMETRY_CSV_FIELDS]
 
     def to_display_map(self) -> dict[str, object]:
+        """将样本转换为便于界面展示的字典。
+
+        Returns:
+            以字段名为键、字段值为值的映射。
+        """
+
         return {name: getattr(self, name) for name in TELEMETRY_CSV_FIELDS}
 
 
 def decode_param_value(payload: bytes) -> ParamValue:
+    """解析参数值响应负载。
+
+    Args:
+        payload: 设备返回的 `MSG_PARAM_VALUE` 负载。
+
+    Returns:
+        解析后的参数对象。
+
+    Raises:
+        IndexError: 负载过短且缺少类型或名称长度字段时抛出。
+        struct.error: 数值字段长度不足时抛出。
+    """
+
     type_id = payload[0]
     name_len = payload[1]
     name = payload[2 : 2 + name_len].decode("ascii")
@@ -189,11 +237,32 @@ def decode_param_value(payload: bytes) -> ParamValue:
 
 
 def decode_device_info(payload: bytes) -> DeviceInfo:
+    """解析握手响应负载。
+
+    Args:
+        payload: 设备返回的 `MSG_HELLO_RESP` 负载。
+
+    Returns:
+        设备摘要信息。
+
+    Raises:
+        struct.error: 负载长度与握手结构不匹配时抛出。
+    """
+
     protocol_version, imu_mode, arm_state, stream_enabled, feature_bitmap = HELLO_RESP_STRUCT.unpack(payload)
     return DeviceInfo(protocol_version, imu_mode, arm_state, stream_enabled, feature_bitmap)
 
 
 def decode_event_text(payload: bytes) -> str:
+    """解析文本事件负载。
+
+    Args:
+        payload: 设备返回的 `MSG_EVENT_LOG_TEXT` 负载。
+
+    Returns:
+        UTF-8 文本内容；负载过短时返回空字符串。
+    """
+
     if len(payload) < 2:
         return ""
     text_len = payload[1]
@@ -201,6 +270,19 @@ def decode_event_text(payload: bytes) -> str:
 
 
 def encode_param_value(type_id: int, value_text: str) -> bytes:
+    """将文本参数值编码为协议字节串。
+
+    Args:
+        type_id: 参数类型编号。
+        value_text: 来自 CLI 或导入文件的文本值。
+
+    Returns:
+        可直接写入 `MSG_PARAM_SET` 的参数值字节串。
+
+    Raises:
+        ValueError: 参数类型不受支持，或文本无法转换为目标数值类型时抛出。
+    """
+
     if type_id == 0:
         return bytes([1 if value_text.lower() in {"1", "true", "yes", "on"} else 0])
     if type_id == 1:

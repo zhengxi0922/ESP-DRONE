@@ -1,11 +1,7 @@
-# ============================================================
-# @file __init__.py
-# @brief ESP-DRONE Python ???????
-# @details ?? Python ??????????? CLI?GUI ??????????
-# @author Codex
-# @date 2026-04-05
-# @version 1.0
-# ============================================================
+"""ESP-DRONE Python 工具链的公开入口。
+
+该包统一暴露 CLI、GUI 和脚本共用的核心会话对象与数据模型。
+"""
 
 from .core import DeviceSession, ParamValue, TelemetrySample
 

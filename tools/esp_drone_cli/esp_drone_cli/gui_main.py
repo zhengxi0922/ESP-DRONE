@@ -1,11 +1,4 @@
-# ============================================================
-# @file gui_main.py
-# @brief ESP-DRONE GUI ????
-# @details ?? GUI ???????? GUI ????????????
-# @author Codex
-# @date 2026-04-05
-# @version 1.0
-# ============================================================
+"""GUI 启动入口。"""
 
 from __future__ import annotations
 
@@ -14,6 +7,21 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    """启动桌面调试界面。
+
+    Args:
+        argv: 预留的命令行参数列表。当前实现不解析该参数，只用于保持入口签名稳定。
+
+    Returns:
+        GUI 退出码。依赖缺失时返回 `1`，正常退出时返回 Qt 事件循环的返回值。
+
+    Raises:
+        ModuleNotFoundError: 缺失的依赖不是 `PyQt5` 或 `pyqtgraph` 时向上抛出。
+
+    注意:
+        调用前需要安装 GUI 依赖；当前入口会强制将 `PYQTGRAPH_QT_LIB` 设为 `PyQt5`。
+    """
+
     os.environ.setdefault("PYQTGRAPH_QT_LIB", "PyQt5")
     try:
         from .gui.main_window import run_gui
