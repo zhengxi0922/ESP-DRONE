@@ -1,7 +1,7 @@
 # ============================================================
 # @file models.py
-# @brief ESP-DRONE ????????
-# @details ????????????????????????????
+# @brief ESP-DRONE Python 数据模型
+# @details 统一定义 DeviceSession / CLI / GUI 共用的 telemetry、参数快照和设备信息结构。
 # @author Codex
 # @date 2026-04-05
 # @version 1.0
@@ -18,7 +18,9 @@ from pathlib import Path
 CMD_REQ_STRUCT = struct.Struct("<BBHf")
 CMD_RESP_STRUCT = struct.Struct("<BBH")
 HELLO_RESP_STRUCT = struct.Struct("<BBBBI")
-TELEMETRY_STRUCT = struct.Struct("<Q" + "f" * 36 + "III8B")
+TELEMETRY_STRUCT_V1 = struct.Struct("<Q" + "f" * 36 + "III8B")
+TELEMETRY_STRUCT_V2 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B")
+TELEMETRY_STRUCT = TELEMETRY_STRUCT_V2
 
 TELEMETRY_CSV_FIELDS = [
     "timestamp_us",
@@ -35,6 +37,8 @@ TELEMETRY_CSV_FIELDS = [
     "motor1", "motor2", "motor3", "motor4",
     "battery_voltage", "battery_adc_raw", "loop_dt_us", "imu_age_us",
     "imu_mode", "imu_health", "arm_state", "failsafe_reason", "control_mode",
+    "baro_pressure_pa", "baro_temperature_c", "baro_altitude_m", "baro_vspeed_mps",
+    "baro_update_age_us", "baro_valid", "baro_health",
 ]
 
 """这里定义的是 Python 工具链共享的数据模型。
@@ -116,13 +120,46 @@ class TelemetrySample:
     arm_state: int
     failsafe_reason: int
     control_mode: int
+    baro_pressure_pa: float
+    baro_temperature_c: float
+    baro_altitude_m: float
+    baro_vspeed_mps: float
+    baro_update_age_us: int
+    baro_valid: int
+    baro_health: int
 
     @classmethod
     def from_payload(cls, payload: bytes) -> "TelemetrySample":
-        # 设备端 telemetry 是定长二进制帧，这里统一做一次解包。
-        values = TELEMETRY_STRUCT.unpack(payload)
-        trimmed = list(values[:-3])
-        return cls(*trimmed)
+        """统一解析 telemetry。
+
+        当前仓库同时兼容：
+        - V1: 不带气压计字段的旧 telemetry 结构
+        - V2: 在旧结构尾部追加 barometer 字段的新结构
+        """
+
+        if len(payload) == TELEMETRY_STRUCT_V2.size:
+            values = list(TELEMETRY_STRUCT_V2.unpack(payload))
+            trimmed = values[:45] + values[48:55]
+            return cls(*trimmed)
+
+        if len(payload) == TELEMETRY_STRUCT_V1.size:
+            values = list(TELEMETRY_STRUCT_V1.unpack(payload))
+            trimmed = values[:45]
+            trimmed.extend([
+                0.0,  # baro_pressure_pa
+                0.0,  # baro_temperature_c
+                0.0,  # baro_altitude_m
+                0.0,  # baro_vspeed_mps
+                0,    # baro_update_age_us
+                0,    # baro_valid
+                0,    # baro_health
+            ])
+            return cls(*trimmed)
+
+        raise ValueError(
+            f"unsupported telemetry payload length {len(payload)}, "
+            f"expected {TELEMETRY_STRUCT_V1.size} or {TELEMETRY_STRUCT_V2.size}"
+        )
 
     def to_csv_row(self) -> list[object]:
         return [getattr(self, name) for name in TELEMETRY_CSV_FIELDS]

@@ -34,7 +34,11 @@ void console_send_event_text(const char *text);
 /**
  * @brief 发送当前遥测样本
  * @param imu_sample IMU 统一样本
+ * @param baro_state 气压计状态快照
  * @param battery_voltage 当前电池电压
  * @param battery_raw 当前电池 ADC 原始值
  */
-void console_send_telemetry(const imu_sample_t *imu_sample, float battery_voltage, int battery_raw);
+void console_send_telemetry(const imu_sample_t *imu_sample,
+                            const barometer_state_t *baro_state,
+                            float battery_voltage,
+                            int battery_raw);

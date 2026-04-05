@@ -16,6 +16,7 @@
 #include "driver/uart.h"
 #include "esp_timer.h"
 
+#include "barometer.h"
 #include "board_config.h"
 #include "params.h"
 
@@ -32,6 +33,7 @@
 #define IMU_FRAME_QUATERNION 0x02
 #define IMU_FRAME_GYRO_ACC 0x03
 #define IMU_FRAME_MAG 0x04
+#define IMU_FRAME_BARO 0x05
 
 #define IMU_REG_RETURNSET 0x08
 #define IMU_REG_RETURNRATE 0x0A
@@ -88,6 +90,14 @@ typedef struct {
 static int16_t imu_read_s16_le(const uint8_t *data)
 {
     return (int16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8));
+}
+
+static int32_t imu_read_s32_le(const uint8_t *data)
+{
+    return (int32_t)((uint32_t)data[0] |
+                     ((uint32_t)data[1] << 8) |
+                     ((uint32_t)data[2] << 16) |
+                     ((uint32_t)data[3] << 24));
 }
 
 static float imu_norm_angle(float deg)
@@ -383,8 +393,11 @@ static uint8_t imu_return_rate_code_from_params(void)
 static uint8_t imu_return_set_from_params(void)
 {
     const params_store_t *params = params_get();
+    const uint8_t baro_bit = 0x10u;
     if (params->imu_mode == IMU_MODE_RAW) {
-        return params->imu_mag_enable ? 0x0C : 0x04;
+        /* RAW 模式继续以 gyro/acc 为主，但当前阶段需要一并请求 baro 帧，
+         * 以便打通“模块气压计 -> firmware -> telemetry -> host”链路。 */
+        return (params->imu_mag_enable ? 0x0Cu : 0x04u) | baro_bit;
     }
     /*
      * DIRECT mode still needs gyro/acc frames so that:
@@ -398,7 +411,7 @@ static uint8_t imu_return_set_from_params(void)
      *   0x04 gyro+acc
      *   0x08 mag
      */
-    return params->imu_mag_enable ? 0x0F : 0x07;
+    return (params->imu_mag_enable ? 0x0Fu : 0x07u) | baro_bit;
 }
 
 static void imu_write_reg_u8(uint8_t reg_id, uint8_t value)
@@ -436,6 +449,20 @@ static void imu_publish_sample(imu_sample_t sample)
 
 static void imu_handle_completed_frame(uint8_t frame_id, const uint8_t *payload, uint8_t len)
 {
+    if (frame_id == IMU_FRAME_BARO) {
+        if (len >= 10) {
+            const int32_t pressure_pa = imu_read_s32_le(&payload[0]);
+            const int32_t altitude_cm = imu_read_s32_le(&payload[4]);
+            const float temperature_c = (float)imu_read_s16_le(&payload[8]) / 100.0f;
+            barometer_update_from_module_frame(pressure_pa,
+                                               altitude_cm,
+                                               temperature_c,
+                                               (uint64_t)esp_timer_get_time());
+            atomic_fetch_add(&s_good_frames, 1u);
+        }
+        return;
+    }
+
     imu_sample_t sample = {
         .quat_wxyz = {1.0f, 0.0f, 0.0f, 0.0f},
         .health = IMU_HEALTH_OK,

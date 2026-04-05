@@ -21,7 +21,14 @@ from pathlib import Path
 import pytest
 
 from esp_drone_cli.core import DeviceSession
-from esp_drone_cli.core.models import HELLO_RESP_STRUCT, ParamSnapshot, ParamValue, TELEMETRY_STRUCT, TelemetrySample
+from esp_drone_cli.core.models import (
+    HELLO_RESP_STRUCT,
+    ParamSnapshot,
+    ParamValue,
+    TELEMETRY_STRUCT,
+    TELEMETRY_STRUCT_V1,
+    TelemetrySample,
+)
 from esp_drone_cli.core.protocol.framing import encode_serial_packet
 from esp_drone_cli.core.protocol.messages import CmdId, Frame, MsgType
 
@@ -48,8 +55,32 @@ def build_telemetry_payload() -> bytes:
         3.8,
         2048, 1000, 500,
         1, 1, 0, 0, 2, 0, 0, 0,
+        100845.0, 26.5, 1.25, -0.10,
+        15000,
+        1, 1, 0, 0,
     ]
     return TELEMETRY_STRUCT.pack(*values)
+
+
+def build_telemetry_payload_v1() -> bytes:
+    values = [
+        123456789,
+        1.0, 2.0, 3.0,
+        0.1, 0.2, 0.3,
+        1.0, 0.0, 0.0, 0.0,
+        4.0, 5.0, 6.0,
+        0.0, 0.0, 0.0,
+        10.0, 11.0, 12.0,
+        0.5, 0.6, 0.7,
+        0.1, 0.2, 0.3,
+        0.01, 0.02, 0.03,
+        0.9, 1.0, 1.1,
+        0.20, 0.21, 0.22, 0.23,
+        3.8,
+        2048, 1000, 500,
+        1, 1, 0, 0, 2, 0, 0, 0,
+    ]
+    return TELEMETRY_STRUCT_V1.pack(*values)
 
 
 class MockTransport:
@@ -64,7 +95,7 @@ class MockTransport:
     def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
         self.sent.append((msg_type, payload))
         if msg_type == MsgType.HELLO_REQ:
-            hello = HELLO_RESP_STRUCT.pack(1, 1, 0, 0, 0xF)
+            hello = HELLO_RESP_STRUCT.pack(2, 1, 0, 0, 0x1F)
             self.inject(Frame(MsgType.HELLO_RESP, flags, seq, hello))
             return
         if msg_type == MsgType.CMD_REQ:
@@ -109,6 +140,7 @@ class FakeSession:
         self.calls: list[tuple[str, tuple, dict]] = []
         self.is_connected = False
         self.last_log_path: Path | None = None
+        self.device_info = None
         self._telemetry_callbacks = []
         self._event_callbacks = []
         self._connection_callbacks = []
@@ -155,18 +187,33 @@ class FakeSession:
     def connect_serial(self, port: str, baudrate: int = 115200, timeout: float = 0.2):
         self._record("connect_serial", port, baudrate, timeout)
         self.is_connected = True
+        self.device_info = type("DeviceInfoStub", (), {
+            "protocol_version": 2,
+            "imu_mode": 1,
+            "arm_state": 0,
+            "stream_enabled": 0,
+            "feature_bitmap": 0x1F,
+        })()
         self._emit_connection()
         return "fake-device"
 
     def connect_udp(self, host: str, port: int = 2391, timeout: float = 1.0):
         self._record("connect_udp", host, port, timeout)
         self.is_connected = True
+        self.device_info = type("DeviceInfoStub", (), {
+            "protocol_version": 2,
+            "imu_mode": 1,
+            "arm_state": 0,
+            "stream_enabled": 0,
+            "feature_bitmap": 0x1F,
+        })()
         self._emit_connection()
         return "fake-device"
 
     def disconnect(self, safe_stop_stream: bool = True) -> None:
         self._record("disconnect", safe_stop_stream)
         self.is_connected = False
+        self.device_info = None
         self._emit_connection()
 
     def close(self) -> None:
@@ -259,12 +306,23 @@ class FakeSession:
         self.last_log_path = output_path
         return 3
 
+    def hello(self):
+        self._record("hello")
+        self.device_info = type("DeviceInfoStub", (), {
+            "protocol_version": 2,
+            "imu_mode": 1,
+            "arm_state": 0,
+            "stream_enabled": 0,
+            "feature_bitmap": 0x1F,
+        })()
+        return self.device_info
+
 
 def test_device_session_mock_roundtrip(tmp_path: Path):
     session = DeviceSession()
     transport = MockTransport()
     info = session.connect_transport(transport)
-    assert info.protocol_version == 1
+    assert info.protocol_version == 2
     assert session.arm() == 0
     assert session.disarm() == 0
     assert session.kill() == 0
@@ -309,6 +367,14 @@ def test_device_session_telemetry_subscription_receives_samples():
     assert received
     assert received[0].gyro_x == 1.0
     assert received[0].control_mode == 2
+    assert received[0].baro_altitude_m == pytest.approx(1.25)
+
+
+def test_telemetry_sample_v1_payload_keeps_baro_defaults():
+    sample = TelemetrySample.from_payload(build_telemetry_payload_v1())
+    assert sample.gyro_x == 1.0
+    assert sample.baro_valid == 0
+    assert sample.baro_pressure_pa == 0.0
 
 
 def test_gui_startup_without_device_or_missing_pyqt5(monkeypatch):
@@ -372,6 +438,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert window.right_tabs.tabText(0) == window._t("tab.params")
     assert window.right_tabs.tabText(1) == window._t("tab.events")
     assert window.right_tabs.tabText(2) == window._t("tab.tools")
+    assert any(window.chart_group_combo.itemData(i) == "baro" for i in range(window.chart_group_combo.count()))
     assert window.left_panel.minimumWidth() >= 320
     assert window.center_panel.minimumWidth() >= 780
     assert window.right_panel.minimumWidth() >= 360
@@ -392,6 +459,8 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     app.processEvents()
     assert window.telemetry_table.item(0, 1).text() == "1.000"
     assert window.status_cards["arm_state"][1].text() == window._t("arm.disarmed")
+    assert window.status_cards["baro_health"][1].text() == window._t("baro.ok")
+    assert window.status_cards["baro_altitude_m"][1].text().endswith("m")
     assert "imu healthy" in window.event_log_edit.toPlainText()
     localized_texts = []
     for widget in window.findChildren((QPushButton, QLabel, QGroupBox)):
@@ -524,6 +593,9 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert args.command == "rate-test"
     assert args.axis == "yaw"
 
+    baro_args = build_parser().parse_args(["--serial", "COM7", "watch-baro", "--timeout", "1"])
+    assert baro_args.command == "watch-baro"
+
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
     real_import = builtins.__import__
@@ -558,6 +630,33 @@ def test_cli_main_runs_without_pyqt5(monkeypatch):
     call_names = [name for name, _args, _kwargs in session.calls]
     assert "arm" in call_names
     assert "close" in call_names
+
+
+def test_cli_baro_command_uses_device_session(monkeypatch, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    session.device_info = type("DeviceInfoStub", (), {
+        "protocol_version": 2,
+        "imu_mode": 1,
+        "arm_state": 0,
+        "stream_enabled": 0,
+        "feature_bitmap": 0x1F,
+    })()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+
+    real_sleep = cli_main.time.sleep
+
+    def fake_sleep(duration: float) -> None:
+        sample = TelemetrySample.from_payload(build_telemetry_payload())
+        session.emit_telemetry(sample)
+        real_sleep(min(duration, 0.001))
+
+    monkeypatch.setattr(cli_main.time, "sleep", fake_sleep)
+    assert cli_main.main(["--serial", "COM7", "baro", "--timeout", "0.05"]) == 0
+    output = capsys.readouterr().out
+    assert "pressure_pa=" in output
+    assert "altitude_m=" in output
 
 
 def test_gui_entry_reports_missing_pyqt5_without_affecting_cli(monkeypatch):

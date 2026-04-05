@@ -147,6 +147,37 @@ Still pending in later stages:
 - DIRECT-mode angle outer loop and restrained bench angle validation
 - Legacy RC / UDP compatibility work and the full CLI surface
 
+## Barometer Framework
+
+This repository now includes a first-stage barometer data path for `ATK-MS901M`.
+
+Current scope:
+
+- decode module barometer frames in firmware
+- expose barometer telemetry to USB CDC
+- show barometer fields in CLI / GUI / CSV export
+- reserve future altitude-hold state structures and control-mode enum values
+
+Not in scope yet:
+
+- altitude-hold PID
+- throttle closed loop
+- automatic takeoff / landing
+- feeding barometer data into the current attitude / rate control path
+
+See [barometer_framework.md](./docs/barometer_framework.md) for details.
+
+### 中文说明
+
+仓库现在已经补上了 `ATK-MS901M` 气压计的数据链路第一阶段：
+
+- firmware 可以解析并保存气压计帧
+- telemetry 会追加 barometer 字段
+- Python CLI / GUI / CSV 导出可以直接看到 barometer 数据
+- 同时预留了 future altitude hold 所需的数据结构和模块边界
+
+但当前**还没有**真正启用定高闭环，也不会让气压计影响现有姿态 / 速率 / 电机输出逻辑。
+
 ### 中文说明
 
 当前仓库已经具备：

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import sys
 import time
 from pathlib import Path
@@ -137,6 +138,57 @@ def cmd_dump_csv(session: DeviceSession, args) -> int:
     return 0
 
 
+def cmd_baro(session: DeviceSession, args) -> int:
+    info = session.device_info or session.hello()
+    if info.protocol_version < 2:
+        print("current firmware does not advertise baro telemetry support")
+        return 1
+
+    samples: deque[TelemetrySample] = deque()
+
+    def on_telemetry(sample: TelemetrySample) -> None:
+        samples.append(sample)
+
+    token = session.subscribe_telemetry(on_telemetry)
+    had_sample = False
+    had_valid_baro = False
+    try:
+        session.start_stream()
+        deadline = time.monotonic() + args.timeout
+        while time.monotonic() < deadline:
+            if not samples:
+                time.sleep(0.05)
+                continue
+
+            sample = samples.popleft()
+            had_sample = True
+            had_valid_baro = had_valid_baro or bool(sample.baro_valid)
+            print(
+                "pressure_pa={:.1f} temperature_c={:.2f} altitude_m={:.3f} "
+                "valid={} update_age_us={}".format(
+                    sample.baro_pressure_pa,
+                    sample.baro_temperature_c,
+                    sample.baro_altitude_m,
+                    bool(sample.baro_valid),
+                    sample.baro_update_age_us,
+                )
+            )
+
+        if not had_sample:
+            print("device stream did not produce telemetry within timeout")
+            return 1
+        if not had_valid_baro:
+            print("current telemetry stream has no valid baro data")
+            return 1
+        return 0
+    finally:
+        try:
+            session.stop_stream()
+        except Exception:
+            pass
+        session.unsubscribe(token)
+
+
 def cmd_motor_test(session: DeviceSession, args) -> int:
     motor_index = int(args.motor[1]) - 1 if args.motor.lower().startswith("m") else int(args.motor)
     return session.motor_test(motor_index, float(args.duty))
@@ -191,6 +243,9 @@ def build_parser() -> argparse.ArgumentParser:
     log_p.add_argument("--timeout", type=float, default=10.0)
     log_p.add_argument("--telemetry", action="store_true")
 
+    baro_p = sub.add_parser("baro", aliases=["watch-baro"])
+    baro_p.add_argument("--timeout", type=float, default=5.0)
+
     csv_p = sub.add_parser("dump-csv")
     csv_p.add_argument("output")
     csv_p.add_argument("--duration", type=float, default=5.0)
@@ -233,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
             "import": cmd_import,
             "stream": cmd_stream,
             "log": cmd_log,
+            "baro": cmd_baro,
+            "watch-baro": cmd_baro,
             "dump-csv": cmd_dump_csv,
             "motor-test": cmd_motor_test,
             "axis-test": cmd_axis_test,

@@ -2,6 +2,7 @@ idf_component_register(
     SRC_DIRS
         "."
         "board"
+        "barometer"
         "params"
         "motor"
         "imu"
@@ -14,6 +15,7 @@ idf_component_register(
     INCLUDE_DIRS
         "."
         "board"
+        "barometer"
         "params"
         "motor"
         "imu"

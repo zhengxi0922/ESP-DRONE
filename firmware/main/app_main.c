@@ -18,6 +18,7 @@
 #include "esp_timer.h"
 
 #include "board_config.h"
+#include "barometer.h"
 #include "controller.h"
 #include "console.h"
 #include "estimator.h"
@@ -247,12 +248,14 @@ static void telemetry_task(void *arg)
         if (!imu_get_latest(&sample, NULL)) {
             continue;
         }
+        barometer_state_t baro_state = {0};
+        barometer_get_latest(&baro_state);
 
         int battery_raw = 0;
         int battery_mv = 0;
         float battery_v = 0.0f;
         board_battery_read(&battery_raw, &battery_mv, &battery_v);
-        console_send_telemetry(&sample, battery_v, battery_raw);
+        console_send_telemetry(&sample, &baro_state, battery_v, battery_raw);
     }
 }
 
@@ -316,6 +319,7 @@ void app_main(void)
     estimator_init();
     controller_init();
     board_battery_init();
+    barometer_init();
     led_status_init();
     motor_init();
     mixer_init();

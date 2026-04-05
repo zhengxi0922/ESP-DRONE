@@ -112,7 +112,47 @@ typedef enum {
     CONTROL_MODE_IDLE = 0,
     CONTROL_MODE_AXIS_TEST = 1,
     CONTROL_MODE_RATE_TEST = 2,
+    CONTROL_MODE_HEIGHT_HOLD_RESERVED = 3,
 } control_mode_t;
+
+/**
+ * @brief 气压计健康状态
+ * @details 当前阶段只用于“数据链路是否可用”的健康判定，不参与油门闭环。
+ */
+typedef enum {
+    BARO_HEALTH_INIT = 0,
+    BARO_HEALTH_OK = 1,
+    BARO_HEALTH_STALE = 2,
+    BARO_HEALTH_INVALID = 3,
+} baro_health_t;
+
+/**
+ * @brief 气压计状态快照
+ * @details 统一承载 pressure / temperature / altitude / vertical speed，
+ *          供 telemetry、CLI、GUI 和未来的定高估计扩展共同使用。
+ */
+typedef struct {
+    uint64_t timestamp_us;
+    float pressure_pa;
+    float temperature_c;
+    float altitude_m;
+    float vertical_speed_mps;
+    bool has_baro;
+    bool valid;
+    baro_health_t health;
+    uint32_t update_age_us;
+} barometer_state_t;
+
+/**
+ * @brief 未来定高闭环预留状态
+ * @details 当前阶段只保留状态结构和模块边界，不参与任何油门/推力闭环。
+ */
+typedef struct {
+    float target_altitude_m;
+    float estimated_altitude_m;
+    float estimated_vz_mps;
+    bool altitude_hold_reserved_enabled;
+} altitude_hold_reserved_state_t;
 
 typedef struct {
     uint64_t timestamp_us;

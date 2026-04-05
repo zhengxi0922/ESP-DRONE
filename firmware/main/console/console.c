@@ -402,11 +402,11 @@ static void console_handle_message(uint8_t msg_type, const uint8_t *payload, siz
     switch ((console_msg_type_t)msg_type) {
     case MSG_HELLO_REQ: {
         const console_hello_resp_t resp = {
-            .protocol_version = CONSOLE_FRAME_VERSION,
+            .protocol_version = CONSOLE_PROTOCOL_VERSION,
             .imu_mode = (uint8_t)params_get()->imu_mode,
             .arm_state = (uint8_t)runtime_state_get_arm_state(),
             .stream_enabled = runtime_state_get_stream_enabled() ? 1u : 0u,
-            .feature_bitmap = 0x0000000Fu,
+            .feature_bitmap = 0x0000001Fu,
         };
         console_send_frame(MSG_HELLO_RESP, &resp, sizeof(resp));
         break;
@@ -549,7 +549,10 @@ void console_send_event_text(const char *text)
     console_send_frame(MSG_EVENT_LOG_TEXT, payload, (uint16_t)(text_len + 2));
 }
 
-void console_send_telemetry(const imu_sample_t *imu_sample, float battery_voltage, int battery_raw)
+void console_send_telemetry(const imu_sample_t *imu_sample,
+                            const barometer_state_t *baro_state,
+                            float battery_voltage,
+                            int battery_raw)
 {
     if (!s_initialized || !runtime_state_get_stream_enabled() || imu_sample == NULL) {
         return;
@@ -610,6 +613,14 @@ void console_send_telemetry(const imu_sample_t *imu_sample, float battery_voltag
         .failsafe_reason = (uint8_t)runtime_state_get_failsafe_reason(),
         .control_mode = (uint8_t)control_mode,
         .reserved = {0, 0, 0},
+        .baro_pressure_pa = (baro_state != NULL) ? baro_state->pressure_pa : 0.0f,
+        .baro_temperature_c = (baro_state != NULL) ? baro_state->temperature_c : 0.0f,
+        .baro_altitude_m = (baro_state != NULL) ? baro_state->altitude_m : 0.0f,
+        .baro_vspeed_mps = (baro_state != NULL) ? baro_state->vertical_speed_mps : 0.0f,
+        .baro_update_age_us = (baro_state != NULL) ? baro_state->update_age_us : 0u,
+        .baro_valid = (baro_state != NULL && baro_state->valid) ? 1u : 0u,
+        .baro_health = (baro_state != NULL) ? (uint8_t)baro_state->health : (uint8_t)BARO_HEALTH_INIT,
+        .baro_reserved = {0, 0},
     };
 
     console_send_frame(MSG_TELEMETRY_SAMPLE, &sample, sizeof(sample));

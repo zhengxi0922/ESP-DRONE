@@ -13,6 +13,7 @@
 
 #define CONSOLE_FRAME_MAGIC 0xA5u
 #define CONSOLE_FRAME_VERSION 0x01u
+#define CONSOLE_PROTOCOL_VERSION 0x02u
 
 /**
  * @brief 控制台消息类型
@@ -147,4 +148,12 @@ typedef struct __attribute__((packed)) {
     uint8_t failsafe_reason;
     uint8_t control_mode;
     uint8_t reserved[3];
+    float baro_pressure_pa;
+    float baro_temperature_c;
+    float baro_altitude_m;
+    float baro_vspeed_mps;
+    uint32_t baro_update_age_us;
+    uint8_t baro_valid;
+    uint8_t baro_health;
+    uint8_t baro_reserved[2];
 } console_telemetry_sample_t;

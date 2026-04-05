@@ -11,6 +11,7 @@ from __future__ import annotations
 
 
 from esp_drone_cli.client import TELEMETRY_STRUCT
+from esp_drone_cli.core.models import TELEMETRY_STRUCT_V1, TELEMETRY_STRUCT_V2
 
 
 MOTOR_LAYOUT = (
@@ -75,4 +76,6 @@ def test_mixer_positive_and_negative_yaw_direction():
 
 
 def test_telemetry_struct_matches_stage3_rate_bringup_payload():
-    assert TELEMETRY_STRUCT.size == 172
+    assert TELEMETRY_STRUCT_V1.size == 172
+    assert TELEMETRY_STRUCT_V2.size == 196
+    assert TELEMETRY_STRUCT.size == TELEMETRY_STRUCT_V2.size

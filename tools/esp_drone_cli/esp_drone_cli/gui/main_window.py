@@ -733,6 +733,45 @@ TRANSLATIONS = {
     },
 }
 
+EXTRA_TRANSLATIONS = {
+    "zh": {
+        "chart.baro": "气压计",
+        "chart.y_baro": "气压 / 高度 / 温度",
+        "field.baro_pressure_pa": "气压 (Pa)",
+        "field.baro_temperature_c": "温度 (C)",
+        "field.baro_altitude_m": "气压高度 (m)",
+        "field.baro_vspeed_mps": "垂直速度 (m/s)",
+        "field.baro_valid": "气压数据有效",
+        "field.baro_health": "气压计健康",
+        "field.baro_update_age_us": "Baro 样本龄",
+        "baro.init": "初始化",
+        "baro.ok": "正常",
+        "baro.stale": "陈旧",
+        "baro.invalid": "无效",
+        "baro.valid": "有效",
+        "baro.invalid_data": "无效",
+        "control.height_hold_reserved": "定高保留",
+    },
+    "en": {
+        "chart.baro": "Barometer",
+        "chart.y_baro": "baro / altitude / temp",
+        "field.baro_pressure_pa": "baro_pressure_pa",
+        "field.baro_temperature_c": "baro_temperature_c",
+        "field.baro_altitude_m": "baro_altitude_m",
+        "field.baro_vspeed_mps": "baro_vspeed_mps",
+        "field.baro_valid": "baro_valid",
+        "field.baro_health": "baro_health",
+        "field.baro_update_age_us": "baro_update_age_us",
+        "baro.init": "INIT",
+        "baro.ok": "OK",
+        "baro.stale": "STALE",
+        "baro.invalid": "INVALID",
+        "baro.valid": "VALID",
+        "baro.invalid_data": "INVALID",
+        "control.height_hold_reserved": "HEIGHT_HOLD_RESERVED",
+    },
+}
+
 TELEMETRY_FIELD_KEYS = {
     "gyro_x": "field.gyro_x",
     "gyro_y": "field.gyro_y",
@@ -749,6 +788,13 @@ TELEMETRY_FIELD_KEYS = {
     "motor4": "field.motor4",
     "battery_voltage": "field.battery_voltage",
     "battery_adc_raw": "field.battery_adc_raw",
+    "baro_pressure_pa": "field.baro_pressure_pa",
+    "baro_temperature_c": "field.baro_temperature_c",
+    "baro_altitude_m": "field.baro_altitude_m",
+    "baro_vspeed_mps": "field.baro_vspeed_mps",
+    "baro_valid": "field.baro_valid",
+    "baro_health": "field.baro_health",
+    "baro_update_age_us": "field.baro_update_age_us",
     "imu_age_us": "field.imu_age_us",
     "loop_dt_us": "field.loop_dt_us",
     "imu_mode": "field.imu_mode",
@@ -803,11 +849,24 @@ CONTROL_MODE_TEXT = {
     0: ("control.idle", "neutral"),
     1: ("control.axis_test", "active"),
     2: ("control.rate_test", "active"),
+    3: ("control.height_hold_reserved", "warn"),
 }
 
 IMU_MODE_TEXT = {
     0: ("imu.raw", "warn"),
     1: ("imu.direct", "ok"),
+}
+
+BARO_HEALTH_TEXT = {
+    0: ("baro.init", "neutral"),
+    1: ("baro.ok", "ok"),
+    2: ("baro.stale", "warn"),
+    3: ("baro.invalid", "danger"),
+}
+
+BARO_VALID_TEXT = {
+    0: ("baro.invalid_data", "danger"),
+    1: ("baro.valid", "ok"),
 }
 
 
@@ -821,6 +880,10 @@ def _format_value(name: str, value: object) -> str:
     if isinstance(value, float):
         if "battery_voltage" in name:
             return f"{value:.3f}"
+        if "baro_pressure_pa" in name:
+            return f"{value:.1f}"
+        if "baro_temperature_c" in name:
+            return f"{value:.2f}"
         if "quat_" in name:
             return f"{value:.4f}"
         return _format_float(value)
@@ -862,6 +925,10 @@ def _row_role_for_field(name: str, raw_value: object) -> tuple[str, str] | None:
         return _status_from_map(CONTROL_MODE_TEXT, raw_value)
     if name == "imu_mode":
         return _status_from_map(IMU_MODE_TEXT, raw_value)
+    if name == "baro_health":
+        return _status_from_map(BARO_HEALTH_TEXT, raw_value)
+    if name == "baro_valid":
+        return _status_from_map(BARO_VALID_TEXT, raw_value)
     return None
 
 
@@ -1027,6 +1094,8 @@ class MainWindow(QMainWindow):
         "rate_setpoint_roll", "rate_setpoint_pitch", "rate_setpoint_yaw",
         "motor1", "motor2", "motor3", "motor4",
         "battery_voltage", "battery_adc_raw",
+        "baro_pressure_pa", "baro_temperature_c", "baro_altitude_m", "baro_vspeed_mps",
+        "baro_valid", "baro_health", "baro_update_age_us",
         "imu_age_us", "loop_dt_us",
         "imu_mode", "imu_health", "arm_state", "failsafe_reason", "control_mode",
     ]
@@ -1046,6 +1115,15 @@ class MainWindow(QMainWindow):
         "attitude": ChartSpec("chart.attitude", [("roll_deg", "field.roll_deg"), ("pitch_deg", "field.pitch_deg"), ("yaw_deg", "field.yaw_deg")], "chart.y_deg"),
         "motors": ChartSpec("chart.motors", [("motor1", "field.motor1"), ("motor2", "field.motor2"), ("motor3", "field.motor3"), ("motor4", "field.motor4")], "chart.y_duty"),
         "battery": ChartSpec("chart.battery", [("battery_voltage", "field.battery_voltage")], "chart.y_volt"),
+        "baro": ChartSpec(
+            "chart.baro",
+            [
+                ("baro_altitude_m", "field.baro_altitude_m"),
+                ("baro_pressure_pa", "field.baro_pressure_pa"),
+                ("baro_temperature_c", "field.baro_temperature_c"),
+            ],
+            "chart.y_baro",
+        ),
     }
 
     CHART_COLORS = ["#D32F2F", "#1976D2", "#388E3C", "#7B1FA2"]
@@ -1094,7 +1172,8 @@ class MainWindow(QMainWindow):
 
     def _t(self, key: str, **kwargs) -> str:
         table = TRANSLATIONS.get(self._language, TRANSLATIONS["zh"])
-        text = table.get(key, key)
+        extra_table = EXTRA_TRANSLATIONS.get(self._language, EXTRA_TRANSLATIONS["zh"])
+        text = extra_table.get(key, table.get(key, key))
         return text.format(**kwargs)
 
     def _combo_data(self, combo: QComboBox) -> object:
@@ -1802,6 +1881,8 @@ class MainWindow(QMainWindow):
             ("battery_voltage", 2, 1),
             ("imu_age_us", 3, 0),
             ("loop_dt_us", 3, 1),
+            ("baro_health", 4, 0),
+            ("baro_altitude_m", 4, 1),
         ]
         for key, row, col in cards:
             card = QFrame()
@@ -2450,6 +2531,7 @@ class MainWindow(QMainWindow):
         failsafe_text, failsafe_role = self._status_text(FAILSAFE_TEXT, sample.failsafe_reason)
         control_text, control_role = self._status_text(CONTROL_MODE_TEXT, sample.control_mode)
         imu_text, imu_role = self._status_text(IMU_MODE_TEXT, sample.imu_mode)
+        baro_text, baro_role = self._status_text(BARO_HEALTH_TEXT, sample.baro_health)
         _set_badge(self.status_cards["arm_state"][1], arm_text, arm_role)
         _set_badge(self.status_cards["failsafe_reason"][1], failsafe_text, failsafe_role)
         _set_badge(self.status_cards["control_mode"][1], control_text, control_role)
@@ -2457,6 +2539,10 @@ class MainWindow(QMainWindow):
         self.status_cards["battery_voltage"][1].setText(f"{sample.battery_voltage:.3f} V")
         self.status_cards["imu_age_us"][1].setText(f"{sample.imu_age_us} us")
         self.status_cards["loop_dt_us"][1].setText(f"{sample.loop_dt_us} us")
+        _set_badge(self.status_cards["baro_health"][1], baro_text, baro_role)
+        self.status_cards["baro_altitude_m"][1].setText(
+            f"{sample.baro_altitude_m:.3f} m" if sample.baro_valid else self._t("status.no_value")
+        )
         self._update_stream_chip()
 
     def _on_event_received(self, message: str) -> None:

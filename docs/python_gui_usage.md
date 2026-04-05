@@ -163,6 +163,7 @@ Main chart:
   - `Attitude`
   - `Motors`
   - `Battery`
+  - `Barometer`
 - pause / resume
 - clear history
 - auto scale
@@ -174,7 +175,7 @@ Live numeric telemetry:
 
 - `Stream On` / `Stream Off`
 - apply target telemetry rate through `telemetry_usb_hz` or `telemetry_udp_hz`
-- view live values for gyro, attitude, rate setpoints, motors, battery, loop timing and safety state
+- view live values for gyro, attitude, rate setpoints, motors, battery, barometer, loop timing and safety state
 - copy selected table cells with `Ctrl+C`
 
 ### Right Column
@@ -187,6 +188,8 @@ Key status cards:
 - `imu_mode`
 - `stream`
 - `battery_voltage`
+- `baro_altitude_m`
+- `baro_health`
 - `imu_age_us`
 - `loop_dt_us`
 
