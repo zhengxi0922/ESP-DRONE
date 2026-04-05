@@ -1,10 +1,6 @@
 # IMU Protocol Extract
 
-## 中文摘要
-
-- `ATK-IMU901` 与 `ATK-MS901M` 在本项目中视为同一模块族，统一按 `ATK-MS901M` 协议实现。
-- 串口默认波特率 `115200`，上传帧头为 `0x55 0x55`，寄存器/应答帧头为 `0x55 0xAF`。
-- 默认推荐回传率为 `200 Hz`，`250 Hz` 作为可选高档位。
+**Language / 语言：** **English** | [简体中文](./imu_protocol_extract.zh-CN.md)
 
 ## Module Identity
 
@@ -12,15 +8,15 @@
 
 ## Transport
 
-- Physical transport: UART
-- Connected interface: `UART0`
-- Default baud rate: `115200`
+- physical transport: UART
+- connected interface: `UART0`
+- default baud rate: `115200`
 
 ## Frame Structure
 
-- Upload frame header: `0x55 0x55`
-- Register / ACK frame header: `0x55 0xAF`
-- Checksum: byte sum over the frame bytes before the checksum field
+- upload frame header: `0x55 0x55`
+- register or ACK frame header: `0x55 0xAF`
+- checksum: byte sum over the frame bytes before the checksum field
 
 ## Upload Frame IDs
 
@@ -62,16 +58,16 @@
 
 ### Mode A: Raw Sensor Mode
 
-- Default return content: `gyro + acc`
-- Optional return content: `mag`
-- Disabled by default: `baro`, `attitude`, `quaternion`
-- ESP32 side responsibilities: timestamping, coordinate mapping, gyro bias calibration, quaternion estimation, Euler output, health output
+- default return content: `gyro + acc`
+- optional return content: `mag`
+- disabled by default: `baro`, `attitude`, `quaternion`
+- ESP32-side responsibilities: timestamping, coordinate mapping, gyro bias calibration, quaternion estimation, Euler output, health output
 
 ### Mode B: Direct Attitude Mode
 
-- Default return content: `attitude + quaternion`
-- Optional raw frames: off by default
-- ESP32 side responsibilities: frame parsing, coordinate mapping, validity filtering, timeout detection, outlier rejection, health output
+- default return content: `attitude + quaternion`
+- optional raw frames: off by default
+- ESP32-side responsibilities: frame parsing, coordinate mapping, validity filtering, timeout detection, outlier rejection, health output
 
 ## Unified Output Contract
 
@@ -89,7 +85,7 @@ Every upper layer consumes the same `imu_sample_t`:
 
 The module only actively uploads at up to `250 Hz`. The control architecture must therefore use:
 
-- `1 kHz` motor/output scheduling
+- `1 kHz` motor or output scheduling
 - estimator update only on fresh IMU samples
 - rate PID only on fresh IMU samples
 - lower-rate angle PID

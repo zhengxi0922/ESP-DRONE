@@ -1,11 +1,6 @@
 # Axis Truth Table
 
-## 中文摘要
-
-- 本项目机体系固定为：`+Y` 机头、`+X` 机体右侧、`+Z` 朝上。
-- 姿态正方向固定为：`+pitch` 抬头、`+roll` 右侧下沉、`+yaw` 机头右转。
-- `gyro_x/y/z` 遵循机体系角速度右手规则；`roll/pitch/yaw` 遵循项目自定义姿态命名规则。
-- 做方向验证时，必须同时核对物理动作、`gyro` 字段、姿态字段和电机补偿方向。
+**Language / 语言：** **English** | [简体中文](./axis_truth_table.zh-CN.md)
 
 ## Body Frame
 
@@ -46,9 +41,9 @@ That means:
 
 During stage 2.5 and the minimal stage 3 rate-loop work, the expected fields are:
 
-- Hand-move validation: `gyro_x/y/z`, then `roll_deg/pitch_deg/yaw_deg`
-- Disarmed direction check: `setpoint_roll/pitch/yaw` together with `motor1..motor4`
-- Minimal closed-loop rate check: `rate_setpoint_roll/pitch/yaw`, `pid_out_roll/pitch/yaw`, then `motor1..motor4`
+- hand-move validation: `gyro_x/y/z`, then `roll_deg/pitch_deg/yaw_deg`
+- disarmed direction check: `setpoint_roll/pitch/yaw` together with `motor1..motor4`
+- minimal closed-loop rate check: `rate_setpoint_roll/pitch/yaw`, `pid_out_roll/pitch/yaw`, then `motor1..motor4`
 
 ## Truth Table
 

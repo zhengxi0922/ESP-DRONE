@@ -1,10 +1,6 @@
 # Motor Map
 
-## 中文摘要
-
-- 俯视布局固定为：`M1 左前 CCW`、`M2 右前 CW`、`M3 右后 CCW`、`M4 左后 CW`。
-- 电机逻辑编号、物理位置、旋向和 GPIO 是分离概念，不能直接写死到 mixer 公式里。
-- 单轴方向验证时，必须检查 `+roll / +pitch / +yaw` 对应的四电机增减方向是否与此表一致。
+**Language / 语言：** **English** | [简体中文](./motor_map.zh-CN.md)
 
 ## Physical Layout
 
@@ -46,7 +42,7 @@ Viewed from above:
 - `axis-test roll|pitch|yaw <value>` verifies open-loop mixer direction while disarmed
 - `rate-test roll|pitch|yaw <dps>` verifies the minimal fresh-sample rate loop while armed
 
-The first two checks are stage 2.5 gate items. The third check is the first allowed stage 3 control check after the bring-up gate is wired in.
+The first two checks are stage-2.5 gate items. The third check is the first allowed stage-3 control check after the bring-up gate is wired in.
 
 ## Implementation Rule
 

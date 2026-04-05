@@ -1,15 +1,11 @@
 # Hardware Extract
 
-## 中文摘要
-
-- 板级单一真源已经锁定：`IO5/6/3/4` 对应四路有刷电机，`IO46/8/7` 对应三色 LED，`IO2` 为电池 ADC。
-- `UART0` 只给 `ATK-MS901M`，`USB CDC` 只给主机调试和 CLI。
-- 所有 GPIO 只能在 `board_config` 中定义，业务代码禁止硬编码。
+**Language / 语言：** **English** | [简体中文](./hardware_extract.zh-CN.md)
 
 ## Sources
 
 - Schematic: `Circuit/ESP-drone_V1.3.pdf`
-- User-fixed constraints from the implementation brief
+- user-fixed constraints from the implementation brief
 
 ## Locked Board Mapping
 
@@ -30,11 +26,11 @@
 
 - `BAT_ADC` uses a `100k / 100k` divider, so the divider ratio is `2.0`.
 - `UART0` is reserved for the IMU. It must not be reused for console or debug text.
-- `USB CDC` is reserved for the host console, CLI protocol and debug event stream.
-- Camera-related nets are ignored by the current firmware generation.
+- `USB CDC` is reserved for the host console, CLI protocol, and debug event stream.
+- camera-related nets are ignored by the current firmware generation
 
 ## Board-Level Rules
 
 - GPIO definitions must live only in `main/board/board_config.h` and `main/board/board_config.c`.
-- No business logic module is allowed to hardcode GPIO numbers.
-- Motor identity, motor physical position and motor spin direction are separate concepts and must not be conflated.
+- no business-logic module is allowed to hardcode GPIO numbers
+- motor identity, motor physical position, and motor spin direction are separate concepts and must not be conflated

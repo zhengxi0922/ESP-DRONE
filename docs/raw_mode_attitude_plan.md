@@ -1,10 +1,6 @@
 # RAW Mode Attitude Plan
 
-## 中文摘要
-
-- `RAW` 模式下计划使用项目自有的姿态解算，不依赖 IMU 直出姿态。
-- 当前方案是基于四元数的 Mahony 风格解算，输入来自映射后的陀螺仪和加速度计，磁力计只作为可选 yaw 修正源。
-- 本文档当前只负责设计，不代表已经完成实现。
+**Language / 语言：** **English** | [简体中文](./raw_mode_attitude_plan.zh-CN.md)
 
 ## Goal
 
@@ -22,19 +18,19 @@ Provide a project-owned attitude source for `IMU_MODE_RAW` so that upper layers 
 
 The planned raw-mode estimator is a Mahony-style quaternion filter running on the ESP32-S3.
 
-Reason:
+Reasons:
 
 - low computational cost
 - stable quaternion output for the project body frame
-- straightforward gyro + accelerometer fusion
+- straightforward gyro and accelerometer fusion
 - optional magnetometer correction path without changing the upper interface
 
 ## Planned Update Rate
 
-- The raw-mode estimator will run only on fresh IMU samples.
-- Default IMU return rate remains `200 Hz`.
-- Optional high-rate mode remains `250 Hz`.
-- The estimator will not run at `1 kHz` without fresh IMU data.
+- the raw-mode estimator will run only on fresh IMU samples
+- the default IMU return rate remains `200 Hz`
+- the optional high-rate mode remains `250 Hz`
+- the estimator will not run at `1 kHz` without fresh IMU data
 
 This keeps the estimator aligned with [runtime_frequency_plan.md](./runtime_frequency_plan.md).
 
@@ -51,41 +47,41 @@ Optional inputs:
 
 ## Magnetometer Policy
 
-- Magnetometer stays disabled by default during early bring-up.
-- When enabled later, it will be used only for slow yaw correction.
-- Magnetometer data must pass magnitude and freshness checks before entering the estimator.
+- the magnetometer stays disabled by default during early bring-up
+- when enabled later, it is used only for slow yaw correction
+- magnetometer data must pass magnitude and freshness checks before entering the estimator
 
 ## Yaw Drift Strategy
 
-Without magnetometer:
+Without a magnetometer:
 
-- yaw will be gyro-integrated
+- yaw is gyro-integrated
 - roll and pitch remain gravity-corrected
 - heading observability is reduced
 - `imu_health` should report `DEGRADED` rather than `OK` when the system depends on a drifting yaw source for attitude output
 
-With validated magnetometer:
+With a validated magnetometer:
 
-- yaw correction will be applied with a slower gain than roll/pitch correction
+- yaw correction uses a slower gain than roll or pitch correction
 - yaw jumps must be rejected by innovation gating
 
 ## Calibration Plan
 
-- Gyro bias calibration: stationary average during explicit `calib gyro`
-- Level calibration: optional body-frame trim for the accelerometer / attitude zero
-- These calibrations must live above the module-to-body mapping so the project frame stays the single truth
+- gyro bias calibration: stationary average during explicit `calib gyro`
+- level calibration: optional body-frame trim for the accelerometer or attitude zero
+- those calibrations must live above the module-to-body mapping so the project frame stays the single truth
 
 ## Mode Switching Rule
 
-- `IMU_MODE_DIRECT`: use module quaternion / attitude after project mapping
+- `IMU_MODE_DIRECT`: use module quaternion or attitude after project mapping
 - `IMU_MODE_RAW`: use ESP32 Mahony output after project mapping and calibration
-- Upper layers must not branch on the source after `imu_sample_t` has been filled
+- upper layers must not branch on the source after `imu_sample_t` has been filled
 
 ## Bring-Up Rule
 
 Before angle mode is designed or enabled:
 
-- direct mode signs must be physically verified on the bench
+- direct-mode signs must be physically verified on the bench
 - raw-mode Mahony output must be compared against direct mode on the bench
 - yaw behavior without magnetometer must be explicitly accepted for the current test scope
 
@@ -93,6 +89,6 @@ Before angle mode is designed or enabled:
 
 This document is design only for the current round.
 
-- No full raw-mode attitude estimator is implemented yet
-- No angle PID work should start from this document alone
-- The immediate control-stage focus remains single-axis rate-loop validation
+- no full raw-mode attitude estimator is implemented yet
+- no angle PID work should start from this document alone
+- the immediate control-stage focus remains single-axis rate-loop validation

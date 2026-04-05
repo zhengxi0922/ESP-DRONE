@@ -1,10 +1,6 @@
 # Python GUI Manual Checklist
 
-## 中文摘要
-
-- 这份清单用于人工验收 `esp-drone-gui` 是否达到台架调试最低可用标准。
-- 检查范围包括：GUI 启动、serial/udp 连接、stream、遥测刷新、参数读写、`arm/disarm/kill`、`motor_test`、`dump csv` 等。
-- 重点是确认 GUI 只是 `DeviceSession` 的交互外壳，而不是第二套协议栈。
+**Language / 语言：** **English** | [简体中文](./python_gui_manual_checklist.zh-CN.md)
 
 Use this checklist after installing `esp-drone-gui` with:
 
@@ -15,7 +11,7 @@ pip install -e .[gui]
 
 Bench assumptions:
 
-- props removed, or frame restrained
+- props removed, or the frame restrained
 - firmware already flashed
 - USB CDC or UDP endpoint available
 
@@ -23,8 +19,8 @@ Bench assumptions:
 
 - [ ] `esp-drone-gui` starts successfully
 - [ ] closing the window does not hang
-- [ ] if `PyQt5` or `pyqtgraph` is missing, GUI prints a clear install error instead of crashing obscurely
-- [ ] main window uses the new three-column layout instead of stacked tabs
+- [ ] if `PyQt5` or `pyqtgraph` is missing, the GUI prints a clear install error instead of crashing obscurely
+- [ ] the main window uses the new three-column layout instead of stacked tabs
 - [ ] the center chart area is visibly larger than the control rail and parameter editor
 - [ ] the bottom log starts in compact form and can be expanded
 - [ ] the language switch defaults to Chinese and can switch to English
@@ -33,49 +29,49 @@ Bench assumptions:
 
 - [ ] serial mode can list or accept a typed COM port
 - [ ] serial mode only shows serial controls
-- [ ] UDP mode only shows host / port controls
+- [ ] UDP mode only shows host and port controls
 - [ ] serial connect succeeds
 - [ ] UDP mode can connect to `host:port`
-- [ ] disconnect returns the GUI to `未连接 / Disconnected`
-- [ ] last connection error field is readable and meaningful on failure
+- [ ] disconnect returns the GUI to `Disconnected`
+- [ ] the last-connection-error field is readable and meaningful on failure
 
 ## Stream And Telemetry
 
-- [ ] `开始流 / Stream On` starts telemetry updates
-- [ ] `停止流 / Stream Off` stops telemetry updates or clearly stops new samples
-- [ ] telemetry table refreshes with gyro / attitude / motor / battery / loop timing fields
-- [ ] telemetry table selection can be copied with `Ctrl+C`
-- [ ] changing target stream rate applies without breaking the session
-- [ ] chart area and telemetry table are visible at the same time
+- [ ] `Stream On` starts telemetry updates
+- [ ] `Stream Off` stops telemetry updates or clearly stops new samples
+- [ ] the telemetry table refreshes with gyro, attitude, motor, battery, and loop-timing fields
+- [ ] telemetry-table selection can be copied with `Ctrl+C`
+- [ ] changing the target stream rate applies without breaking the session
+- [ ] the chart area and telemetry table are visible at the same time
 
 ## Charts
 
-- [ ] gyro chart updates while streaming
-- [ ] attitude chart updates while streaming
-- [ ] motor chart updates while streaming
-- [ ] battery chart updates while streaming
+- [ ] the gyro chart updates while streaming
+- [ ] the attitude chart updates while streaming
+- [ ] the motor chart updates while streaming
+- [ ] the battery chart updates while streaming
 - [ ] the main chart is large enough to inspect waveforms without switching tabs
-- [ ] pause / resume works
-- [ ] clear chart history works
+- [ ] pause or resume works
+- [ ] clearing chart history works
 - [ ] switching chart group works
-- [ ] switching chart window length works
-- [ ] channel visibility checkboxes work
+- [ ] switching chart-window length works
+- [ ] channel-visibility checkboxes work
 - [ ] auto scale works
 - [ ] reset view works
 
 ## Parameters
 
 - [ ] `Refresh` loads the parameter list
-- [ ] search box filters the list
-- [ ] parameter table shows enough rows for practical bench tuning
+- [ ] the search box filters the list
+- [ ] the parameter table shows enough rows for practical bench tuning
 - [ ] selecting one parameter fills the compact detail pane
 - [ ] local hint text updates when editing a value
-- [ ] setting one parameter returns without GUI error
+- [ ] setting one parameter returns without a GUI error
 - [ ] `Save` succeeds
 - [ ] `Reset` succeeds
 - [ ] `Export JSON` writes a snapshot file
 - [ ] `Import JSON` applies a snapshot file
-- [ ] parameter table selection can be copied
+- [ ] parameter-table selection can be copied
 
 ## Safety Commands
 
@@ -89,9 +85,9 @@ Bench assumptions:
 
 - [ ] `motor_test` starts the selected motor command
 - [ ] stopping `motor_test` sends zero duty
-- [ ] `calib gyro` command succeeds
-- [ ] `calib level` command succeeds
-- [ ] `rate_test` sends the selected axis/value
+- [ ] `calib gyro` succeeds
+- [ ] `calib level` succeeds
+- [ ] `rate_test` sends the selected axis and value
 - [ ] stopping `rate_test` sends zero rate
 
 ## Logging
@@ -100,22 +96,22 @@ Bench assumptions:
 - [ ] `Stop Log` stops active CSV logging
 - [ ] `Dump CSV` writes a CSV file for the requested duration
 - [ ] `Last log` updates to the most recent output path
-- [ ] `Last error` remains clear during a nominal session
-- [ ] event log can be cleared, copied, and saved to text
-- [ ] event log can be expanded and collapsed without breaking the layout
+- [ ] `Last error` stays clear during a nominal session
+- [ ] the event log can be cleared, copied, and saved to text
+- [ ] the event log can be expanded and collapsed without breaking the layout
 
 ## State Persistence
 
-- [ ] last serial port is restored after restart
-- [ ] last UDP target is restored after restart
+- [ ] the last serial port is restored after restart
+- [ ] the last UDP target is restored after restart
 - [ ] window geometry is restored after restart
-- [ ] chart group selection is restored after restart
-- [ ] chart window selection is restored after restart
-- [ ] last parameter search text is restored after restart
-- [ ] last language selection is restored after restart
+- [ ] chart-group selection is restored after restart
+- [ ] chart-window selection is restored after restart
+- [ ] the last parameter-search text is restored after restart
+- [ ] the last language selection is restored after restart
 
 ## Shutdown
 
 - [ ] closing the main window releases the transport cleanly
 - [ ] no stale serial lock remains after close
-- [ ] GUI can be started again immediately after closing
+- [ ] the GUI can be started again immediately after closing

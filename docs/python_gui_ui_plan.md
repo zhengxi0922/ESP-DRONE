@@ -1,9 +1,6 @@
 # Python GUI UI Plan
 
-## 中文摘要
-
-- GUI 的目标是成为真正可用的台架调试工作台，而不是只“有按钮、有图表”的演示壳。
-- 设计重点是：主图最大化、参数编辑高密度、低频工具收纳、中英文切换、保持 `DeviceSession` 单一真源。
+**Language / 语言：** **English** | [简体中文](./python_gui_ui_plan.zh-CN.md)
 
 ## Goal
 
@@ -11,18 +8,18 @@ Rework the GUI into a bench-debug workbench that is actually usable on a maximiz
 
 - larger main chart area
 - less duplicated state
-- better parameter editing density
+- better parameter-editing density
 - compact low-frequency control rail
 - Chinese-first UI with English fallback
 
 The ownership model does not change:
 
-- session / command flow: `esp_drone_cli.core.device_session.DeviceSession`
+- session and command flow: `esp_drone_cli.core.device_session.DeviceSession`
 - protocol: `esp_drone_cli.core.protocol.*`
 - transport: `esp_drone_cli.core.transport.*`
-- telemetry / parameter models: `esp_drone_cli.core.models`
+- telemetry and parameter models: `esp_drone_cli.core.models`
 
-GUI must keep calling `DeviceSession`. It must not assemble frames, talk to transport objects directly, or add a second client/session abstraction.
+The GUI must keep calling `DeviceSession`. It must not assemble frames, talk to transport objects directly, or add a second client or session abstraction.
 
 ## Scope Boundary
 
@@ -31,7 +28,7 @@ This GUI round changes:
 - GUI layout and information architecture
 - GUI-side plotting and local state persistence
 - GUI localization
-- README / GUI docs / GUI smoke tests
+- README, GUI docs, and GUI smoke tests
 
 This GUI round does not change:
 
@@ -66,10 +63,10 @@ Use a three-column workbench plus a compact bottom log:
 Keep only low-frequency actions:
 
 - transport choice
-- serial / UDP configuration
-- connect / disconnect
-- arm / disarm / kill / reboot
-- calib gyro / calib level
+- serial or UDP configuration
+- connect or disconnect
+- arm, disarm, kill, reboot
+- `calib gyro`, `calib level`
 - motor test
 - rate test
 - CSV log controls
@@ -91,11 +88,11 @@ Supported groups:
 
 Controls:
 
-- pause / resume
+- pause or resume
 - clear
 - auto scale
 - reset view
-- 5s / 10s / 30s window
+- `5s`, `10s`, `30s` window
 - per-channel visibility checkboxes
 
 Realtime numeric values remain visible below the plot. They are no longer hidden behind a separate tab.
@@ -105,28 +102,28 @@ Realtime numeric values remain visible below the plot. They are no longer hidden
 Upper half:
 
 - key status cards
-  - arm_state
-  - failsafe_reason
-  - control_mode
-  - imu_mode
-  - stream
-  - battery_voltage
-  - imu_age_us
-  - loop_dt_us
+  - `arm_state`
+  - `failsafe_reason`
+  - `control_mode`
+  - `imu_mode`
+  - `stream`
+  - `battery_voltage`
+  - `imu_age_us`
+  - `loop_dt_us`
 
 Lower half:
 
 - parameter search
 - parameter table
-- current value / new value
-- set / save / reset / import / export
+- current value or new value
+- set, save, reset, import, export
 - compact description area
 
-The parameter table should dominate the vertical space; the detail panel stays compact.
+The parameter table should dominate the vertical space. The detail panel stays compact.
 
 ### Bottom Log
 
-Keep a smaller default height and allow collapse / expand.
+Keep a smaller default height and allow collapse or expand.
 
 Show:
 
@@ -169,24 +166,24 @@ Translate through the GUI translation table:
 Use `QSettings` for:
 
 - window geometry
-- main / center / right / params / bottom splitter state
+- main, center, right, params, and bottom splitter state
 - last link type
 - last serial port
-- last UDP host / port
+- last UDP host or port
 - last chart group
 - last chart window
 - last parameter filter
 - last CSV path
 - last language
-- log collapsed / expanded state
+- log collapsed or expanded state
 
 ## Acceptance For This Round
 
-- chart area is large enough for restrained bench waveform inspection
-- realtime table and plot are visible together
+- the chart area is large enough for restrained bench waveform inspection
+- the realtime table and plot are visible together
 - parameter editing is denser than before
 - serial mode only shows serial controls
 - UDP mode only shows UDP controls
 - Chinese is the default GUI language
-- CLI remains compatible
+- the CLI remains compatible
 - GUI and CLI still share `DeviceSession`

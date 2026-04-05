@@ -1,27 +1,25 @@
 # ESP-DRONE
 
-Custom ESP-IDF flight-controller firmware and Python CLI for a brushed quadcopter based on `ESP32-S3-WROOM-1-N16R8`.
+**Language / 语言：** **English** | [简体中文](./README.zh-CN.md)
 
-## 中文简介
+Custom ESP-IDF flight-controller firmware and Python tooling for a brushed quadcopter based on `ESP32-S3-WROOM-1-N16R8`.
 
-这是一个面向自制四轴无人机的 `ESP-IDF` 飞控重写工程，硬件平台为 `ESP32-S3-WROOM-1-N16R8`，同时提供配套的 Python `CLI + GUI` 调试工具。
+## Overview
 
-当前仓库的核心约束如下：
+This repository is a from-scratch flight-controller rewrite for a custom quadcopter. It includes:
 
-- 固件与文档统一锁定 `ESP-IDF v5.5.1`
-- 机体系固定为：`+Y` 机头、`+X` 机体右侧、`+Z` 机体上方
-- 姿态正方向固定为：`+pitch` 抬头、`+roll` 右侧下沉、`+yaw` 机头右转（俯视顺时针）
-- `UART0` 只给 `ATK-MS901M`
-- `USB CDC` 只给调试、日志和 CLI 协议
-- Python 工具现在同时支持命令行和桌面 GUI，两者共用同一个 `DeviceSession`
+- ESP-IDF firmware for the target board
+- design, bring-up, and validation documents under [`docs/`](./docs/README.md)
+- shared Python tooling with both CLI and GUI entrypoints
 
-如果你主要使用中文环境，建议优先阅读：
+The current project constraints are:
 
-- [硬件提取](./docs/hardware_extract.md)
-- [轴定义真值表](./docs/axis_truth_table.md)
-- [电机映射](./docs/motor_map.md)
-- [运行频率规划](./docs/runtime_frequency_plan.md)
-- [Python GUI 使用说明](./docs/python_gui_usage.md)
+- firmware and documentation are locked to `ESP-IDF v5.5.1`
+- the body frame is fixed to `+Y` nose, `+X` right side, `+Z` up
+- positive attitude naming is fixed to `+pitch` nose up, `+roll` right side down, `+yaw` nose right
+- `UART0` is reserved for `ATK-MS901M`
+- `USB CDC` is reserved for debug logs and the CLI protocol
+- the Python CLI and GUI share one `DeviceSession`
 
 ## Locked Environment
 
@@ -29,67 +27,41 @@ Custom ESP-IDF flight-controller firmware and Python CLI for a brushed quadcopte
 - ESP-IDF: `v5.5.1`
 - RTOS: ESP-IDF FreeRTOS
 - IMU transport: `UART0` to `ATK-MS901M`
-- Console / CLI transport: `USB CDC`
+- console and CLI transport: `USB CDC`
 
-### 中文说明
+## Conventions
 
-- MCU：`ESP32-S3-WROOM-1-N16R8`
-- SDK：`ESP-IDF v5.5.1`
-- RTOS：ESP-IDF 自带 FreeRTOS
-- IMU 链路：`UART0 -> ATK-MS901M`
-- 主机调试链路：`USB CDC`
-
-## Body And Attitude Convention
-
-The whole project uses this body frame:
+The project uses one fixed body frame:
 
 - `+Y`: nose / front
 - `+X`: right side
-- `+Z`: upward
+- `+Z`: up
 
-The whole project uses these positive attitude names:
+The project also uses one fixed attitude naming convention:
 
 - `+pitch`: nose up
 - `+roll`: right side down
 - `+yaw`: nose right, clockwise viewed from above
 
-Important: the body frame is right-handed, but the positive names for `roll` and `yaw` do not follow the default mathematical positive rotation around `+Y` and `+Z`. Every direction-sensitive module must reference `docs/axis_truth_table.md` and `docs/motor_map.md`.
+The body frame is right-handed, but the project-defined positive names for `roll` and `yaw` do not follow the default mathematical positive rotation about `+Y` and `+Z`. Every direction-sensitive implementation must follow:
 
-### 中文说明
-
-整个工程严格使用下面这套机体系和姿态正方向：
-
-- 机体系：`+Y` 机头、`+X` 机体右侧、`+Z` 朝上
-- 姿态正方向：`+pitch` 抬头、`+roll` 右侧下沉、`+yaw` 机头右转
-
-注意：机体系本身是右手系，但 `roll` 与 `yaw` 的“正方向命名”不是默认数学正旋转，所有方向敏感实现都必须以 [axis_truth_table.md](./docs/axis_truth_table.md) 和 [motor_map.md](./docs/motor_map.md) 为准。
+- [`docs/axis_truth_table.md`](./docs/axis_truth_table.md)
+- [`docs/motor_map.md`](./docs/motor_map.md)
 
 ## Repository Layout
 
-- `docs/`: extracted constraints, protocol notes, bring-up and validation docs
-- `firmware/`: ESP-IDF firmware project
-- `tools/esp_drone_cli/`: Python CLI and protocol helpers
-
-### 中文说明
-
-- `docs/`：设计约束、协议提取、联调和验收文档
-- `firmware/`：ESP-IDF 飞控工程
-- `tools/esp_drone_cli/`：共享 `core`、CLI 和 GUI 工具
+- [`docs/`](./docs/README.md): extracted constraints, protocol notes, bring-up records, and tool documentation
+- [`firmware/`](./firmware): ESP-IDF firmware project
+- [`tools/esp_drone_cli/`](./tools/esp_drone_cli): shared Python `core + cli + gui` toolchain
 
 ## Build Notes
 
-This repository is written for ESP-IDF `v5.5.1`.
+This repository is written for `ESP-IDF v5.5.1`.
 
-On this Windows workstation, the verified local installation is documented in `docs/esp_idf_env.md` and can be activated directly from PowerShell:
+On Windows, the verified local installation is documented in [`docs/esp_idf_env.md`](./docs/esp_idf_env.md). The recommended shell flow is:
 
 ```powershell
 . .\tools\esp-idf-env.ps1
-```
-
-The repository also includes a wrapper for running `idf.py` against `firmware/` without manually changing directories:
-
-```powershell
-.\tools\idf.ps1 --version
 .\tools\idf.ps1 build
 ```
 
@@ -99,7 +71,7 @@ For a clean checkout, set the target once before the first build:
 .\tools\idf.ps1 set-target esp32s3
 ```
 
-If you prefer the raw ESP-IDF shell flow, the firmware can still be built this way:
+If you prefer the raw ESP-IDF flow:
 
 ```powershell
 cd firmware
@@ -107,147 +79,80 @@ idf.py set-target esp32s3
 idf.py build
 ```
 
-### 中文说明
-
-推荐直接使用仓库自带脚本，不必每次手动切目录：
-
-```powershell
-. .\tools\esp-idf-env.ps1
-.\tools\idf.ps1 build
-```
-
-首次全新检出后，需要先执行一次：
-
-```powershell
-.\tools\idf.ps1 set-target esp32s3
-```
-
-## Current Stage
+## Current Status
 
 The repository currently contains:
 
-- Stage 1 design documents
-- Stage 2 firmware skeleton and bottom-layer components
-- Stage 2.5 bring-up code paths for `motor-test`, `axis-test`, `rate-test`, IMU mapping, mixer direction checks and structured telemetry
-- Minimal single-axis rate-loop skeleton: fresh-sample estimator update, rate PID, mixer, motor output and safety gating
-- Baseline safety shell for `arm / disarm / kill`, state ownership, and a small set of hard stop triggers
-- Shared Python tool core for protocol, transport, telemetry decode, parameter snapshots and device commands
-- CLI entrypoint for scripting and automation
-- PyQt5 GUI workbench for manual bench debugging on Windows, backed by the same shared `DeviceSession`
+- stage-1 design documents
+- stage-2 firmware skeleton and bottom-layer components
+- stage-2.5 bring-up paths for `motor-test`, `axis-test`, `rate-test`, IMU mapping, mixer direction checks, and structured telemetry
+- a minimal single-axis rate-loop skeleton with fresh-sample estimator updates, rate PID, mixer, motor output, and safety gating
+- a shared Python tool core for protocol, transport, telemetry decoding, parameter snapshots, and device commands
+- a CLI entrypoint for automation and scripted checks
+- a PyQt5 GUI workbench for manual bench debugging on Windows
+- a first-stage barometer telemetry path for `ATK-MS901M`
 
-Current hardware validation status:
+Current validation status:
 
-- Host build and host-side direction tests pass
-- Real bench validation is still blocked until the aircraft enumerates on USB CDC and can be exercised on a restrained, prop-removed stand
+- host build and host-side direction tests pass
+- serial CLI live verification has been recorded for the current non-flight scope
+- full restrained bench validation remains a staged hardware task
 
 Still pending in later stages:
 
-- Full safety / failsafe logic with RC gesture arming, link supervision, richer fault classification, telemetry reason reporting, and final policy refinement
-- Completed hardware bench validation for single-axis rate mode
-- DIRECT-mode angle outer loop and restrained bench angle validation
-- Legacy RC / UDP compatibility work and the full CLI surface
+- full safety and failsafe policy refinement
+- completed hardware bring-up for single-axis rate mode
+- direct-mode angle outer-loop work after the bring-up gate is passed
+- fuller RC, legacy UDP, and non-bench workflow coverage
 
 ## Barometer Framework
 
-This repository now includes a first-stage barometer data path for `ATK-MS901M`.
+The repository includes a first-stage barometer data path for `ATK-MS901M`.
 
 Current scope:
 
 - decode module barometer frames in firmware
-- expose barometer telemetry to USB CDC
-- show barometer fields in CLI / GUI / CSV export
-- reserve future altitude-hold state structures and control-mode enum values
+- expose barometer telemetry through USB CDC
+- show barometer fields in CLI, GUI, and CSV export
+- reserve altitude-hold state structures and control-mode enum values
 
 Not in scope yet:
 
 - altitude-hold PID
 - throttle closed loop
-- automatic takeoff / landing
-- feeding barometer data into the current attitude / rate control path
+- automatic takeoff or landing
+- feeding barometer data into the current attitude or rate control path
 
-See [barometer_framework.md](./docs/barometer_framework.md) for details.
+See [`docs/barometer_framework.md`](./docs/barometer_framework.md) for details.
 
-### 中文说明
+## Python Tooling
 
-仓库现在已经补上了 `ATK-MS901M` 气压计的数据链路第一阶段：
+The Python tooling supports both:
 
-- firmware 可以解析并保存气压计帧
-- telemetry 会追加 barometer 字段
-- Python CLI / GUI / CSV 导出可以直接看到 barometer 数据
-- 同时预留了 future altitude hold 所需的数据结构和模块边界
+- CLI for automation, scripted regression checks, and bulk export
+- GUI for human-in-the-loop bench debugging
 
-但当前**还没有**真正启用定高闭环，也不会让气压计影响现有姿态 / 速率 / 电机输出逻辑。
+Both entrypoints share the same `DeviceSession`. They do not maintain separate protocol or transport stacks.
 
-### 中文说明
+Installation:
 
-当前仓库已经具备：
-
-- 阶段 1 设计文档
-- 阶段 2 底层框架
-- 阶段 2.5 bring-up 路径
-- 最小单轴 `rate-loop` 骨架
-- 基础 safety shell
-- 共享 Python `core`
-- CLI 自动化入口
-- 基于 PyQt5 的 GUI 工作台
-
-仍待完成的重点包括：
-
-- 完整 failsafe / safety 策略
-- 单轴 `rate` 与 `DIRECT angle` 的完整台架验证
-- RC / UDP 兼容完善
-- 更完整的参数和遥测联调面
-
-## Python Tool Usage
-
-The Python tooling now supports both a script-first CLI and a desktop GUI workbench. They share the same `DeviceSession` core and do not maintain separate protocol stacks.
-
-Related docs:
-
-- [GUI refactor plan](./docs/python_tool_gui_refactor_plan.md)
-- [GUI UI plan](./docs/python_gui_ui_plan.md)
-- [GUI usage guide](./docs/python_gui_usage.md)
-- [GUI manual checklist](./docs/python_gui_manual_checklist.md)
-
-The Python tooling now uses a shared `core + cli + gui` structure documented in [python_tool_gui_refactor_plan.md](./docs/python_tool_gui_refactor_plan.md).
-
-Phase B ownership rule:
-
-- `esp_drone_cli.core.device_session.DeviceSession` is the only session / command owner
-- `esp_drone_cli.core.protocol.*` is the only protocol owner
-- `esp_drone_cli.core.transport.*` is the only transport owner
-- top-level `client.py`, `protocol/*`, and `transport/*` modules are compatibility shims only
-
-This is intentional. CLI and GUI must both call the same core session layer rather than maintain separate protocol stacks.
-
-### Windows Install
-
-CLI only:
+- CLI only:
 
 ```powershell
 cd tools\esp_drone_cli
 pip install -e .
 ```
 
-This installs the Python package with the CLI entrypoint only. It does not pull in the optional GUI dependencies.
-
-CLI + GUI:
+- CLI + GUI:
 
 ```powershell
 cd tools\esp_drone_cli
 pip install -e .[gui]
 ```
 
-This installs the same package plus the optional `PyQt5 + pyqtgraph` dependencies required by the GUI.
+If `PyQt5` is not installed, the CLI still works and the GUI exits with a clear install hint.
 
-`PyQt5` is optional. If it is not installed:
-
-- CLI still imports and runs normally
-- GUI startup fails fast with a clear error telling you to install `pip install -e .[gui]`
-
-### CLI Start
-
-Examples:
+CLI examples:
 
 ```powershell
 python -m esp_drone_cli --serial COM7 connect
@@ -255,121 +160,54 @@ python -m esp_drone_cli --serial COM7 arm
 python -m esp_drone_cli --serial COM7 dump-csv telemetry.csv --duration 5
 ```
 
-The installed script entrypoint is also available:
+Installed entrypoints:
 
 ```powershell
 esp-drone-cli --serial COM7 connect
-```
-
-### GUI Start
-
-```powershell
 esp-drone-gui
 ```
 
-or:
+Related documentation:
 
-```powershell
-python -m esp_drone_cli.gui_main
-```
-
-The GUI is intended for manual bench debugging. CLI remains the primary interface for automation and scripted tests.
-
-### GUI Capability Boundary
-
-The current GUI is a PyQt5 workbench focused on restrained bench debugging. Its layout now follows a "three-column workbench + collapsible bottom log" pattern:
-
-- left narrow rail for connection, safety, and debug actions
-- center large chart workspace with live telemetry visible below it
-- right status cards plus a denser parameter editor
-- bottom event log that starts compact and can be expanded
-
-The GUI now defaults to Chinese and includes a `中文 / English` switch in the top-right corner.
-
-Current GUI capabilities:
-
-- serial / UDP connect and disconnect
-- `arm / disarm / kill / reboot`
-- `stream on / off`
-- large pyqtgraph chart workspace for gyro, attitude, motor outputs and battery voltage
-- realtime telemetry table with copy support
-- key status cards for arm / failsafe / mode / imu / stream / battery / timing
-- parameter refresh, search, set selected, save, reset, import and export
-- `motor-test`
-- `calib gyro` / `calib level`
-- `rate-test`
-- CSV logging and CSV dump
-- local GUI state persistence through `QSettings`
-
-Still intentionally deferred:
-
-- GUI-only protocol or transport behavior
-- stock App / RC / legacy UDP compatibility workflows
-
-For automation, scripted regression checks and repeatable data capture, CLI remains the preferred interface.
-
-### 中文说明
-
-Python 工具现在同时支持：
-
-- CLI：面向脚本、自动化测试、批量导出
-- GUI：面向人工台架调试
-
-两者共用同一个 `DeviceSession`，不会维护两套协议或 transport。
-
-安装方式：
-
-- 仅 CLI：
-```powershell
-cd tools\esp_drone_cli
-pip install -e .
-```
-
-- CLI + GUI：
-```powershell
-cd tools\esp_drone_cli
-pip install -e .[gui]
-```
-
-如果没有安装 `PyQt5`，CLI 仍然可以正常使用，但 GUI 会给出明确报错。
+- [`docs/python_tool_gui_refactor_plan.md`](./docs/python_tool_gui_refactor_plan.md)
+- [`docs/python_gui_ui_plan.md`](./docs/python_gui_ui_plan.md)
+- [`docs/python_gui_usage.md`](./docs/python_gui_usage.md)
+- [`docs/python_gui_manual_checklist.md`](./docs/python_gui_manual_checklist.md)
+- [`docs/cli_live_test_matrix.md`](./docs/cli_live_test_matrix.md)
+- [`docs/cli_live_test_results.md`](./docs/cli_live_test_results.md)
 
 ## Stage-2 Console Rule
 
 Stage 2 locks the debug transport split as follows:
 
 - `UART0` is reserved for the `ATK-MS901M` IMU only
-- Application console, debug log and CLI transport must use `USB CDC` only
-- `sdkconfig.defaults` must keep UART console disabled so no application console traffic leaks onto the IMU UART
+- application console, debug log, and CLI transport must use `USB CDC` only
+- `sdkconfig.defaults` must keep the UART console disabled so no application console traffic leaks onto the IMU UART
 
-### 中文说明
+## Documentation
 
-阶段 2 起，调试链路强制分离：
+Start with the documentation hub:
 
-- `UART0` 只给 IMU
-- `USB CDC` 只给 console / log / CLI
-- 禁止把 UART console 混到 IMU 串口上
+- [`docs/README.md`](./docs/README.md)
+
+Recommended first reads:
+
+- [`docs/hardware_extract.md`](./docs/hardware_extract.md)
+- [`docs/axis_truth_table.md`](./docs/axis_truth_table.md)
+- [`docs/motor_map.md`](./docs/motor_map.md)
+- [`docs/runtime_frequency_plan.md`](./docs/runtime_frequency_plan.md)
+- [`docs/python_gui_usage.md`](./docs/python_gui_usage.md)
 
 ## Acknowledgements
 
-This project is a from-scratch rewrite for a custom quadcopter, but it intentionally acknowledges the open-source work that helped define the compatibility and bring-up targets:
+This project is a from-scratch rewrite for a custom quadcopter, but it intentionally acknowledges open-source work that helped define compatibility and bring-up targets:
 
-- `ESP-Drone` and the related legacy app / UDP ecosystem, used here as a behavior and compatibility reference
+- `ESP-Drone` and the related legacy app and UDP ecosystem, used here as behavior and compatibility references
 - `Bitcraze Crazyflie`, whose open flight-control ecosystem influenced many small-drone software stacks
-- `ALIENTEK / ATK`, for the `ATK-MS901M` module documentation and example materials used to reconstruct the IMU protocol
+- `ALIENTEK / ATK`, for the `ATK-MS901M` documentation and example materials used to reconstruct the IMU protocol
 
-Important:
+Important notes:
 
-- This repository does **not** inherit the old repository's body frame, attitude sign convention, mixer, or control-chain implementation by default.
-- Legacy projects are referenced for protocol, visual semantics, and hardware bring-up only; direction-sensitive logic in this repository is redefined explicitly in `docs/axis_truth_table.md` and `docs/motor_map.md`.
-
-### 中文说明
-
-本仓库是从零重写，不直接继承旧工程的坐标系、姿态定义、mixer 或控制链路实现。
-
-致敬对象主要有：
-
-- `ESP-Drone`：旧 App / UDP 兼容参考
-- `Bitcraze Crazyflie`：小型飞控生态参考
-- `ALIENTEK / ATK`：`ATK-MS901M` 资料和示例
-
-但所有方向敏感逻辑都以本仓库文档中的重新定义为准。
+- this repository does not inherit the old repository's body frame, attitude sign convention, mixer, or control-chain implementation by default
+- legacy projects are referenced for protocol, visual semantics, and hardware bring-up only
+- all direction-sensitive logic in this repository is explicitly redefined in [`docs/axis_truth_table.md`](./docs/axis_truth_table.md) and [`docs/motor_map.md`](./docs/motor_map.md)

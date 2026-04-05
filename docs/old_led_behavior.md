@@ -1,10 +1,6 @@
 # Old LED Behavior
 
-## 中文摘要
-
-- 旧仓库的 LED 行为只作为视觉语义参考，不能直接照搬实现。
-- 新工程使用独立的 `led_status` 状态机，业务模块只能上报状态，不能直接操作 GPIO。
-- 当旧行为不完整时，采用本项目文档中定义的新默认状态表。
+**Language / 语言：** **English** | [简体中文](./old_led_behavior.zh-CN.md)
 
 ## Source Scope
 
