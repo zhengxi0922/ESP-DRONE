@@ -1,5 +1,11 @@
 # Motor Map
 
+## 中文摘要
+
+- 俯视布局固定为：`M1 左前 CCW`、`M2 右前 CW`、`M3 右后 CCW`、`M4 左后 CW`。
+- 电机逻辑编号、物理位置、旋向和 GPIO 是分离概念，不能直接写死到 mixer 公式里。
+- 单轴方向验证时，必须检查 `+roll / +pitch / +yaw` 对应的四电机增减方向是否与此表一致。
+
 ## Physical Layout
 
 Viewed from above:

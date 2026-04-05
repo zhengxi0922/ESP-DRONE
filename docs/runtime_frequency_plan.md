@@ -1,5 +1,11 @@
 # Runtime Frequency Plan
 
+## 中文摘要
+
+- 本项目采用“`1 kHz` 输出节拍 + 新 IMU 样本事件驱动控制”的架构，而不是盲目全链路 `1 kHz`。
+- 默认 IMU 回传率 `200 Hz`，`250 Hz` 仅作为可选高档位。
+- `Estimator` 和 `Rate PID` 只在 fresh IMU sample 到来时更新，避免重复消费旧数据。
+
 ## Default Targets
 
 - Motor output scheduling: `1000 Hz`

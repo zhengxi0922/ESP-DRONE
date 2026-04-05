@@ -1,5 +1,11 @@
 # ESP-IDF Environment
 
+## 中文摘要
+
+- 本仓库固定使用 `ESP-IDF v5.5.1`。
+- Windows 环境下推荐通过 `tools/esp-idf-env.ps1` 和 `tools/idf.ps1` 进入和调用构建环境。
+- 不要混用别的 IDF 主次版本，否则构建结果不可保证。
+
 This repository is locked to `ESP-IDF v5.5.1`.
 
 Verified local installation on this workstation:

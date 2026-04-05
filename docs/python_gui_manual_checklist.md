@@ -1,5 +1,11 @@
 # Python GUI Manual Checklist
 
+## 中文摘要
+
+- 这份清单用于人工验收 `esp-drone-gui` 是否达到台架调试最低可用标准。
+- 检查范围包括：GUI 启动、serial/udp 连接、stream、遥测刷新、参数读写、`arm/disarm/kill`、`motor_test`、`dump csv` 等。
+- 重点是确认 GUI 只是 `DeviceSession` 的交互外壳，而不是第二套协议栈。
+
 Use this checklist after installing `esp-drone-gui` with:
 
 ```powershell

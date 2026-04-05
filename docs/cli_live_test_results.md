@@ -1,5 +1,11 @@
 # CLI Live Test Results
 
+## 中文摘要
+
+- 这份文档记录的是 `COM4` 上的 CLI 联机结果，范围限于非起飞命令。
+- 当前 serial 路径已经通过 `connect/get/list/set/save/reset/export/import/arm/disarm/kill/reboot/calib/motor-test/rate-test/log/dump-csv`。
+- UDP CLI 路径目前仍然延后，不阻断 serial CLI 的可用性结论。
+
 ## Environment
 
 - Date: `2026-04-03`

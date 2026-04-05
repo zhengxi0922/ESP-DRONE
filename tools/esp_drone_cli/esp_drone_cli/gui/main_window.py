@@ -51,6 +51,12 @@ from esp_drone_cli.core import DeviceSession, ParamValue, TelemetrySample
 APP_ORG = "ESP-DRONE"
 APP_NAME = "ESP-DRONE GUI"
 
+"""GUI 只是 DeviceSession 的桌面工作台外壳。
+
+这里负责布局、翻译、图表和交互，不负责协议编码、transport 访问或设备命令所有权。
+所有设备动作都必须回到 core.DeviceSession。
+"""
+
 TRANSLATIONS = {
     "zh": {
         "window.title": "ESP-DRONE 调试工作台",

@@ -1,5 +1,11 @@
 # Bring-Up Checklist
 
+## 中文摘要
+
+- 这份清单是阶段 2 到阶段 3 之间的硬闸门。
+- 在所有 bring-up 项都 `PASS` 之前，不允许进入 PID 调参、angle 模式或自由飞。
+- 当前文档记录的是“代码路径是否具备”和“硬件是否完成实测”两层状态。
+
 This checklist must be executed between the bottom-layer framework stage and the estimator/controller stage.
 
 ## Gate Rule

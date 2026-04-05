@@ -13,6 +13,8 @@ static _Atomic bool s_pending_kill;
 static _Atomic bool s_pending_cli_override;
 static _Atomic bool s_cli_override_active;
 
+/* failsafe 原因在这里统一收口。
+ * 这样 arm/disarm/kill、IMU 超时、低压、loop overrun 不会分散在多个模块里各自判定。 */
 static failsafe_reason_t safety_detect_reason(const safety_inputs_t *inputs)
 {
     const params_store_t *params = params_get();
@@ -59,6 +61,7 @@ static bool safety_arm_conditions_met(const safety_inputs_t *inputs, bool cli_ov
     if (inputs->battery_voltage > 0.1f && inputs->battery_voltage <= params->battery_arm_v) {
         return false;
     }
+    /* 允许 CLI override 的唯一目的，是在 bench bring-up 阶段没有 RC 链路时仍可做受控台架测试。 */
     if (!inputs->rc_link_online && !cli_override_allowed) {
         return false;
     }
@@ -106,6 +109,7 @@ void safety_update(const safety_inputs_t *inputs, safety_status_t *out_status)
     arm_state_t state = (arm_state_t)atomic_load(&s_arm_state);
     failsafe_reason_t reason = (failsafe_reason_t)atomic_load(&s_failsafe_reason);
 
+    /* kill 优先级最高，进入 fault lock 后必须人工干预，不能被普通 arm 覆盖。 */
     if (atomic_exchange(&s_pending_kill, false)) {
         state = ARM_STATE_FAULT_LOCK;
         reason = FAILSAFE_REASON_KILL;

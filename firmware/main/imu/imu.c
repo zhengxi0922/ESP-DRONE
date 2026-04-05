@@ -74,6 +74,8 @@ typedef struct {
     float m[3][3];
 } mat3f_t;
 
+/* IMU 模块坐标到项目机体系的唯一映射入口。
+ * 所有 gyro/acc/quat/attitude 都必须先经过这里，避免不同模块各自做方向翻转。 */
 static int16_t imu_read_s16_le(const uint8_t *data)
 {
     return (int16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8));
@@ -164,6 +166,8 @@ static mat3f_t imu_module_to_body_basis_matrix(void)
 {
     const params_store_t *params = params_get();
     mat3f_t basis = {0};
+    /* 这里构造的是“body 轴在 module 坐标中的基底矩阵”。
+     * 后续 quaternion 和姿态映射都依赖这一个方向真源。 */
     imu_fill_basis_row(basis.m[0], params->imu_map_x);
     imu_fill_basis_row(basis.m[1], params->imu_map_y);
     imu_fill_basis_row(basis.m[2], params->imu_map_z);

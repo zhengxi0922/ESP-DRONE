@@ -2,6 +2,27 @@
 
 Custom ESP-IDF flight-controller firmware and Python CLI for a brushed quadcopter based on `ESP32-S3-WROOM-1-N16R8`.
 
+## 中文简介
+
+这是一个面向自制四轴无人机的 `ESP-IDF` 飞控重写工程，硬件平台为 `ESP32-S3-WROOM-1-N16R8`，同时提供配套的 Python `CLI + GUI` 调试工具。
+
+当前仓库的核心约束如下：
+
+- 固件与文档统一锁定 `ESP-IDF v5.5.1`
+- 机体系固定为：`+Y` 机头、`+X` 机体右侧、`+Z` 机体上方
+- 姿态正方向固定为：`+pitch` 抬头、`+roll` 右侧下沉、`+yaw` 机头右转（俯视顺时针）
+- `UART0` 只给 `ATK-MS901M`
+- `USB CDC` 只给调试、日志和 CLI 协议
+- Python 工具现在同时支持命令行和桌面 GUI，两者共用同一个 `DeviceSession`
+
+如果你主要使用中文环境，建议优先阅读：
+
+- [硬件提取](./docs/hardware_extract.md)
+- [轴定义真值表](./docs/axis_truth_table.md)
+- [电机映射](./docs/motor_map.md)
+- [运行频率规划](./docs/runtime_frequency_plan.md)
+- [Python GUI 使用说明](./docs/python_gui_usage.md)
+
 ## Locked Environment
 
 - MCU: `ESP32-S3-WROOM-1-N16R8`
@@ -9,6 +30,14 @@ Custom ESP-IDF flight-controller firmware and Python CLI for a brushed quadcopte
 - RTOS: ESP-IDF FreeRTOS
 - IMU transport: `UART0` to `ATK-MS901M`
 - Console / CLI transport: `USB CDC`
+
+### 中文说明
+
+- MCU：`ESP32-S3-WROOM-1-N16R8`
+- SDK：`ESP-IDF v5.5.1`
+- RTOS：ESP-IDF 自带 FreeRTOS
+- IMU 链路：`UART0 -> ATK-MS901M`
+- 主机调试链路：`USB CDC`
 
 ## Body And Attitude Convention
 
@@ -26,11 +55,26 @@ The whole project uses these positive attitude names:
 
 Important: the body frame is right-handed, but the positive names for `roll` and `yaw` do not follow the default mathematical positive rotation around `+Y` and `+Z`. Every direction-sensitive module must reference `docs/axis_truth_table.md` and `docs/motor_map.md`.
 
+### 中文说明
+
+整个工程严格使用下面这套机体系和姿态正方向：
+
+- 机体系：`+Y` 机头、`+X` 机体右侧、`+Z` 朝上
+- 姿态正方向：`+pitch` 抬头、`+roll` 右侧下沉、`+yaw` 机头右转
+
+注意：机体系本身是右手系，但 `roll` 与 `yaw` 的“正方向命名”不是默认数学正旋转，所有方向敏感实现都必须以 [axis_truth_table.md](./docs/axis_truth_table.md) 和 [motor_map.md](./docs/motor_map.md) 为准。
+
 ## Repository Layout
 
 - `docs/`: extracted constraints, protocol notes, bring-up and validation docs
 - `firmware/`: ESP-IDF firmware project
 - `tools/esp_drone_cli/`: Python CLI and protocol helpers
+
+### 中文说明
+
+- `docs/`：设计约束、协议提取、联调和验收文档
+- `firmware/`：ESP-IDF 飞控工程
+- `tools/esp_drone_cli/`：共享 `core`、CLI 和 GUI 工具
 
 ## Build Notes
 
@@ -63,6 +107,21 @@ idf.py set-target esp32s3
 idf.py build
 ```
 
+### 中文说明
+
+推荐直接使用仓库自带脚本，不必每次手动切目录：
+
+```powershell
+. .\tools\esp-idf-env.ps1
+.\tools\idf.ps1 build
+```
+
+首次全新检出后，需要先执行一次：
+
+```powershell
+.\tools\idf.ps1 set-target esp32s3
+```
+
 ## Current Stage
 
 The repository currently contains:
@@ -87,6 +146,26 @@ Still pending in later stages:
 - Completed hardware bench validation for single-axis rate mode
 - DIRECT-mode angle outer loop and restrained bench angle validation
 - Legacy RC / UDP compatibility work and the full CLI surface
+
+### 中文说明
+
+当前仓库已经具备：
+
+- 阶段 1 设计文档
+- 阶段 2 底层框架
+- 阶段 2.5 bring-up 路径
+- 最小单轴 `rate-loop` 骨架
+- 基础 safety shell
+- 共享 Python `core`
+- CLI 自动化入口
+- 基于 PyQt5 的 GUI 工作台
+
+仍待完成的重点包括：
+
+- 完整 failsafe / safety 策略
+- 单轴 `rate` 与 `DIRECT angle` 的完整台架验证
+- RC / UDP 兼容完善
+- 更完整的参数和遥测联调面
 
 ## Python Tool Usage
 
@@ -198,6 +277,31 @@ Still intentionally deferred:
 
 For automation, scripted regression checks and repeatable data capture, CLI remains the preferred interface.
 
+### 中文说明
+
+Python 工具现在同时支持：
+
+- CLI：面向脚本、自动化测试、批量导出
+- GUI：面向人工台架调试
+
+两者共用同一个 `DeviceSession`，不会维护两套协议或 transport。
+
+安装方式：
+
+- 仅 CLI：
+```powershell
+cd tools\esp_drone_cli
+pip install -e .
+```
+
+- CLI + GUI：
+```powershell
+cd tools\esp_drone_cli
+pip install -e .[gui]
+```
+
+如果没有安装 `PyQt5`，CLI 仍然可以正常使用，但 GUI 会给出明确报错。
+
 ## Stage-2 Console Rule
 
 Stage 2 locks the debug transport split as follows:
@@ -205,6 +309,14 @@ Stage 2 locks the debug transport split as follows:
 - `UART0` is reserved for the `ATK-MS901M` IMU only
 - Application console, debug log and CLI transport must use `USB CDC` only
 - `sdkconfig.defaults` must keep UART console disabled so no application console traffic leaks onto the IMU UART
+
+### 中文说明
+
+阶段 2 起，调试链路强制分离：
+
+- `UART0` 只给 IMU
+- `USB CDC` 只给 console / log / CLI
+- 禁止把 UART console 混到 IMU 串口上
 
 ## Acknowledgements
 
@@ -218,3 +330,15 @@ Important:
 
 - This repository does **not** inherit the old repository's body frame, attitude sign convention, mixer, or control-chain implementation by default.
 - Legacy projects are referenced for protocol, visual semantics, and hardware bring-up only; direction-sensitive logic in this repository is redefined explicitly in `docs/axis_truth_table.md` and `docs/motor_map.md`.
+
+### 中文说明
+
+本仓库是从零重写，不直接继承旧工程的坐标系、姿态定义、mixer 或控制链路实现。
+
+致敬对象主要有：
+
+- `ESP-Drone`：旧 App / UDP 兼容参考
+- `Bitcraze Crazyflie`：小型飞控生态参考
+- `ALIENTEK / ATK`：`ATK-MS901M` 资料和示例
+
+但所有方向敏感逻辑都以本仓库文档中的重新定义为准。

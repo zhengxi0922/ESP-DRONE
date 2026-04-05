@@ -1,5 +1,10 @@
 # Open Questions
 
+## 中文摘要
+
+- 当前没有阻断阶段推进的硬冲突，剩下的都是 bring-up 阶段需要实测确认的非阻断项。
+- 重点待实测项包括：IMU 安装方向、LED 有效电平、电机 PWM 极性、`250 Hz` 是否值得长期作为推荐档位。
+
 There are no remaining Stage-1 blockers. The following items are non-blocking and are handled by design defaults plus bring-up validation.
 
 ## Non-Blocking Items

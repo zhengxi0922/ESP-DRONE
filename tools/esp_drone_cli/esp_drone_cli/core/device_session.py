@@ -32,6 +32,12 @@ ConnectionCallback = Callable[[dict[str, object]], None]
 
 
 class DeviceSession:
+    """Python 侧唯一设备会话入口。
+
+    CLI 和 GUI 都只能通过这个对象访问连接、命令、参数、遥测和日志，
+    不能各自维护第二套 client / protocol / transport 逻辑。
+    """
+
     def __init__(self, transport: Transport | None = None) -> None:
         self._transport: Transport | None = None
         self._seq = 0
@@ -146,6 +152,7 @@ class DeviceSession:
                 self._notify_connection(connected=False, error=self._last_error)
                 break
 
+            # reader 线程只做“收帧 -> 解码/分发”，不做 UI 或脚本层业务逻辑。
             if frame.msg_type == MsgType.TELEMETRY_SAMPLE:
                 self._notify_telemetry(TelemetrySample.from_payload(frame.payload))
             elif frame.msg_type == MsgType.EVENT_LOG_TEXT:
@@ -200,6 +207,7 @@ class DeviceSession:
         if self._transport is None:
             return
 
+        # 优先尝试安全停流，避免 GUI/CLI 退出时设备端仍在高速推送 telemetry。
         if safe_stop_stream and self._connected:
             try:
                 self.stop_stream(timeout=0.5)

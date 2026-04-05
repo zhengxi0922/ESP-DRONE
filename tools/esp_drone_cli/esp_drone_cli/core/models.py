@@ -28,6 +28,11 @@ TELEMETRY_CSV_FIELDS = [
     "imu_mode", "imu_health", "arm_state", "failsafe_reason", "control_mode",
 ]
 
+"""这里定义的是 Python 工具链共享的数据模型。
+
+CLI、GUI、CSV 导出都以这些结构为准，避免同一份 telemetry 在不同界面里各自维护字段表。
+"""
+
 
 @dataclass(slots=True)
 class ParamValue:
@@ -105,6 +110,7 @@ class TelemetrySample:
 
     @classmethod
     def from_payload(cls, payload: bytes) -> "TelemetrySample":
+        # 设备端 telemetry 是定长二进制帧，这里统一做一次解包。
         values = TELEMETRY_STRUCT.unpack(payload)
         trimmed = list(values[:-3])
         return cls(*trimmed)

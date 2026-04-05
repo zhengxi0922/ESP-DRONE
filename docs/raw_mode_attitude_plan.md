@@ -1,5 +1,11 @@
 # RAW Mode Attitude Plan
 
+## 中文摘要
+
+- `RAW` 模式下计划使用项目自有的姿态解算，不依赖 IMU 直出姿态。
+- 当前方案是基于四元数的 Mahony 风格解算，输入来自映射后的陀螺仪和加速度计，磁力计只作为可选 yaw 修正源。
+- 本文档当前只负责设计，不代表已经完成实现。
+
 ## Goal
 
 Provide a project-owned attitude source for `IMU_MODE_RAW` so that upper layers can consume the same `imu_sample_t` contract in both modes:

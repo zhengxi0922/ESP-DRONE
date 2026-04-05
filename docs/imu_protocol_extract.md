@@ -1,5 +1,11 @@
 # IMU Protocol Extract
 
+## 中文摘要
+
+- `ATK-IMU901` 与 `ATK-MS901M` 在本项目中视为同一模块族，统一按 `ATK-MS901M` 协议实现。
+- 串口默认波特率 `115200`，上传帧头为 `0x55 0x55`，寄存器/应答帧头为 `0x55 0xAF`。
+- 默认推荐回传率为 `200 Hz`，`250 Hz` 作为可选高档位。
+
 ## Module Identity
 
 `ATK-IMU901` and `ATK-MS901M` refer to the same module family for this project. The implementation uses the `ATK-MS901M` protocol documents and sample code.

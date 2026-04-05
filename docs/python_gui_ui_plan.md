@@ -1,5 +1,10 @@
 # Python GUI UI Plan
 
+## 中文摘要
+
+- GUI 的目标是成为真正可用的台架调试工作台，而不是只“有按钮、有图表”的演示壳。
+- 设计重点是：主图最大化、参数编辑高密度、低频工具收纳、中英文切换、保持 `DeviceSession` 单一真源。
+
 ## Goal
 
 Rework the GUI into a bench-debug workbench that is actually usable on a maximized Windows screen:

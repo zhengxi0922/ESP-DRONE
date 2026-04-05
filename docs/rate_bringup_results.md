@@ -1,5 +1,11 @@
 # Rate Bring-Up Results
 
+## 中文摘要
+
+- 这份文档只记录单轴 `rate-loop` bring-up，不涉及 angle 模式或自由飞。
+- 方向验证链条固定为：物理动作 -> 映射后的 `gyro` 符号 -> `rate setpoint / pid` 符号 -> mixer 输出方向。
+- 在三轴 `rate` 实测全部通过前，不允许进入更高层模式。
+
 ## Scope
 
 This document records the single-axis rate-loop bring-up stage only.

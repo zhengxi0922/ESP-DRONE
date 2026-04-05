@@ -20,6 +20,8 @@ typedef struct {
 
 static params_store_t s_params;
 
+/* 参数系统采用“单 blob + schema_version + CRC32”保存策略。
+ * 运行时所有参数写入都必须先过 params_try_set() 的合法性校验。 */
 static uint32_t params_crc32(const void *data, size_t len)
 {
     const uint8_t *bytes = (const uint8_t *)data;
@@ -87,6 +89,7 @@ static void params_apply_defaults(params_store_t *store)
 {
     memset(store, 0, sizeof(*store));
 
+    /* 默认值同时服务于 bring-up 和后续 bench 调试，所以倾向保守而不是激进。 */
     store->motor_pwm_freq_hz = 15000;
     store->motor_idle_duty = 0.05f;
     store->motor_max_duty = 0.95f;
@@ -200,6 +203,7 @@ static bool params_validate_imu_map(const params_store_t *store)
     };
     int matrix[3][3] = {{0}};
 
+    /* IMU 轴映射必须构成合法的正交、右手系机体系，避免出现重复轴或镜像映射。 */
     for (size_t row = 0; row < 3; ++row) {
         if (!params_selector_is_valid(selectors[row])) {
             return false;

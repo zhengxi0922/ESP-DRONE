@@ -1,5 +1,11 @@
 # ESP-Drone UDP Compatibility
 
+## 中文摘要
+
+- 本项目只承诺旧 `ESP-Drone` 控制入口的基础兼容，不承诺完整 stock App 特性对等。
+- `2390` 端口保留给 legacy 控制兼容层。
+- `2391` 和 `USB CDC` 走新的二进制 CLI 协议。
+
 ## Compatibility Goal
 
 Compatibility is limited to the legacy control entry path. The rewrite does not promise full stock-App feature parity.

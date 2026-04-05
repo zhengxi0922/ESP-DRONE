@@ -1,5 +1,11 @@
 # CLI Live Test Matrix
 
+## 中文摘要
+
+- 这份矩阵用于记录 Python CLI 的“非起飞命令”联机验证范围。
+- 默认测试前提是：拆桨或整机固定、先走 serial、UDP 只有在设备端真正落地后才补测。
+- 每一项命令都应明确：是否需要真机、是否需要电机上电、是否允许无桨测试。
+
 This matrix tracks non-flight CLI verification for the current Python toolchain.
 
 Assumptions:

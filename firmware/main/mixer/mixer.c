@@ -38,6 +38,9 @@ bool mixer_build_coeffs(mixer_coeffs_t out_coeffs[MIXER_MOTOR_COUNT])
         }
 
         out_coeffs[i] = (mixer_coeffs_t){
+            /* mixer 方向完全按项目机体系重新推导：
+             * roll_coeff=-x, pitch_coeff=-y, yaw_coeff=CCW:+1 / CW:-1。
+             * 这里不能偷用旧仓库或常见 +X 机头假设。 */
             .roll_coeff = (float)(-cfg->body_x_sign),
             .pitch_coeff = (float)(-cfg->body_y_sign),
             .yaw_coeff = params->motor_spin_is_cw[i] ? -1.0f : 1.0f,
@@ -82,6 +85,7 @@ bool mixer_self_test(void)
         return false;
     }
 
+    /* 下面 6 组自检直接对应 docs/motor_map.md 中的方向真值表。 */
     mixer_mix(coeffs, &(mixer_input_t){.throttle = base, .axis = {.roll = +cmd}}, outputs);
     if (!mixer_check_direction(outputs, 0, 3, 1, 2)) {
         return false;

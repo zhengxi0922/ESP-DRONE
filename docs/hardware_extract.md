@@ -1,5 +1,11 @@
 # Hardware Extract
 
+## 中文摘要
+
+- 板级单一真源已经锁定：`IO5/6/3/4` 对应四路有刷电机，`IO46/8/7` 对应三色 LED，`IO2` 为电池 ADC。
+- `UART0` 只给 `ATK-MS901M`，`USB CDC` 只给主机调试和 CLI。
+- 所有 GPIO 只能在 `board_config` 中定义，业务代码禁止硬编码。
+
 ## Sources
 
 - Schematic: `Circuit/ESP-drone_V1.3.pdf`

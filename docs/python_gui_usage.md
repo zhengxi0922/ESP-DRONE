@@ -1,5 +1,11 @@
 # Python GUI Usage
 
+## 中文摘要
+
+- `esp-drone-gui` 是 Python 工具链中的人工台架调试入口。
+- GUI 和 CLI 共享同一套 `core / DeviceSession / protocol / transport`。
+- 安装 GUI 需要 `pip install -e .[gui]`，这会额外安装 `PyQt5` 与 `pyqtgraph`。
+
 ## Goal
 
 `esp-drone-gui` is the manual bench-debug workbench for the Python toolchain.

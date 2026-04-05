@@ -1,5 +1,10 @@
 # Python Tool GUI + CLI Refactor Plan
 
+## 中文摘要
+
+- 这份文档描述 Python 工具如何从“仅 CLI”演进为“共享 core + CLI + GUI”的结构。
+- 当前原则已经锁定：`DeviceSession` 是唯一会话 owner，协议和 transport 只属于 `core`，GUI 不能私自维护第二套通信栈。
+
 ## Goal
 
 Upgrade `tools/esp_drone_cli/` from a CLI-first tool into a shared `core + cli + gui` structure, with the GUI now implemented on `PyQt5` instead of `PySide6`.

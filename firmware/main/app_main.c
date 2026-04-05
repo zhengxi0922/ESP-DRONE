@@ -28,6 +28,8 @@
 
 #define TASK_STACK_WORDS 4096
 
+/* 将 arm/failsafe/低电压/IMU 健康统一映射到 LED 状态机。
+ * 业务模块只提交逻辑状态，LED GPIO 只允许由 led_status 模块驱动。 */
 static void flight_control_apply_led_state(const safety_status_t *safety_status,
                                            const imu_sample_t *sample,
                                            bool battery_initialized,
@@ -85,6 +87,8 @@ static void flight_control_task(void *arg)
     mixer_build_coeffs(mixer_coeffs);
 
     while (1) {
+        /* 控制任务固定 1 kHz 调度，但 estimator / rate loop 只在 fresh IMU sample 到来时更新。
+         * 这样既保证输出节拍稳定，也避免拿旧 IMU 数据重复做整套控制更新。 */
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1));
 
         const uint64_t now_us = (uint64_t)esp_timer_get_time();
@@ -150,11 +154,13 @@ static void flight_control_task(void *arg)
         int test_motor = -1;
         float test_duty = 0.0f;
         runtime_state_get_motor_test(&test_motor, &test_duty);
+        /* 电机点动测试只允许在未解锁状态下执行，避免和闭环输出叠加。 */
         if (test_motor >= 0 && test_duty > 0.0f && safety_status.arm_state == ARM_STATE_DISARMED) {
             motor_set_test_output((uint8_t)test_motor, test_duty);
             continue;
         }
 
+        /* axis-test 是开环 mixer 方向验证路径，目标是验证文档中的轴向真值表，而不是闭环控制效果。 */
         if (control_mode == CONTROL_MODE_AXIS_TEST && safety_status.arm_state == ARM_STATE_DISARMED) {
             const axis3f_t axis_request = runtime_state_get_axis_test_request();
             mixer_mix(mixer_coeffs,
@@ -167,6 +173,8 @@ static void flight_control_task(void *arg)
             continue;
         }
 
+        /* 当前阶段仅启用最小单轴 rate-loop：
+         * fresh sample -> estimator update -> rate PID -> mixer -> motor output。 */
         if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_RATE_TEST) {
             if (fresh_sample && sample.has_gyro_acc) {
                 estimator_update_from_imu(&sample, &estimator_state);
