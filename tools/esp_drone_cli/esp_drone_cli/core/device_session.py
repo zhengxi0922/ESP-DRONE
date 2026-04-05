@@ -1,3 +1,12 @@
+# ============================================================
+# @file device_session.py
+# @brief ESP-DRONE ??????
+# @details ?? Python ??? DeviceSession?????????????????????????
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from __future__ import annotations
 
 import json

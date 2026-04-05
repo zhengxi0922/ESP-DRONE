@@ -1,20 +1,38 @@
+/**
+ * @file esp_drone_types.h
+ * @brief ESP-DRONE ?????????
+ * @details ?????????????????????????/?????
+ * @author Codex
+ * @date 2026-04-05
+ * @version 1.0
+ */
+
 #pragma once
 
 #include <stdbool.h>
 #include <stdint.h>
 
+/**
+ * @brief 三维向量
+ */
 typedef struct {
     float x;
     float y;
     float z;
 } vec3f_t;
 
+/**
+ * @brief 项目语义下的 roll / pitch / yaw 三轴量
+ */
 typedef struct {
     float roll;
     float pitch;
     float yaw;
 } axis3f_t;
 
+/**
+ * @brief 四元数
+ */
 typedef struct {
     float w;
     float x;
@@ -22,12 +40,19 @@ typedef struct {
     float z;
 } quatf_t;
 
+/**
+ * @brief 欧拉角姿态
+ */
 typedef struct {
     float roll_deg;
     float pitch_deg;
     float yaw_deg;
 } eulerf_t;
 
+/**
+ * @brief 机体系轴选择器
+ * @details 用于描述 IMU 模块坐标到项目机体系的有符号轴映射。
+ */
 typedef enum {
     BODY_AXIS_POS_X = 0,
     BODY_AXIS_NEG_X = 1,
@@ -37,6 +62,9 @@ typedef enum {
     BODY_AXIS_NEG_Z = 5,
 } body_axis_selector_t;
 
+/**
+ * @brief IMU 模式枚举
+ */
 typedef enum {
     IMU_MODE_RAW = 0,
     IMU_MODE_DIRECT = 1,
@@ -99,6 +127,9 @@ typedef struct {
     bool has_gyro_acc;
 } imu_sample_t;
 
+/**
+ * @brief 控制循环统计信息
+ */
 typedef struct {
     uint32_t loop_dt_us;
     uint32_t max_loop_dt_us;

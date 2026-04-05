@@ -1,3 +1,12 @@
+# ============================================================
+# @file client.py
+# @brief ESP-DRONE ???????
+# @details ????????????????????? DeviceSession ???????
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from __future__ import annotations
 
 """Compatibility shim for legacy imports.

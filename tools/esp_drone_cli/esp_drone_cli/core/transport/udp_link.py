@@ -1,3 +1,12 @@
+# ============================================================
+# @file udp_link.py
+# @brief ESP-DRONE UDP ????
+# @details ??? CLI ??? UDP ?????
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from __future__ import annotations
 
 import socket

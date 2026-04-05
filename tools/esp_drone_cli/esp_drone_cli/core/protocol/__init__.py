@@ -1,3 +1,12 @@
+# ============================================================
+# @file __init__.py
+# @brief ESP-DRONE ??????????
+# @details ???????????? GUI ? CLI ??????????
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from .framing import (
     HEADER_STRUCT,
     CRC_STRUCT,

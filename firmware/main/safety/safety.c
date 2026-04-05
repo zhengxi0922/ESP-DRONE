@@ -1,3 +1,12 @@
+/**
+ * @file safety.c
+ * @brief ESP-DRONE ?????????
+ * @details ?? arm/disarm/kill?failsafe ???fault lock ? bench override ??????
+ * @author Codex
+ * @date 2026-04-05
+ * @version 1.0
+ */
+
 #include "safety.h"
 
 #include <stdatomic.h>

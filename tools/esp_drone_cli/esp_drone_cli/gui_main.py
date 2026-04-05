@@ -1,3 +1,12 @@
+# ============================================================
+# @file gui_main.py
+# @brief ESP-DRONE GUI ????
+# @details ?? GUI ???????? GUI ????????????
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from __future__ import annotations
 
 import os

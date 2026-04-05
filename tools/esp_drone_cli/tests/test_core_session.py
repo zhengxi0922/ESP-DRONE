@@ -1,3 +1,12 @@
+# ============================================================
+# @file test_core_session.py
+# @brief ESP-DRONE Core Session ????
+# @details ?? DeviceSession?CLI?GUI smoke ?????? shim ???
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from __future__ import annotations
 
 import builtins

@@ -1,3 +1,12 @@
+# ============================================================
+# @file base.py
+# @brief ESP-DRONE ???????
+# @details ?? Python ? transport ?????? serial ? udp ?????
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from __future__ import annotations
 
 from typing import Protocol

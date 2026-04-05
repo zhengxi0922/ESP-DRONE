@@ -1,3 +1,12 @@
+# ============================================================
+# @file test_control_contracts.py
+# @brief ESP-DRONE ??????????
+# @details ??????mixer ????? rate/control ????????
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from __future__ import annotations
 
 

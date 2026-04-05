@@ -1,3 +1,12 @@
+# ============================================================
+# @file csv_log.py
+# @brief ESP-DRONE CSV ????
+# @details ????? TelemetrySample ???? CSV???? CLI ? GUI ????????
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from __future__ import annotations
 
 import csv

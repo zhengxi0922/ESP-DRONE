@@ -1,3 +1,12 @@
+# ============================================================
+# @file messages.py
+# @brief ESP-DRONE ????????
+# @details ????????? ID ???????
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from __future__ import annotations
 
 from dataclasses import dataclass

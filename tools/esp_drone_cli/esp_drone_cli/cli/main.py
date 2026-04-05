@@ -1,3 +1,12 @@
+# ============================================================
+# @file main.py
+# @brief ESP-DRONE CLI ????
+# @details ????????????? DeviceSession ?????????????????
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from __future__ import annotations
 
 import argparse

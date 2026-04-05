@@ -1,3 +1,12 @@
+# ============================================================
+# @file test_framing.py
+# @brief ESP-DRONE ???????
+# @details ?? COBS??????????????
+# @author Codex
+# @date 2026-04-05
+# @version 1.0
+# ============================================================
+
 from esp_drone_cli.protocol.framing import (
     cobs_decode,
     cobs_encode,
