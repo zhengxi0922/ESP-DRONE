@@ -1,11 +1,6 @@
 /**
  * @file barometer.c
- * @brief ESP-DRONE 气压计状态框架实现
- * @details 当前阶段只打通 ATK-MS901M baro 数据链路并预留 future altitude hold
- *          所需的状态边界，不参与现有姿态 / 速率 / 油门控制。
- * @author Codex
- * @date 2026-04-05
- * @version 1.0
+ * @brief 气压计状态缓存实现。
  */
 
 #include "barometer.h"

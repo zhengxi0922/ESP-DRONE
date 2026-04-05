@@ -1,10 +1,6 @@
 /**
  * @file imu.c
- * @brief ESP-DRONE IMU ??????
- * @details ?? ATK-MS901M ???????????????????????????????
- * @author Codex
- * @date 2026-04-05
- * @version 1.0
+ * @brief ATK-MS901M 接收、映射与样本发布实现。
  */
 
 #include "imu.h"
@@ -85,8 +81,6 @@ typedef struct {
     float m[3][3];
 } mat3f_t;
 
-/* IMU 模块坐标到项目机体系的唯一映射入口。
- * 所有 gyro/acc/quat/attitude 都必须先经过这里，避免不同模块各自做方向翻转。 */
 static int16_t imu_read_s16_le(const uint8_t *data)
 {
     return (int16_t)((uint16_t)data[0] | ((uint16_t)data[1] << 8));
@@ -343,13 +337,9 @@ static bool imu_map_module_quat_to_body(quatf_t module_quat, quatf_t *out_body_q
     return true;
 }
 
-/*
- * Single project truth for "ATK-MS901M module frame -> project body frame".
- *
- * All direction-sensitive IMU mapping flows through this function so that
- * gyro/acc, quaternion and project attitude names stay aligned with
- * docs/axis_truth_table.md.
- */
+/* “ATK-MS901M 模块坐标 -> 项目机体系”的唯一方向真源。
+ * 所有方向敏感的 gyro/acc、四元数和姿态映射都必须经过这里，
+ * 以保持与 docs/axis_truth_table.md 一致。 */
 static void imu_map_partial_to_project_sample(const partial_sample_t *partial, imu_sample_t *out_sample)
 {
     if (partial == NULL || out_sample == NULL) {
@@ -373,11 +363,8 @@ static void imu_map_partial_to_project_sample(const partial_sample_t *partial, i
         return;
     }
 
-    /*
-     * Direct attitude-frame sign conventions from the module are not trusted as
-     * a generic source of project roll/yaw names. This identity-map fallback is
-     * only a temporary bring-up aid when quaternion output is unavailable.
-     */
+    /* 模块姿态角自身的符号约定不能直接当成项目 roll/yaw 真值。
+     * 只有在轴映射为恒等且四元数缺失时，才临时退回这条 bring-up 路径。 */
     out_sample->roll_pitch_yaw_deg.roll_deg = imu_norm_angle(-partial->roll_deg);
     out_sample->roll_pitch_yaw_deg.pitch_deg = imu_norm_angle(partial->pitch_deg);
     out_sample->roll_pitch_yaw_deg.yaw_deg = imu_norm_angle(-partial->yaw_deg);
@@ -399,18 +386,9 @@ static uint8_t imu_return_set_from_params(void)
          * 以便打通“模块气压计 -> firmware -> telemetry -> host”链路。 */
         return (params->imu_mag_enable ? 0x0Cu : 0x04u) | baro_bit;
     }
-    /*
-     * DIRECT mode still needs gyro/acc frames so that:
-     * - telemetry exposes live gyro_x/y/z and acc_x/y/z
-     * - single-axis rate test has fresh rate feedback
-     * - bench-side gyro calibration stays available without switching modes
-     *
-     * Frame bitmap:
-     *   0x01 attitude
-     *   0x02 quaternion
-     *   0x04 gyro+acc
-     *   0x08 mag
-     */
+    /* DIRECT 模式仍需请求 gyro/acc 帧，这样遥测可输出实时原始量，
+     * 单轴速率测试有新鲜反馈，台架陀螺校准也无需切回 RAW。
+     * 帧位图：0x01 attitude，0x02 quaternion，0x04 gyro+acc，0x08 mag。 */
     return (params->imu_mag_enable ? 0x0Fu : 0x07u) | baro_bit;
 }
 

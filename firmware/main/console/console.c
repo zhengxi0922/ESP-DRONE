@@ -1,10 +1,6 @@
 /**
  * @file console.c
- * @brief ESP-DRONE ??????????
- * @details ?? USB CDC ??????????????????????????????
- * @author Codex
- * @date 2026-04-05
- * @version 1.0
+ * @brief USB CDC 控制台协议实现。
  */
 
 #include "console.h"
@@ -261,10 +257,7 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         motor_stop_all();
         console_send_cmd_resp(req.cmd_id, 0);
         fflush(stdout);
-        /*
-         * Give the host one short USB frame window to receive the ACK before
-         * tearing down the CDC session via software restart.
-         */
+        /* 软件重启前保留一个短 USB 帧窗口，让主机先收到 ACK。 */
         vTaskDelay(pdMS_TO_TICKS(100));
         esp_restart();
         break;

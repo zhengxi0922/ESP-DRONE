@@ -1,10 +1,6 @@
 /**
  * @file esp_drone_types.h
- * @brief ESP-DRONE ?????????
- * @details ?????????????????????????/?????
- * @author Codex
- * @date 2026-04-05
- * @version 1.0
+ * @brief 全局共享类型定义。
  */
 
 #pragma once
@@ -13,165 +9,186 @@
 #include <stdint.h>
 
 /**
- * @brief 三维向量
+ * @brief 三维向量。
  */
 typedef struct {
-    float x;
-    float y;
-    float z;
+    float x; /**< X 分量。 */
+    float y; /**< Y 分量。 */
+    float z; /**< Z 分量。 */
 } vec3f_t;
 
 /**
- * @brief 项目语义下的 roll / pitch / yaw 三轴量
+ * @brief 项目语义下的 roll/pitch/yaw 三轴量。
  */
 typedef struct {
-    float roll;
-    float pitch;
-    float yaw;
+    float roll;  /**< Roll 分量。 */
+    float pitch; /**< Pitch 分量。 */
+    float yaw;   /**< Yaw 分量。 */
 } axis3f_t;
 
 /**
- * @brief 四元数
+ * @brief 四元数。
+ *
+ * @note 字段顺序固定为 `w,x,y,z`。
  */
 typedef struct {
-    float w;
-    float x;
-    float y;
-    float z;
+    float w; /**< 实部。 */
+    float x; /**< X 虚部。 */
+    float y; /**< Y 虚部。 */
+    float z; /**< Z 虚部。 */
 } quatf_t;
 
 /**
- * @brief 欧拉角姿态
+ * @brief 欧拉角姿态。
+ *
+ * @note 所有字段单位均为 deg。
  */
 typedef struct {
-    float roll_deg;
-    float pitch_deg;
-    float yaw_deg;
+    float roll_deg;  /**< Roll 角。 */
+    float pitch_deg; /**< Pitch 角。 */
+    float yaw_deg;   /**< Yaw 角。 */
 } eulerf_t;
 
 /**
- * @brief 机体系轴选择器
- * @details 用于描述 IMU 模块坐标到项目机体系的有符号轴映射。
+ * @brief IMU 模块坐标到项目机体系的轴选择器。
  */
 typedef enum {
-    BODY_AXIS_POS_X = 0,
-    BODY_AXIS_NEG_X = 1,
-    BODY_AXIS_POS_Y = 2,
-    BODY_AXIS_NEG_Y = 3,
-    BODY_AXIS_POS_Z = 4,
-    BODY_AXIS_NEG_Z = 5,
+    BODY_AXIS_POS_X = 0, /**< 取模块 `+X`。 */
+    BODY_AXIS_NEG_X = 1, /**< 取模块 `-X`。 */
+    BODY_AXIS_POS_Y = 2, /**< 取模块 `+Y`。 */
+    BODY_AXIS_NEG_Y = 3, /**< 取模块 `-Y`。 */
+    BODY_AXIS_POS_Z = 4, /**< 取模块 `+Z`。 */
+    BODY_AXIS_NEG_Z = 5, /**< 取模块 `-Z`。 */
 } body_axis_selector_t;
 
 /**
- * @brief IMU 模式枚举
+ * @brief IMU 工作模式。
  */
 typedef enum {
-    IMU_MODE_RAW = 0,
-    IMU_MODE_DIRECT = 1,
+    IMU_MODE_RAW = 0,    /**< 以原始陀螺/加速度数据为主。 */
+    IMU_MODE_DIRECT = 1, /**< 直接消费模块姿态输出。 */
 } imu_mode_t;
 
+/**
+ * @brief IMU 健康状态。
+ */
 typedef enum {
-    IMU_HEALTH_INIT = 0,
-    IMU_HEALTH_OK = 1,
-    IMU_HEALTH_DEGRADED = 2,
-    IMU_HEALTH_TIMEOUT = 3,
-    IMU_HEALTH_PARSE_ERROR = 4,
+    IMU_HEALTH_INIT = 0,        /**< 尚未收到有效数据。 */
+    IMU_HEALTH_OK = 1,          /**< 数据新鲜且满足当前模式要求。 */
+    IMU_HEALTH_DEGRADED = 2,    /**< 数据部分可用，但缺少当前模式要求的关键量。 */
+    IMU_HEALTH_TIMEOUT = 3,     /**< 超过超时阈值未收到新数据。 */
+    IMU_HEALTH_PARSE_ERROR = 4, /**< 连续解析错误达到阈值。 */
 } imu_health_t;
 
+/**
+ * @brief Arm 状态。
+ */
 typedef enum {
-    ARM_STATE_DISARMED = 0,
-    ARM_STATE_ARMED = 1,
-    ARM_STATE_FAILSAFE = 2,
-    ARM_STATE_FAULT_LOCK = 3,
+    ARM_STATE_DISARMED = 0,   /**< 上锁。 */
+    ARM_STATE_ARMED = 1,      /**< 已解锁。 */
+    ARM_STATE_FAILSAFE = 2,   /**< 进入 failsafe。 */
+    ARM_STATE_FAULT_LOCK = 3, /**< 急停后的故障锁。 */
 } arm_state_t;
 
+/**
+ * @brief Failsafe 原因。
+ */
 typedef enum {
-    FAILSAFE_REASON_NONE = 0,
-    FAILSAFE_REASON_KILL = 1,
-    FAILSAFE_REASON_RC_TIMEOUT = 2,
-    FAILSAFE_REASON_IMU_TIMEOUT = 3,
-    FAILSAFE_REASON_IMU_PARSE = 4,
-    FAILSAFE_REASON_BATTERY_CRITICAL = 5,
-    FAILSAFE_REASON_LOOP_OVERRUN = 6,
+    FAILSAFE_REASON_NONE = 0,             /**< 无 failsafe。 */
+    FAILSAFE_REASON_KILL = 1,             /**< 人工急停。 */
+    FAILSAFE_REASON_RC_TIMEOUT = 2,       /**< RC 链路丢失。 */
+    FAILSAFE_REASON_IMU_TIMEOUT = 3,      /**< IMU 超时。 */
+    FAILSAFE_REASON_IMU_PARSE = 4,        /**< IMU 解析错误。 */
+    FAILSAFE_REASON_BATTERY_CRITICAL = 5, /**< 电池电压过低。 */
+    FAILSAFE_REASON_LOOP_OVERRUN = 6,     /**< 控制循环连续超时。 */
 } failsafe_reason_t;
 
+/**
+ * @brief LED 逻辑状态。
+ */
 typedef enum {
-    LED_STATE_INIT_WAIT_IMU = 0,
-    LED_STATE_DISARMED_READY = 1,
-    LED_STATE_ARMED_HEALTHY = 2,
-    LED_STATE_LOW_BAT = 3,
-    LED_STATE_FAILSAFE = 4,
-    LED_STATE_IMU_ERROR = 5,
-    LED_STATE_RC_LOSS = 6,
-    LED_STATE_FAULT_LOCK = 7,
-    LED_STATE_CALIBRATING = 8,
-    LED_STATE_PARAM_SAVE = 9,
+    LED_STATE_INIT_WAIT_IMU = 0,  /**< 等待 IMU 就绪。 */
+    LED_STATE_DISARMED_READY = 1, /**< 已上锁且可进入测试。 */
+    LED_STATE_ARMED_HEALTHY = 2,  /**< 已解锁且状态正常。 */
+    LED_STATE_LOW_BAT = 3,       /**< 低电量告警。 */
+    LED_STATE_FAILSAFE = 4,      /**< 一般 failsafe。 */
+    LED_STATE_IMU_ERROR = 5,     /**< IMU 异常。 */
+    LED_STATE_RC_LOSS = 6,       /**< RC 链路丢失。 */
+    LED_STATE_FAULT_LOCK = 7,    /**< 急停故障锁。 */
+    LED_STATE_CALIBRATING = 8,   /**< 校准进行中。 */
+    LED_STATE_PARAM_SAVE = 9,    /**< 参数保存进行中。 */
 } led_state_t;
 
+/**
+ * @brief 控制模式。
+ */
 typedef enum {
-    CONTROL_MODE_IDLE = 0,
-    CONTROL_MODE_AXIS_TEST = 1,
-    CONTROL_MODE_RATE_TEST = 2,
-    CONTROL_MODE_HEIGHT_HOLD_RESERVED = 3,
+    CONTROL_MODE_IDLE = 0,                 /**< 空闲模式。 */
+    CONTROL_MODE_AXIS_TEST = 1,            /**< 开环轴向测试。 */
+    CONTROL_MODE_RATE_TEST = 2,            /**< 速率环测试。 */
+    CONTROL_MODE_HEIGHT_HOLD_RESERVED = 3, /**< 预留定高模式。 */
 } control_mode_t;
 
 /**
- * @brief 气压计健康状态
- * @details 当前阶段只用于“数据链路是否可用”的健康判定，不参与油门闭环。
+ * @brief 气压计健康状态。
  */
 typedef enum {
-    BARO_HEALTH_INIT = 0,
-    BARO_HEALTH_OK = 1,
-    BARO_HEALTH_STALE = 2,
-    BARO_HEALTH_INVALID = 3,
+    BARO_HEALTH_INIT = 0,    /**< 尚未收到有效气压计数据。 */
+    BARO_HEALTH_OK = 1,      /**< 数据有效且新鲜。 */
+    BARO_HEALTH_STALE = 2,   /**< 数据格式有效但已过陈旧阈值。 */
+    BARO_HEALTH_INVALID = 3, /**< 数据超出当前有效范围。 */
 } baro_health_t;
 
 /**
- * @brief 气压计状态快照
- * @details 统一承载 pressure / temperature / altitude / vertical speed，
- *          供 telemetry、CLI、GUI 和未来的定高估计扩展共同使用。
+ * @brief 气压计状态快照。
  */
 typedef struct {
-    uint64_t timestamp_us;
-    float pressure_pa;
-    float temperature_c;
-    float altitude_m;
-    float vertical_speed_mps;
-    bool has_baro;
-    bool valid;
-    baro_health_t health;
-    uint32_t update_age_us;
+    uint64_t timestamp_us;      /**< 最近一次更新的时间戳，单位为 us。 */
+    float pressure_pa;          /**< 气压，单位为 Pa。 */
+    float temperature_c;        /**< 温度，单位为摄氏度。 */
+    float altitude_m;           /**< 高度，单位为 m。 */
+    float vertical_speed_mps;   /**< 垂向速度，单位为 m/s。 */
+    bool has_baro;              /**< 是否已经收到过气压计数据。 */
+    bool valid;                 /**< 当前数值是否落在有效范围内。 */
+    baro_health_t health;       /**< 当前健康状态。 */
+    uint32_t update_age_us;     /**< 数据年龄，单位为 us。 */
 } barometer_state_t;
 
 /**
- * @brief 未来定高闭环预留状态
- * @details 当前阶段只保留状态结构和模块边界，不参与任何油门/推力闭环。
+ * @brief 预留的定高闭环状态。
+ *
+ * @note 当前阶段只保留边界与状态承载，不直接参与油门闭环。
  */
 typedef struct {
-    float target_altitude_m;
-    float estimated_altitude_m;
-    float estimated_vz_mps;
-    bool altitude_hold_reserved_enabled;
+    float target_altitude_m;             /**< 目标高度，单位为 m。 */
+    float estimated_altitude_m;          /**< 当前估计高度，单位为 m。 */
+    float estimated_vz_mps;              /**< 当前估计垂向速度，单位为 m/s。 */
+    bool altitude_hold_reserved_enabled; /**< 预留定高模式开关。 */
 } altitude_hold_reserved_state_t;
 
+/**
+ * @brief IMU 样本快照。
+ *
+ * @note 所有向量与姿态字段都已经映射到项目机体系语义。
+ */
 typedef struct {
-    uint64_t timestamp_us;
-    vec3f_t gyro_xyz_dps;
-    vec3f_t acc_xyz_g;
-    quatf_t quat_wxyz;
-    eulerf_t roll_pitch_yaw_deg;
-    imu_health_t health;
-    uint32_t update_age_us;
-    bool has_attitude;
-    bool has_quaternion;
-    bool has_gyro_acc;
+    uint64_t timestamp_us;         /**< 样本时间戳，单位为 us。 */
+    vec3f_t gyro_xyz_dps;          /**< 机体系角速度，单位为 deg/s。 */
+    vec3f_t acc_xyz_g;             /**< 机体系加速度，单位为 g。 */
+    quatf_t quat_wxyz;             /**< 机体系到世界系四元数。 */
+    eulerf_t roll_pitch_yaw_deg;   /**< 项目语义姿态角，单位为 deg。 */
+    imu_health_t health;           /**< 当前样本健康状态。 */
+    uint32_t update_age_us;        /**< 数据年龄，单位为 us。 */
+    bool has_attitude;             /**< 是否包含姿态角。 */
+    bool has_quaternion;           /**< 是否包含四元数。 */
+    bool has_gyro_acc;             /**< 是否包含陀螺与加速度。 */
 } imu_sample_t;
 
 /**
- * @brief 控制循环统计信息
+ * @brief 控制循环统计信息。
  */
 typedef struct {
-    uint32_t loop_dt_us;
-    uint32_t max_loop_dt_us;
-    uint32_t loop_overrun_count;
+    uint32_t loop_dt_us;         /**< 最近一个控制周期时长，单位为 us。 */
+    uint32_t max_loop_dt_us;     /**< 记录期内最大控制周期时长，单位为 us。 */
+    uint32_t loop_overrun_count; /**< 连续超时计数。 */
 } loop_stats_t;
