@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from esp_drone_cli.core import DeviceSession, TelemetrySample
+from esp_drone_cli.core.protocol.messages import CmdId, CommandError, ensure_command_ok
 
 
 def axis_name_to_index(name: str) -> int:
@@ -28,6 +29,38 @@ def axis_name_to_index(name: str) -> int:
     if name not in names:
         raise SystemExit(f"unsupported axis {name}")
     return names[name]
+
+
+def axis_index_to_name(index: int) -> str:
+    names = ("roll", "pitch", "yaw")
+    if index < 0 or index >= len(names):
+        raise SystemExit(f"unsupported axis index {index}")
+    return names[index]
+
+
+def format_rate_status_line(sample: TelemetrySample, axis_name: str) -> str:
+    snapshot = sample.axis_rate_debug_map(axis_name)
+    motors = ", ".join(f"{value:.3f}" for value in snapshot["motor_outputs"])
+    return (
+        f"{axis_name} "
+        f"sp={snapshot['setpoint_dps']:.3f} "
+        f"fb={snapshot['feedback_dps']:.3f} "
+        f"{snapshot['source_field']}={snapshot['source_value']:.3f} "
+        f"p={snapshot['pid_p']:.4f} "
+        f"i={snapshot['pid_i']:.4f} "
+        f"d={snapshot['pid_d']:.4f} "
+        f"out={snapshot['pid_out']:.4f} "
+        f"motors=[{motors}] "
+        f"arm={snapshot['arm_state']} "
+        f"mode={snapshot['control_mode']} "
+        f"imu_age_us={snapshot['imu_age_us']} "
+        f"loop_dt_us={snapshot['loop_dt_us']}"
+    )
+
+
+def format_rate_status_line_all(sample: TelemetrySample) -> str:
+    parts = [format_rate_status_line(sample, axis_name) for axis_name in ("roll", "pitch", "yaw")]
+    return " | ".join(parts)
 
 
 def connect_session_from_args(args) -> DeviceSession:
@@ -97,7 +130,8 @@ def cmd_arm(session: DeviceSession, _args) -> int:
         设备返回的命令状态码。
     """
 
-    return session.arm()
+    ensure_command_ok(CmdId.ARM, session.arm())
+    return 0
 
 
 def cmd_disarm(session: DeviceSession, _args) -> int:
@@ -111,7 +145,8 @@ def cmd_disarm(session: DeviceSession, _args) -> int:
         设备返回的命令状态码。
     """
 
-    return session.disarm()
+    ensure_command_ok(CmdId.DISARM, session.disarm())
+    return 0
 
 
 def cmd_kill(session: DeviceSession, _args) -> int:
@@ -125,7 +160,8 @@ def cmd_kill(session: DeviceSession, _args) -> int:
         设备返回的命令状态码。
     """
 
-    return session.kill()
+    ensure_command_ok(CmdId.KILL, session.kill())
+    return 0
 
 
 def cmd_reboot(session: DeviceSession, _args) -> int:
@@ -139,7 +175,8 @@ def cmd_reboot(session: DeviceSession, _args) -> int:
         设备返回的命令状态码。
     """
 
-    return session.reboot()
+    ensure_command_ok(CmdId.REBOOT, session.reboot())
+    return 0
 
 
 def cmd_get(session: DeviceSession, args) -> int:
@@ -314,6 +351,48 @@ def cmd_log(session: DeviceSession, args) -> int:
         session.unsubscribe(telemetry_token)
 
 
+def cmd_rate_status(session: DeviceSession, args) -> int:
+    """Print rate-loop bench telemetry with per-axis filtering."""
+
+    samples: deque[TelemetrySample] = deque(maxlen=1)
+
+    def on_telemetry(sample: TelemetrySample) -> None:
+        samples.append(sample)
+
+    token = session.subscribe_telemetry(on_telemetry)
+    had_sample = False
+    next_emit = time.monotonic()
+    try:
+        session.start_stream()
+        deadline = time.monotonic() + args.timeout
+        while time.monotonic() < deadline:
+            if not samples:
+                time.sleep(0.02)
+                continue
+            if time.monotonic() < next_emit:
+                time.sleep(0.02)
+                continue
+
+            sample = samples[-1]
+            had_sample = True
+            if args.axis == "all":
+                print(format_rate_status_line_all(sample))
+            else:
+                print(format_rate_status_line(sample, args.axis))
+            next_emit = time.monotonic() + args.interval
+
+        if not had_sample:
+            print("rate-status did not receive telemetry within timeout")
+            return 1
+        return 0
+    finally:
+        try:
+            session.stop_stream()
+        except Exception:
+            pass
+        session.unsubscribe(token)
+
+
 def cmd_dump_csv(session: DeviceSession, args) -> int:
     """在指定时长内采集遥测并导出 CSV。
 
@@ -409,7 +488,8 @@ def cmd_motor_test(session: DeviceSession, args) -> int:
     """
 
     motor_index = int(args.motor[1]) - 1 if args.motor.lower().startswith("m") else int(args.motor)
-    return session.motor_test(motor_index, float(args.duty))
+    ensure_command_ok(CmdId.MOTOR_TEST, session.motor_test(motor_index, float(args.duty)))
+    return 0
 
 
 def cmd_axis_test(session: DeviceSession, args) -> int:
@@ -423,7 +503,8 @@ def cmd_axis_test(session: DeviceSession, args) -> int:
         设备返回的命令状态码。
     """
 
-    return session.axis_test(axis_name_to_index(args.axis), float(args.value))
+    ensure_command_ok(CmdId.AXIS_TEST, session.axis_test(axis_name_to_index(args.axis), float(args.value)))
+    return 0
 
 
 def cmd_rate_test(session: DeviceSession, args) -> int:
@@ -437,7 +518,8 @@ def cmd_rate_test(session: DeviceSession, args) -> int:
         设备返回的命令状态码。
     """
 
-    return session.rate_test(axis_name_to_index(args.axis), float(args.value))
+    ensure_command_ok(CmdId.RATE_TEST, session.rate_test(axis_name_to_index(args.axis), float(args.value)))
+    return 0
 
 
 def cmd_calib(session: DeviceSession, args) -> int:
@@ -451,7 +533,11 @@ def cmd_calib(session: DeviceSession, args) -> int:
         设备返回的命令状态码。
     """
 
-    return session.calib_gyro() if args.kind == "gyro" else session.calib_level()
+    if args.kind == "gyro":
+        ensure_command_ok(CmdId.CALIB_GYRO, session.calib_gyro())
+    else:
+        ensure_command_ok(CmdId.CALIB_LEVEL, session.calib_level())
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -497,6 +583,16 @@ def build_parser() -> argparse.ArgumentParser:
     log_p.add_argument("--timeout", type=float, default=10.0)
     log_p.add_argument("--telemetry", action="store_true")
 
+    rate_status_p = sub.add_parser(
+        "rate-status",
+        aliases=["watch-rate"],
+        help="watch rate-loop telemetry for roll, pitch, yaw, or all axes",
+        description="Print rate-loop bench telemetry with per-axis filtering.",
+    )
+    rate_status_p.add_argument("axis", nargs="?", choices=["roll", "pitch", "yaw", "all"], default="all")
+    rate_status_p.add_argument("--timeout", type=float, default=5.0)
+    rate_status_p.add_argument("--interval", type=float, default=0.2)
+
     baro_p = sub.add_parser("baro", aliases=["watch-baro"])
     baro_p.add_argument("--timeout", type=float, default=5.0)
 
@@ -541,8 +637,9 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
-    session = connect_session_from_args(args)
+    session: DeviceSession | None = None
     try:
+        session = connect_session_from_args(args)
         dispatch = {
             "connect": cmd_connect,
             "arm": cmd_arm,
@@ -558,6 +655,8 @@ def main(argv: list[str] | None = None) -> int:
             "import": cmd_import,
             "stream": cmd_stream,
             "log": cmd_log,
+            "rate-status": cmd_rate_status,
+            "watch-rate": cmd_rate_status,
             "baro": cmd_baro,
             "watch-baro": cmd_baro,
             "dump-csv": cmd_dump_csv,
@@ -567,8 +666,15 @@ def main(argv: list[str] | None = None) -> int:
             "calib": cmd_calib,
         }
         return int(dispatch[args.command](session, args) or 0)
+    except CommandError as exc:
+        print(str(exc), file=sys.stderr)
+        return int(exc.status or 1)
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     finally:
-        session.close()
+        if session is not None:
+            session.close()
 
 
 if __name__ == "__main__":

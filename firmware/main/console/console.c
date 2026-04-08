@@ -7,6 +7,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -28,6 +29,8 @@
 #define CONSOLE_RX_BUF_SIZE 512
 #define CONSOLE_FRAME_BUF_SIZE 384
 #define CONSOLE_EVENT_TEXT_MAX 120
+#define CONSOLE_AXIS_TEST_ABS_MAX 0.25f
+#define CONSOLE_RATE_TEST_ABS_MAX_DPS 200.0f
 
 static SemaphoreHandle_t s_console_tx_mutex;
 static uint8_t s_rx_buf[CONSOLE_RX_BUF_SIZE];
@@ -143,14 +146,29 @@ static bool console_send_frame(uint8_t msg_type, const void *payload, uint16_t p
     return true;
 }
 
-static void console_send_cmd_resp(uint8_t cmd_id, uint8_t status)
+static void console_send_cmd_resp(uint8_t cmd_id, console_cmd_status_t status)
 {
     const console_cmd_resp_t resp = {
         .cmd_id = cmd_id,
-        .status = status,
+        .status = (uint8_t)status,
         .reserved = 0,
     };
     console_send_frame(MSG_CMD_RESP, &resp, sizeof(resp));
+}
+
+static bool console_value_is_finite_in_range(float value, float min_value, float max_value)
+{
+    return isfinite(value) && value >= min_value && value <= max_value;
+}
+
+static bool console_axis_test_value_is_valid(float value)
+{
+    return console_value_is_finite_in_range(value, -CONSOLE_AXIS_TEST_ABS_MAX, CONSOLE_AXIS_TEST_ABS_MAX);
+}
+
+static bool console_rate_test_value_is_valid(float value_dps)
+{
+    return console_value_is_finite_in_range(value_dps, -CONSOLE_RATE_TEST_ABS_MAX_DPS, CONSOLE_RATE_TEST_ABS_MAX_DPS);
 }
 
 static bool console_decode_axis_request(uint8_t axis_id, float value, axis3f_t *out_axis)
@@ -228,7 +246,7 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
     switch (req.cmd_id) {
     case CMD_ARM:
         runtime_state_set_motor_test(-1, 0.0f);
-        console_send_cmd_resp(req.cmd_id, safety_request_arm(true) ? 0 : 1);
+        console_send_cmd_resp(req.cmd_id, safety_request_arm(true) ? CMD_STATUS_OK : CMD_STATUS_REJECTED);
         break;
     case CMD_DISARM:
         safety_request_disarm();
@@ -237,7 +255,7 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         runtime_state_set_axis_test_request((axis3f_t){0});
         runtime_state_set_rate_setpoint_request((axis3f_t){0});
         motor_stop_all();
-        console_send_cmd_resp(req.cmd_id, 0);
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
     case CMD_KILL:
         safety_request_kill();
@@ -246,7 +264,7 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         runtime_state_set_axis_test_request((axis3f_t){0});
         runtime_state_set_rate_setpoint_request((axis3f_t){0});
         motor_stop_all();
-        console_send_cmd_resp(req.cmd_id, 0);
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
     case CMD_REBOOT:
         runtime_state_set_stream_enabled(false);
@@ -255,7 +273,7 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         runtime_state_set_axis_test_request((axis3f_t){0});
         runtime_state_set_rate_setpoint_request((axis3f_t){0});
         motor_stop_all();
-        console_send_cmd_resp(req.cmd_id, 0);
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         fflush(stdout);
         /* 软件重启前保留一个短 USB 帧窗口，让主机先收到 ACK。 */
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -263,11 +281,15 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         break;
     case CMD_MOTOR_TEST:
         if (runtime_state_get_arm_state() != ARM_STATE_DISARMED) {
-            console_send_cmd_resp(req.cmd_id, 1);
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_DISARM_REQUIRED);
             break;
         }
         if (req.arg_u8 >= MOTOR_COUNT) {
-            console_send_cmd_resp(req.cmd_id, 1);
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
+            break;
+        }
+        if (!console_value_is_finite_in_range(req.arg_f32, 0.0f, 1.0f)) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
             break;
         }
         if (req.arg_f32 <= 0.0f) {
@@ -279,42 +301,65 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
             runtime_state_set_rate_setpoint_request((axis3f_t){0});
             runtime_state_set_motor_test(req.arg_u8, req.arg_f32);
         }
-        console_send_cmd_resp(req.cmd_id, 0);
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
     case CMD_AXIS_TEST: {
         axis3f_t request = {0};
+        if (runtime_state_get_arm_state() != ARM_STATE_DISARMED) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_DISARM_REQUIRED);
+            break;
+        }
+        if (!console_axis_test_value_is_valid(req.arg_f32)) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
+            break;
+        }
         if (!console_decode_axis_request(req.arg_u8, req.arg_f32, &request)) {
-            console_send_cmd_resp(req.cmd_id, 1);
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
             break;
         }
         runtime_state_set_motor_test(-1, 0.0f);
         runtime_state_set_rate_setpoint_request((axis3f_t){0});
         runtime_state_set_axis_test_request(request);
         runtime_state_set_control_mode((req.arg_f32 == 0.0f) ? CONTROL_MODE_IDLE : CONTROL_MODE_AXIS_TEST);
-        console_send_cmd_resp(req.cmd_id, 0);
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
     }
     case CMD_RATE_TEST: {
         axis3f_t request = {0};
+        imu_sample_t sample = {0};
+
+        if (!console_rate_test_value_is_valid(req.arg_f32)) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
+            break;
+        }
         if (!console_decode_axis_request(req.arg_u8, req.arg_f32, &request)) {
-            console_send_cmd_resp(req.cmd_id, 1);
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
+            break;
+        }
+        if (req.arg_f32 != 0.0f && runtime_state_get_arm_state() != ARM_STATE_ARMED) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_ARM_REQUIRED);
+            break;
+        }
+        if (req.arg_f32 != 0.0f &&
+            (!imu_get_latest(&sample, NULL) || sample.health != IMU_HEALTH_OK || !sample.has_gyro_acc)) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_IMU_NOT_READY);
             break;
         }
         runtime_state_set_motor_test(-1, 0.0f);
         runtime_state_set_axis_test_request((axis3f_t){0});
         runtime_state_set_rate_setpoint_request(request);
         runtime_state_set_control_mode((req.arg_f32 == 0.0f) ? CONTROL_MODE_IDLE : CONTROL_MODE_RATE_TEST);
-        console_send_cmd_resp(req.cmd_id, 0);
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
     }
     case CMD_CALIB_GYRO:
-        console_send_cmd_resp(req.cmd_id, (imu_calibrate_gyro() == ESP_OK) ? 0 : 1);
+        console_send_cmd_resp(req.cmd_id, (imu_calibrate_gyro() == ESP_OK) ? CMD_STATUS_OK : CMD_STATUS_IMU_NOT_READY);
         break;
     case CMD_CALIB_LEVEL:
-        console_send_cmd_resp(req.cmd_id, (imu_calibrate_level() == ESP_OK) ? 0 : 1);
+        console_send_cmd_resp(req.cmd_id, (imu_calibrate_level() == ESP_OK) ? CMD_STATUS_OK : CMD_STATUS_IMU_NOT_READY);
         break;
     default:
-        console_send_cmd_resp(req.cmd_id, 2);
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_UNSUPPORTED);
         break;
     }
 }

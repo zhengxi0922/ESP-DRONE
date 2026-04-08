@@ -1,63 +1,150 @@
-# 速率环 Bring-up 结果
+# 速率环 Bring-Up 结果
 
-**语言 / Language：** [English](./rate_bringup_results.md) | **简体中文**
+**语言 / Language:** [English](./rate_bringup_results.md) | **简体中文**
 
 ## 范围
 
-本文只记录单轴 `rate-loop` bring-up 阶段。
+当前阶段仍然只做台架速率闭环：
 
-- 不涉及自由飞
-- 不涉及 angle 模式
-- 不涉及外环调参
-- 台架测试时必须拆桨或将机体完全固定
+- 不做自由飞行
+- 不做 angle 外环
+- 不做 autotune
+- 测试时必须拆桨或将机体完全约束
 
-## 当前状态
+仓库约束继续保持不变：
 
-- 单轴 `rate-test` 的固件支持已经实现
-- telemetry 已经暴露 `gyro_x/y/z`、`roll/pitch/yaw`、`rate_setpoint_*`、`rate_pid_p/i/d_*`、`pid_out_*`、`motor1..motor4`、`imu_age_us`、`loop_dt_us`、`arm_state`、`control_mode` 和 `failsafe_reason`
-- 主机构建和主机侧方向测试通过
-- 在 `2026-04-01`，本工作站执行 `python -m serial.tools.list_ports -v` 时返回 `no ports found`，因此那次会话没有采集到真实台架测量结果
+- `UART0` 只给 `ATK-MS901M`
+- `USB CDC` 只给 CLI、GUI 和调试遥测
+- CLI 与 GUI 继续共用 `esp_drone_cli.core.device_session.DeviceSession`
 
-## 本阶段使用的姿态来源
+## 固定符号约定
 
-- 最小 rate loop 主要使用映射后的 gyro 路径作为反馈输入
-- 在 `direct` 模式下，姿态和四元数字段来自 `ATK-MS901M` 输出并经过项目映射
-- 在 `raw` 模式下，未来姿态来源见 [raw_mode_attitude_plan.zh-CN.md](./raw_mode_attitude_plan.zh-CN.md)，但该估计器目前尚未用于 angle 模式
-- 因为本阶段只做 rate，主方向闸门仍然是：物理动作 -> 映射后 gyro 符号 -> rate PID 符号 -> mixer 方向
+机体系：
 
-## 通用流程
+- `+Y` = 机头 / 前方
+- `+X` = 机体右侧
+- `+Z` = 向上
 
-1. 通过 USB CDC 连接并开启 telemetry 流。
-2. 在解锁前先完成手持动作日志验证。
-3. 只允许在拆桨或机体受限固定的台架上解锁。
-4. 每次只测试一个 `rate-test` 轴。
-5. 若符号或电机方向有误，立刻执行 `kill`。
+项目姿态正方向：
 
-## 分轴 Bring-up 表
+- `+pitch` = 抬头
+- `+roll` = 右侧下沉
+- `+yaw` = 机头右转
 
-| 测试轴 | 物理动作 | CLI 命令 | 主要观察的 gyro 字段 | 主要 setpoint 字段 | 主要观察的 PID 字段 | 期望电机方向 | 实际观察结果 | 状态 |
-|---|---|---|---|---|---|---|---|---|
-| X 轴物理转动，对应项目 `pitch-rate` | 围绕机体系 `+X` 做抬头或低头转动 | `rate-test pitch 30` 和 `rate-test pitch -30` | 抬头角速度时 `gyro_x` 为正，低头角速度时为负 | `rate_setpoint_pitch` | `rate_pid_p_pitch`、`rate_pid_i_pitch`、`rate_pid_d_pitch`、`pid_out_pitch` | `+pitch` 时 `M3/M4` 高于 `M1/M2`；`-pitch` 反之 | 本次会话因无 USB CDC 端口而未执行 | Blocked |
-| Y 轴物理转动，对应项目 `roll-rate` | 按项目命名约定做右侧下沉或左侧下沉 | `rate-test roll 30` 和 `rate-test roll -30` | `+roll` 时 `gyro_y` 为负，`-roll` 时为正 | `rate_setpoint_roll` | `rate_pid_p_roll`、`rate_pid_i_roll`、`rate_pid_d_roll`、`pid_out_roll` | `+roll` 时 `M1/M4` 高于 `M2/M3`；`-roll` 反之 | 本次会话因无 USB CDC 端口而未执行 | Blocked |
-| Z 轴物理转动，对应项目 `yaw-rate` | 做机头右转或左转的 yaw 动作 | `rate-test yaw 30` 和 `rate-test yaw -30` | `+yaw` 时 `gyro_z` 为负，`-yaw` 时为正 | `rate_setpoint_yaw` | `rate_pid_p_yaw`、`rate_pid_i_yaw`、`rate_pid_d_yaw`、`pid_out_yaw` | `+yaw` 时 `M1/M3` 高于 `M2/M4`；`-yaw` 反之 | 本次会话因无 USB CDC 端口而未执行 | Blocked |
+固件、CLI、GUI、文档统一使用的 rate 映射：
 
-## 已通过软件验证的基线
+- `pitch_rate = gyro_x`
+- `roll_rate = -gyro_y`
+- `yaw_rate = -gyro_z`
 
-- 项目中的 gyro 命名固定为：
-  - `pitch_rate = gyro_x`
-  - `roll_rate = -gyro_y`
-  - `yaw_rate = -gyro_z`
-- mixer 契约测试已确认：
-  - `+roll` -> `M1/M4` 增大
-  - `+pitch` -> `M3/M4` 增大
-  - `+yaw` -> `M1/M3` 增大
-- `flight_control_task` 只会在收到 fresh IMU sample 时更新 estimator 和 rate PID
+正向 mixer 预期：
 
-## 进入 Angle 模式的闸门
+- `+roll` -> `M1/M4` 增，`M2/M3` 减
+- `+pitch` -> `M3/M4` 增，`M1/M2` 减
+- `+yaw` -> `M1/M3` 增，`M2/M4` 减
 
-在以下条件全部通过硬件实测前，angle 模式设计都必须继续阻塞：
+详见 [axis_truth_table.zh-CN.md](./axis_truth_table.zh-CN.md) 与 [motor_map.zh-CN.md](./motor_map.zh-CN.md)。
 
-- 单轴 rate-loop 方向正确
-- mixer 输出方向正确
-- 参数校验能拒绝非法映射和不安全限制
-- 当前测试配置下，`raw` 或 `direct` 模式的实际姿态来源已经被明确理解
+## 当前软件状态
+
+仓库现在已经具备可用的三轴 rate 闭环台架路径：
+
+- 固件中的 `rate roll`、`rate pitch`、`rate yaw` 都已经真实接入 setpoint、映射后的 gyro 反馈、各轴 PID、mixer、电机输出和安全门控
+- rate 控制只在收到 fresh IMU sample 时更新，保持 stage-2.5 设计约束
+- 以下 rate PID 参数全部真实生效：
+  - `rate_kp_roll`、`rate_ki_roll`、`rate_kd_roll`
+  - `rate_kp_pitch`、`rate_ki_pitch`、`rate_kd_pitch`
+  - `rate_kp_yaw`、`rate_ki_yaw`、`rate_kd_yaw`
+  - `rate_integral_limit`、`rate_output_limit`
+- 参数校验已经补到固件侧，可拒绝明显不安全的 rate PID 数值和输出限制组合
+- USB 遥测已补齐 rate 调试所需字段，CLI 和 GUI 都可直接读取：
+  - `gyro_x/y/z`
+  - `roll/pitch/yaw`
+  - `rate_setpoint_roll/pitch/yaw`
+  - `rate_pid_p/i/d_roll/pitch/yaw`
+  - `pid_out_roll/pitch/yaw`
+  - `motor1..motor4`
+  - `imu_age_us`、`loop_dt_us`、`arm_state`、`control_mode`、`failsafe_reason`
+
+## 控制链摘要
+
+每次收到 fresh IMU sample 时，当前 rate 轴会走完整链路：
+
+1. `rate-test <axis> <value>` 更新该轴的 rate setpoint。
+2. 固件把 IMU gyro 映射到项目轴定义：
+   - pitch 用 `gyro_x`
+   - roll 用 `-gyro_y`
+   - yaw 用 `-gyro_z`
+3. 对应轴 PID 计算：
+   - `rate_pid_p_*`
+   - `rate_pid_i_*`
+   - `rate_pid_d_*`
+   - `pid_out_*`
+4. mixer 把带符号的 PID 输出分配到 `motor1..motor4`。
+5. arm 状态、IMU 健康度和命令参数校验共同决定命令是否允许执行。
+
+## 分轴台架表
+
+| 轴 | 物理动作 | CLI 命令 | 主要 gyro 字段 | 主要 setpoint 字段 | 主要 PID 字段 | 正向预期电机分配 |
+|---|---|---|---|---|---|---|
+| `roll` | 右侧下沉 / 左侧下沉 | `rate-test roll 20` | `gyro_y`，项目反馈为 `-gyro_y` | `rate_setpoint_roll` | `rate_pid_p_roll`、`rate_pid_i_roll`、`rate_pid_d_roll`、`pid_out_roll` | `+roll`：`M1/M4` 上升，`M2/M3` 下降 |
+| `pitch` | 抬头 / 低头 | `rate-test pitch 20` | `gyro_x` | `rate_setpoint_pitch` | `rate_pid_p_pitch`、`rate_pid_i_pitch`、`rate_pid_d_pitch`、`pid_out_pitch` | `+pitch`：`M3/M4` 上升，`M1/M2` 下降 |
+| `yaw` | 机头右转 / 左转 | `rate-test yaw 20` | `gyro_z`，项目反馈为 `-gyro_z` | `rate_setpoint_yaw` | `rate_pid_p_yaw`、`rate_pid_i_yaw`、`rate_pid_d_yaw`、`pid_out_yaw` | `+yaw`：`M1/M3` 上升，`M2/M4` 下降 |
+
+## CLI 台架流程
+
+1. 通过 USB CDC 连接设备。
+2. 打开 telemetry。
+3. 先在未解锁状态下做手持动作确认遥测方向。
+4. 只有在安全台架条件下才允许解锁。
+5. 每次只测试一根轴。
+6. 测试时配合 `rate-status` 或 `watch-rate` 观察闭环状态。
+7. 如果符号或电机方向不对，立即执行 `rate-test <axis> 0` 或 `kill`。
+
+示例：
+
+```powershell
+python -m esp_drone_cli --serial COM7 connect
+python -m esp_drone_cli --serial COM7 stream on
+python -m esp_drone_cli --serial COM7 log --timeout 3 --telemetry
+python -m esp_drone_cli --serial COM7 arm
+python -m esp_drone_cli --serial COM7 rate-status roll --timeout 5
+python -m esp_drone_cli --serial COM7 rate-test roll 20
+python -m esp_drone_cli --serial COM7 rate-test roll 0
+python -m esp_drone_cli --serial COM7 disarm
+```
+
+## GUI 台架流程
+
+1. 在左侧 `Connection` 区使用 `Serial` 连接。
+2. 点击 `Stream On`。
+3. 在中间图表组切到 `Rate Roll`、`Rate Pitch` 或 `Rate Yaw`。
+4. 在左侧 `Debug Actions` 的 `rate test` 区选择轴、输入 dps、点击 `Start`。
+5. 观察对应的 gyro、`rate_setpoint_*`、`pid_out_*` 和 `motor1..motor4`。
+6. 在右侧参数区搜索 `rate_` 并调整 PID。
+7. 停止该轴测试后，再决定是否 `Save` 参数。
+
+## 验收状态
+
+仓库内的软件路径已经完成：
+
+- `rate-test roll/pitch/yaw` 会走真实控制链
+- CLI 与 GUI 共用同一条 `DeviceSession`
+- GUI 已提供分轴 rate test 控件和分轴图表组
+- 参数 `set/save/export/import` 流程保持兼容
+- 设备端命令拒绝会明确反馈，不再静默忽略
+
+当前软件验证结果：
+
+- `pytest tools/esp_drone_cli/tests -q` 通过，共 `26` 项
+- `.\tools\idf.ps1 build` 已完成固件构建
+
+## 仍需线下硬件验证
+
+这些内容仍然必须在线下台架完成：
+
+- 验证实际机体上的 `+roll`、`+pitch`、`+yaw` 电机方向
+- 验证实际手持运动时的 gyro 映射符号
+- 验证目标板上的 USB CDC 实机通信
+- 在真实硬件上从保守默认值开始调 `Kp/Ki/Kd`
+

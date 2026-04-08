@@ -34,6 +34,12 @@ TELEMETRY_CSV_FIELDS = [
     "baro_update_age_us", "baro_valid", "baro_health",
 ]
 
+RATE_AXIS_SOURCES = {
+    "roll": ("gyro_y", -1.0),
+    "pitch": ("gyro_x", 1.0),
+    "yaw": ("gyro_z", -1.0),
+}
+
 
 @dataclass(slots=True)
 class ParamValue:
@@ -142,6 +148,48 @@ class TelemetrySample:
     baro_update_age_us: int
     baro_valid: int
     baro_health: int
+
+    def axis_rate_feedback_dps(self, axis_name: str) -> float:
+        """Return the project-defined rate feedback for one axis."""
+
+        try:
+            source_field, sign = RATE_AXIS_SOURCES[axis_name]
+        except KeyError as exc:
+            raise ValueError(f"unsupported axis {axis_name}") from exc
+        return float(getattr(self, source_field)) * sign
+
+    def axis_rate_source(self, axis_name: str) -> tuple[str, float]:
+        """Return the raw gyro field name and value used by one rate axis."""
+
+        try:
+            source_field, _sign = RATE_AXIS_SOURCES[axis_name]
+        except KeyError as exc:
+            raise ValueError(f"unsupported axis {axis_name}") from exc
+        return source_field, float(getattr(self, source_field))
+
+    def axis_rate_debug_map(self, axis_name: str) -> dict[str, object]:
+        """Return the shared rate-debug view used by CLI and GUI."""
+
+        if axis_name not in RATE_AXIS_SOURCES:
+            raise ValueError(f"unsupported axis {axis_name}")
+
+        source_field, source_value = self.axis_rate_source(axis_name)
+        return {
+            "axis": axis_name,
+            "source_field": source_field,
+            "source_value": source_value,
+            "feedback_dps": self.axis_rate_feedback_dps(axis_name),
+            "setpoint_dps": float(getattr(self, f"rate_setpoint_{axis_name}")),
+            "pid_p": float(getattr(self, f"rate_pid_p_{axis_name}")),
+            "pid_i": float(getattr(self, f"rate_pid_i_{axis_name}")),
+            "pid_d": float(getattr(self, f"rate_pid_d_{axis_name}")),
+            "pid_out": float(getattr(self, f"pid_out_{axis_name}")),
+            "motor_outputs": (self.motor1, self.motor2, self.motor3, self.motor4),
+            "arm_state": self.arm_state,
+            "control_mode": self.control_mode,
+            "imu_age_us": self.imu_age_us,
+            "loop_dt_us": self.loop_dt_us,
+        }
 
     @classmethod
     def from_payload(cls, payload: bytes) -> "TelemetrySample":
@@ -267,6 +315,26 @@ def decode_event_text(payload: bytes) -> str:
         return ""
     text_len = payload[1]
     return payload[2 : 2 + text_len].decode("utf-8", errors="replace")
+
+
+def coerce_param_value(type_id: int, value: object) -> object:
+    """Coerce a user-provided value into the protocol scalar type."""
+
+    if type_id == 0:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+    if type_id == 1:
+        return int(value)
+    if type_id == 2:
+        return int(value)
+    if type_id == 3:
+        return int(value)
+    if type_id == 4:
+        return float(value)
+    raise ValueError(f"unsupported param type {type_id}")
 
 
 def encode_param_value(type_id: int, value_text: str) -> bytes:

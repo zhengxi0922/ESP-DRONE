@@ -5,6 +5,7 @@
 
 #include "params.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -274,6 +275,34 @@ static bool params_validate_motor_duty_limits(const params_store_t *store)
            store->bringup_test_base_duty <= store->motor_max_duty;
 }
 
+static bool params_float_in_range(float value, float min_value, float max_value)
+{
+    return isfinite(value) && value >= min_value && value <= max_value;
+}
+
+static bool params_validate_rate_pid_limits(const params_store_t *store)
+{
+    const float max_kp = 0.050f;
+    const float max_ki = 0.020f;
+    const float max_kd = 0.010f;
+
+    if (!params_float_in_range(store->rate_kp_roll, 0.0f, max_kp) ||
+        !params_float_in_range(store->rate_ki_roll, 0.0f, max_ki) ||
+        !params_float_in_range(store->rate_kd_roll, 0.0f, max_kd) ||
+        !params_float_in_range(store->rate_kp_pitch, 0.0f, max_kp) ||
+        !params_float_in_range(store->rate_ki_pitch, 0.0f, max_ki) ||
+        !params_float_in_range(store->rate_kd_pitch, 0.0f, max_kd) ||
+        !params_float_in_range(store->rate_kp_yaw, 0.0f, max_kp) ||
+        !params_float_in_range(store->rate_ki_yaw, 0.0f, max_ki) ||
+        !params_float_in_range(store->rate_kd_yaw, 0.0f, max_kd) ||
+        !params_float_in_range(store->rate_integral_limit, 0.0f, 300.0f) ||
+        !params_float_in_range(store->rate_output_limit, 0.0f, 0.35f)) {
+        return false;
+    }
+
+    return (store->bringup_test_base_duty + store->rate_output_limit) <= store->motor_max_duty;
+}
+
 static bool params_validate_store(const params_store_t *store)
 {
     if (store == NULL) {
@@ -285,7 +314,8 @@ static bool params_validate_store(const params_store_t *store)
            store->imu_return_rate_code <= 0x09u &&
            params_validate_telemetry_rates(store) &&
            params_validate_battery_thresholds(store) &&
-           params_validate_motor_duty_limits(store);
+           params_validate_motor_duty_limits(store) &&
+           params_validate_rate_pid_limits(store);
 }
 
 static bool params_try_load_from_nvs(params_store_t *store)
