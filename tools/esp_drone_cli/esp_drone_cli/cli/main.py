@@ -9,6 +9,10 @@ import time
 from pathlib import Path
 
 from esp_drone_cli.core import DeviceSession, TelemetrySample
+from esp_drone_cli.core.roll_bench import (
+    apply_axis_bench_params,
+    run_axis_bench_round,
+)
 from esp_drone_cli.core.protocol.messages import CmdId, CommandError, ensure_command_ok
 
 
@@ -540,6 +544,80 @@ def cmd_calib(session: DeviceSession, args) -> int:
     return 0
 
 
+def cmd_roll_bench(session: DeviceSession, args) -> int:
+    """Run one conservative constrained roll bench round."""
+
+    args.axis = "roll"
+    if not getattr(args, "output_dir", None):
+        args.output_dir = "bench_runs/roll"
+    return cmd_axis_bench(session, args)
+
+
+def cmd_axis_bench(session: DeviceSession, args) -> int:
+    """Run one conservative constrained single-axis rate bench round."""
+
+    axis_name = args.axis
+    output_dir = args.output_dir or f"bench_runs/{axis_name}"
+
+    updates = {
+        f"rate_kp_{axis_name}": args.kp,
+        f"rate_ki_{axis_name}": args.ki,
+        f"rate_kd_{axis_name}": args.kd,
+        "rate_integral_limit": args.integral_limit,
+        "rate_output_limit": args.output_limit,
+        "motor_idle_duty": args.motor_idle_duty,
+        "bringup_test_base_duty": args.base_duty,
+    }
+    applied = apply_axis_bench_params(session, {name: value for name, value in updates.items() if value is not None})
+    result = run_axis_bench_round(
+        session,
+        Path(output_dir),
+        axis_name=axis_name,
+        auto_arm=args.auto_arm,
+        small_step_dps=args.small_step,
+        large_step_dps=args.large_step,
+        active_duration_s=args.active_duration,
+        zero_duration_s=args.zero_duration,
+        serial_hint=args.serial,
+        tag=args.tag,
+        orientation_note=args.orientation_note,
+    )
+    if args.save_params and applied:
+        session.save_params()
+
+    print(result.orientation_note)
+    if applied:
+        print("applied params:")
+        for name, value in applied.items():
+            print(f"  {name}={value:.6f}")
+    print(
+        f"summary axis={axis_name} result={result.summary.axis_result} "
+        f"accept={result.summary.accept} safe_to_continue={result.summary.safe_to_continue}"
+    )
+    print(
+        f"checks setpoint_path_ok={result.summary.setpoint_path_ok} "
+        f"sign_ok={result.summary.sign_ok} "
+        f"motor_split_ok={result.summary.motor_split_ok} "
+        f"measurable_response={result.summary.measurable_response} "
+        f"saturation_risk={result.summary.saturation_risk} "
+        f"return_to_zero_quality={result.summary.return_to_zero_quality} "
+        f"noise_or_jitter_risk={result.summary.noise_or_jitter_risk} "
+        f"low_duty_motor_stability={result.summary.low_duty_motor_stability}"
+    )
+    print(f"next_action_hint={result.summary.next_action_hint}")
+    print(f"csv={result.csv_path}")
+    print(f"json={result.json_path}")
+    print(f"markdown={result.markdown_path}")
+    for item in result.metrics:
+        print(
+            f"{item.name} cmd={item.command_dps:.1f} sp={item.setpoint_mean:.2f} "
+            f"fb={item.feedback_mean:.2f} out={item.pid_out_mean:.4f} split={item.motor_split_mean:.4f} "
+            f"sat={item.pid_out_saturation_ratio:.2f} sign={item.sign_ok} response={item.measurable_response} "
+            f"zero_ok={item.return_to_zero_ok}"
+        )
+    return 0 if result.summary.safe_to_continue else 2
+
+
 def build_parser() -> argparse.ArgumentParser:
     """构建 CLI 命令解析器。
 
@@ -615,6 +693,52 @@ def build_parser() -> argparse.ArgumentParser:
     calib_p = sub.add_parser("calib")
     calib_p.add_argument("kind", choices=["gyro", "level"])
 
+    axis_bench_p = sub.add_parser(
+        "axis-bench",
+        aliases=["rate-bench"],
+        help="run one conservative constrained single-axis rate bench round",
+        description="Run a bench-only single-axis rate step sequence, save telemetry artifacts, and summarize sign, response, saturation, jitter, and low-duty checks.",
+    )
+    axis_bench_p.add_argument("axis", choices=["roll", "pitch", "yaw"])
+    axis_bench_p.add_argument("--output-dir")
+    axis_bench_p.add_argument("--tag")
+    axis_bench_p.add_argument("--small-step", type=float, default=10.0)
+    axis_bench_p.add_argument("--large-step", type=float, default=20.0)
+    axis_bench_p.add_argument("--active-duration", type=float, default=0.8)
+    axis_bench_p.add_argument("--zero-duration", type=float, default=0.7)
+    axis_bench_p.add_argument("--auto-arm", action="store_true")
+    axis_bench_p.add_argument("--kp", type=float)
+    axis_bench_p.add_argument("--ki", type=float)
+    axis_bench_p.add_argument("--kd", type=float)
+    axis_bench_p.add_argument("--integral-limit", type=float)
+    axis_bench_p.add_argument("--output-limit", type=float)
+    axis_bench_p.add_argument("--motor-idle-duty", type=float)
+    axis_bench_p.add_argument("--base-duty", type=float)
+    axis_bench_p.add_argument("--orientation-note")
+    axis_bench_p.add_argument("--save-params", action="store_true")
+
+    roll_bench_p = sub.add_parser(
+        "roll-bench",
+        help="run one conservative constrained rate-roll bench round",
+        description="Run a bench-only rate roll step sequence, save telemetry artifacts, and summarize sign/response/saturation checks.",
+    )
+    roll_bench_p.add_argument("--output-dir")
+    roll_bench_p.add_argument("--tag")
+    roll_bench_p.add_argument("--small-step", type=float, default=10.0)
+    roll_bench_p.add_argument("--large-step", type=float, default=20.0)
+    roll_bench_p.add_argument("--active-duration", type=float, default=0.8)
+    roll_bench_p.add_argument("--zero-duration", type=float, default=0.7)
+    roll_bench_p.add_argument("--auto-arm", action="store_true")
+    roll_bench_p.add_argument("--kp", type=float)
+    roll_bench_p.add_argument("--ki", type=float)
+    roll_bench_p.add_argument("--kd", type=float)
+    roll_bench_p.add_argument("--integral-limit", type=float)
+    roll_bench_p.add_argument("--output-limit", type=float)
+    roll_bench_p.add_argument("--motor-idle-duty", type=float)
+    roll_bench_p.add_argument("--base-duty", type=float)
+    roll_bench_p.add_argument("--orientation-note")
+    roll_bench_p.add_argument("--save-params", action="store_true")
+
     return parser
 
 
@@ -664,6 +788,9 @@ def main(argv: list[str] | None = None) -> int:
             "axis-test": cmd_axis_test,
             "rate-test": cmd_rate_test,
             "calib": cmd_calib,
+            "axis-bench": cmd_axis_bench,
+            "rate-bench": cmd_axis_bench,
+            "roll-bench": cmd_roll_bench,
         }
         return int(dispatch[args.command](session, args) or 0)
     except CommandError as exc:

@@ -86,6 +86,32 @@ The `rate-status` output is intended for bench tuning and prints:
 - `motor1..motor4`
 - `arm_state`, `control_mode`, `imu_age_us`, `loop_dt_us`
 
+Single-axis bench automation:
+
+```powershell
+python -m esp_drone_cli --serial COM7 axis-bench roll --auto-arm --small-step 10 --large-step 15
+python -m esp_drone_cli --serial COM7 axis-bench pitch --auto-arm --kp 0.0028 --small-step 10 --large-step 15
+python -m esp_drone_cli --serial COM7 rate-bench yaw --auto-arm --kp 0.0026 --small-step 10 --large-step 15 --save-params
+```
+
+`axis-bench` and `rate-bench` are the same shared command. They use the same core logic as the GUI/session layer and save:
+
+- telemetry CSV
+- JSON summary
+- Markdown summary
+
+The bench summary now reports:
+
+- `setpoint_path_ok`
+- `sign_ok`
+- `motor_split_ok`
+- `measurable_response`
+- `saturation_risk`
+- `return_to_zero_quality`
+- `noise_or_jitter_risk`
+- `low_duty_motor_stability`
+- `axis_result` as `PASS`, `PASS_WITH_WARNING`, or `FAIL`
+
 CSV capture:
 
 ```powershell
@@ -151,4 +177,3 @@ Device command rejections now surface as clear CLI errors, including cases such 
 - unsupported command
 
 The process exit code follows the firmware status code for rejected commands, which makes bench scripts easier to diagnose.
-
