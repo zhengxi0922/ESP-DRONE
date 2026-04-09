@@ -52,6 +52,7 @@ import pyqtgraph as pg
 from serial.tools import list_ports
 
 from esp_drone_cli.core import DeviceSession, ParamValue, TelemetrySample
+from esp_drone_cli.core.protocol.messages import CmdId, ensure_command_ok
 
 
 APP_ORG = "ESP-DRONE"
@@ -728,6 +729,10 @@ EXTRA_TRANSLATIONS = {
     "zh": {
         "chart.baro": "气压计",
         "chart.y_baro": "气压 / 高度 / 温度",
+        "chart.rate_roll": "Rate Roll",
+        "chart.rate_pitch": "Rate Pitch",
+        "chart.rate_yaw": "Rate Yaw",
+        "chart.y_rate_mix": "deg/s / duty",
         "field.baro_pressure_pa": "气压 (Pa)",
         "field.baro_temperature_c": "温度 (C)",
         "field.baro_altitude_m": "气压高度 (m)",
@@ -735,6 +740,18 @@ EXTRA_TRANSLATIONS = {
         "field.baro_valid": "气压数据有效",
         "field.baro_health": "气压计健康",
         "field.baro_update_age_us": "Baro 样本龄",
+        "field.rate_pid_p_roll": "Roll PID P",
+        "field.rate_pid_p_pitch": "Pitch PID P",
+        "field.rate_pid_p_yaw": "Yaw PID P",
+        "field.rate_pid_i_roll": "Roll PID I",
+        "field.rate_pid_i_pitch": "Pitch PID I",
+        "field.rate_pid_i_yaw": "Yaw PID I",
+        "field.rate_pid_d_roll": "Roll PID D",
+        "field.rate_pid_d_pitch": "Pitch PID D",
+        "field.rate_pid_d_yaw": "Yaw PID D",
+        "field.pid_out_roll": "Roll PID 输出",
+        "field.pid_out_pitch": "Pitch PID 输出",
+        "field.pid_out_yaw": "Yaw PID 输出",
         "baro.init": "初始化",
         "baro.ok": "正常",
         "baro.stale": "陈旧",
@@ -746,6 +763,10 @@ EXTRA_TRANSLATIONS = {
     "en": {
         "chart.baro": "Barometer",
         "chart.y_baro": "baro / altitude / temp",
+        "chart.rate_roll": "Rate Roll",
+        "chart.rate_pitch": "Rate Pitch",
+        "chart.rate_yaw": "Rate Yaw",
+        "chart.y_rate_mix": "deg/s / duty",
         "field.baro_pressure_pa": "baro_pressure_pa",
         "field.baro_temperature_c": "baro_temperature_c",
         "field.baro_altitude_m": "baro_altitude_m",
@@ -753,6 +774,18 @@ EXTRA_TRANSLATIONS = {
         "field.baro_valid": "baro_valid",
         "field.baro_health": "baro_health",
         "field.baro_update_age_us": "baro_update_age_us",
+        "field.rate_pid_p_roll": "rate_pid_p_roll",
+        "field.rate_pid_p_pitch": "rate_pid_p_pitch",
+        "field.rate_pid_p_yaw": "rate_pid_p_yaw",
+        "field.rate_pid_i_roll": "rate_pid_i_roll",
+        "field.rate_pid_i_pitch": "rate_pid_i_pitch",
+        "field.rate_pid_i_yaw": "rate_pid_i_yaw",
+        "field.rate_pid_d_roll": "rate_pid_d_roll",
+        "field.rate_pid_d_pitch": "rate_pid_d_pitch",
+        "field.rate_pid_d_yaw": "rate_pid_d_yaw",
+        "field.pid_out_roll": "pid_out_roll",
+        "field.pid_out_pitch": "pid_out_pitch",
+        "field.pid_out_yaw": "pid_out_yaw",
         "baro.init": "INIT",
         "baro.ok": "OK",
         "baro.stale": "STALE",
@@ -1182,6 +1215,10 @@ class MainWindow(QMainWindow):
         "gyro_x", "gyro_y", "gyro_z",
         "roll_deg", "pitch_deg", "yaw_deg",
         "rate_setpoint_roll", "rate_setpoint_pitch", "rate_setpoint_yaw",
+        "rate_pid_p_roll", "rate_pid_p_pitch", "rate_pid_p_yaw",
+        "rate_pid_i_roll", "rate_pid_i_pitch", "rate_pid_i_yaw",
+        "rate_pid_d_roll", "rate_pid_d_pitch", "rate_pid_d_yaw",
+        "pid_out_roll", "pid_out_pitch", "pid_out_yaw",
         "motor1", "motor2", "motor3", "motor4",
         "battery_voltage", "battery_adc_raw",
         "baro_pressure_pa", "baro_temperature_c", "baro_altitude_m", "baro_vspeed_mps",
@@ -1198,12 +1235,62 @@ class MainWindow(QMainWindow):
         "motor_idle_duty": "Brushed motor armed idle floor, normalized 0..1.",
         "motor_max_duty": "Brushed motor output ceiling, normalized 0..1.",
         "bringup_test_base_duty": "Base duty used in axis/rate bench tests. Keep low on a restrained frame.",
+        "rate_kp_roll": "Roll rate-loop proportional gain. Start with small steps such as +0.0005.",
+        "rate_ki_roll": "Roll rate-loop integral gain. Keep zero until P is stable on the bench.",
+        "rate_kd_roll": "Roll rate-loop derivative gain. Add only after P direction and sign are verified.",
+        "rate_kp_pitch": "Pitch rate-loop proportional gain. Start with small steps such as +0.0005.",
+        "rate_ki_pitch": "Pitch rate-loop integral gain. Keep zero until P is stable on the bench.",
+        "rate_kd_pitch": "Pitch rate-loop derivative gain. Add only after P direction and sign are verified.",
+        "rate_kp_yaw": "Yaw rate-loop proportional gain. Keep conservative because yaw authority is weaker.",
+        "rate_ki_yaw": "Yaw rate-loop integral gain. Keep zero until yaw sign and damping are verified.",
+        "rate_kd_yaw": "Yaw rate-loop derivative gain. Usually smaller than roll/pitch for bench bring-up.",
+        "rate_integral_limit": "Per-axis rate-loop integral clamp in deg/s·s equivalent state units.",
+        "rate_output_limit": "Per-axis PID output clamp sent into the mixer around bring-up_test_base_duty.",
     }
 
     CHART_GROUPS = {
         "gyro": ChartSpec("chart.gyro", [("gyro_x", "field.gyro_x"), ("gyro_y", "field.gyro_y"), ("gyro_z", "field.gyro_z")], "chart.y_deg_s"),
         "attitude": ChartSpec("chart.attitude", [("roll_deg", "field.roll_deg"), ("pitch_deg", "field.pitch_deg"), ("yaw_deg", "field.yaw_deg")], "chart.y_deg"),
         "motors": ChartSpec("chart.motors", [("motor1", "field.motor1"), ("motor2", "field.motor2"), ("motor3", "field.motor3"), ("motor4", "field.motor4")], "chart.y_duty"),
+        "rate_roll": ChartSpec(
+            "chart.rate_roll",
+            [
+                ("gyro_y", "field.gyro_y"),
+                ("rate_setpoint_roll", "field.rate_setpoint_roll"),
+                ("pid_out_roll", "field.pid_out_roll"),
+                ("motor1", "field.motor1"),
+                ("motor2", "field.motor2"),
+                ("motor3", "field.motor3"),
+                ("motor4", "field.motor4"),
+            ],
+            "chart.y_rate_mix",
+        ),
+        "rate_pitch": ChartSpec(
+            "chart.rate_pitch",
+            [
+                ("gyro_x", "field.gyro_x"),
+                ("rate_setpoint_pitch", "field.rate_setpoint_pitch"),
+                ("pid_out_pitch", "field.pid_out_pitch"),
+                ("motor1", "field.motor1"),
+                ("motor2", "field.motor2"),
+                ("motor3", "field.motor3"),
+                ("motor4", "field.motor4"),
+            ],
+            "chart.y_rate_mix",
+        ),
+        "rate_yaw": ChartSpec(
+            "chart.rate_yaw",
+            [
+                ("gyro_z", "field.gyro_z"),
+                ("rate_setpoint_yaw", "field.rate_setpoint_yaw"),
+                ("pid_out_yaw", "field.pid_out_yaw"),
+                ("motor1", "field.motor1"),
+                ("motor2", "field.motor2"),
+                ("motor3", "field.motor3"),
+                ("motor4", "field.motor4"),
+            ],
+            "chart.y_rate_mix",
+        ),
         "battery": ChartSpec("chart.battery", [("battery_voltage", "field.battery_voltage")], "chart.y_volt"),
         "baro": ChartSpec(
             "chart.baro",
@@ -2013,10 +2100,10 @@ class MainWindow(QMainWindow):
         self.connect_button.clicked.connect(self._connect_requested)
         self.disconnect_button.clicked.connect(self._disconnect_requested)
 
-        self.arm_button.clicked.connect(lambda: self._run_session_action("arm", self._session.arm))
-        self.disarm_button.clicked.connect(lambda: self._run_session_action("disarm", self._session.disarm))
-        self.kill_button.clicked.connect(lambda: self._run_session_action("kill", self._session.kill))
-        self.reboot_button.clicked.connect(lambda: self._run_session_action("reboot", self._session.reboot))
+        self.arm_button.clicked.connect(lambda: self._run_checked_command_action("arm", CmdId.ARM, self._session.arm))
+        self.disarm_button.clicked.connect(lambda: self._run_checked_command_action("disarm", CmdId.DISARM, self._session.disarm))
+        self.kill_button.clicked.connect(lambda: self._run_checked_command_action("kill", CmdId.KILL, self._session.kill))
+        self.reboot_button.clicked.connect(lambda: self._run_checked_command_action("reboot", CmdId.REBOOT, self._session.reboot))
 
         self.stream_on_button.clicked.connect(lambda: self._run_session_action("stream_on", self._session.start_stream))
         self.stream_off_button.clicked.connect(lambda: self._run_session_action("stream_off", self._session.stop_stream))
@@ -2043,8 +2130,12 @@ class MainWindow(QMainWindow):
 
         self.motor_start_button.clicked.connect(self._start_motor_test)
         self.motor_stop_button.clicked.connect(self._stop_motor_test)
-        self.calib_gyro_button.clicked.connect(lambda: self._run_session_action("calib_gyro", self._session.calib_gyro))
-        self.calib_level_button.clicked.connect(lambda: self._run_session_action("calib_level", self._session.calib_level))
+        self.calib_gyro_button.clicked.connect(
+            lambda: self._run_checked_command_action("calib_gyro", CmdId.CALIB_GYRO, self._session.calib_gyro)
+        )
+        self.calib_level_button.clicked.connect(
+            lambda: self._run_checked_command_action("calib_level", CmdId.CALIB_LEVEL, self._session.calib_level)
+        )
         self.rate_start_button.clicked.connect(self._start_rate_test)
         self.rate_stop_button.clicked.connect(self._stop_rate_test)
         self.log_browse_button.clicked.connect(self._browse_log_path)
@@ -2066,6 +2157,12 @@ class MainWindow(QMainWindow):
     def _run_session_action(self, label: str, callback) -> None:
         self._set_last_result(self._t("msg.command_running", label=label))
         self._bridge.run_async(label, callback)
+
+    def _run_checked_command_action(self, label: str, cmd_id: int, callback) -> None:
+        def wrapped():
+            return ensure_command_ok(cmd_id, int(callback()))
+
+        self._run_session_action(label, wrapped)
 
     def _set_last_result(self, text: str) -> None:
         self._last_result = text
@@ -2463,20 +2560,20 @@ class MainWindow(QMainWindow):
     def _start_motor_test(self) -> None:
         index = self.motor_combo.currentIndex()
         duty = float(self.motor_duty_spin.value())
-        self._run_session_action("motor_test_start", lambda: self._session.motor_test(index, duty))
+        self._run_checked_command_action("motor_test_start", CmdId.MOTOR_TEST, lambda: self._session.motor_test(index, duty))
 
     def _stop_motor_test(self) -> None:
         index = self.motor_combo.currentIndex()
-        self._run_session_action("motor_test_stop", lambda: self._session.motor_test(index, 0.0))
+        self._run_checked_command_action("motor_test_stop", CmdId.MOTOR_TEST, lambda: self._session.motor_test(index, 0.0))
 
     def _start_rate_test(self) -> None:
         index = self.rate_axis_combo.currentIndex()
         rate = float(self.rate_value_spin.value())
-        self._run_session_action("rate_test_start", lambda: self._session.rate_test(index, rate))
+        self._run_checked_command_action("rate_test_start", CmdId.RATE_TEST, lambda: self._session.rate_test(index, rate))
 
     def _stop_rate_test(self) -> None:
         index = self.rate_axis_combo.currentIndex()
-        self._run_session_action("rate_test_stop", lambda: self._session.rate_test(index, 0.0))
+        self._run_checked_command_action("rate_test_stop", CmdId.RATE_TEST, lambda: self._session.rate_test(index, 0.0))
 
     def _browse_log_path(self) -> None:
         output, _ = QFileDialog.getSaveFileName(self, self._t("label.output"), self.log_path_edit.text(), "CSV Files (*.csv)")

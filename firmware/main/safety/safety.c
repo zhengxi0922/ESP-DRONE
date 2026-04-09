@@ -10,6 +10,8 @@
 #include "params.h"
 #include "runtime_state.h"
 
+#define SAFETY_BATTERY_CRITICAL_DEBOUNCE_CYCLES 100u
+
 static _Atomic int s_arm_state;
 static _Atomic int s_failsafe_reason;
 static _Atomic bool s_pending_arm;
@@ -17,20 +19,44 @@ static _Atomic bool s_pending_disarm;
 static _Atomic bool s_pending_kill;
 static _Atomic bool s_pending_cli_override;
 static _Atomic bool s_cli_override_active;
+static _Atomic uint32_t s_battery_critical_streak;
+
+static bool safety_battery_critical_active(const safety_inputs_t *inputs)
+{
+    const params_store_t *params = params_get();
+
+    if (inputs == NULL || !(inputs->battery_voltage > 0.1f)) {
+        atomic_store(&s_battery_critical_streak, 0u);
+        return false;
+    }
+
+    if (inputs->battery_voltage <= params->battery_critical_v) {
+        uint32_t streak = atomic_load(&s_battery_critical_streak);
+        if (streak < SAFETY_BATTERY_CRITICAL_DEBOUNCE_CYCLES) {
+            streak++;
+            atomic_store(&s_battery_critical_streak, streak);
+        }
+        return streak >= SAFETY_BATTERY_CRITICAL_DEBOUNCE_CYCLES;
+    }
+
+    atomic_store(&s_battery_critical_streak, 0u);
+    return false;
+}
 
 /* failsafe 原因在这里统一收口。
  * 这样 arm/disarm/kill、IMU 超时、低压、loop overrun 不会分散在多个模块里各自判定。 */
 static failsafe_reason_t safety_detect_reason(const safety_inputs_t *inputs)
 {
-    const params_store_t *params = params_get();
-
     if (inputs == NULL) {
         return FAILSAFE_REASON_NONE;
     }
 
-    if (inputs->battery_voltage > 0.1f && inputs->battery_voltage <= params->battery_critical_v) {
+    /* Constrained bench tests can produce short PWM-induced battery dips.
+     * Require a short low-voltage streak so transient sag does not trip rate bench steps immediately. */
+    if (safety_battery_critical_active(inputs)) {
         return FAILSAFE_REASON_BATTERY_CRITICAL;
     }
+    const params_store_t *params = params_get();
     if (inputs->imu_health == IMU_HEALTH_TIMEOUT) {
         return FAILSAFE_REASON_IMU_TIMEOUT;
     }
@@ -83,6 +109,7 @@ void safety_init(void)
     atomic_store(&s_pending_kill, false);
     atomic_store(&s_pending_cli_override, false);
     atomic_store(&s_cli_override_active, false);
+    atomic_store(&s_battery_critical_streak, 0u);
 
     runtime_state_set_arm_state(ARM_STATE_DISARMED);
     runtime_state_set_failsafe_reason(FAILSAFE_REASON_NONE);
@@ -121,6 +148,7 @@ void safety_update(const safety_inputs_t *inputs, safety_status_t *out_status)
         atomic_store(&s_pending_arm, false);
         atomic_store(&s_pending_disarm, false);
         atomic_store(&s_cli_override_active, false);
+        atomic_store(&s_battery_critical_streak, 0u);
     }
 
     if (state != ARM_STATE_FAULT_LOCK) {
@@ -135,6 +163,7 @@ void safety_update(const safety_inputs_t *inputs, safety_status_t *out_status)
         state = ARM_STATE_DISARMED;
         reason = FAILSAFE_REASON_NONE;
         atomic_store(&s_cli_override_active, false);
+        atomic_store(&s_battery_critical_streak, 0u);
     }
 
     if (atomic_exchange(&s_pending_arm, false) && state == ARM_STATE_DISARMED) {

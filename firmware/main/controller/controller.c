@@ -12,7 +12,9 @@
 typedef struct {
     axis3f_t integral;
     axis3f_t prev_error;
-    bool initialized;
+    bool roll_initialized;
+    bool pitch_initialized;
+    bool yaw_initialized;
     rate_controller_status_t last_status;
 } controller_state_t;
 
@@ -80,7 +82,6 @@ rate_controller_status_t controller_update_rate(const axis3f_t *rate_setpoint_dp
 {
     const params_store_t *params = params_get();
     rate_controller_status_t status = {0};
-    bool axis_initialized = s_state.initialized;
 
     if (rate_setpoint_dps == NULL || measured_rate_dps == NULL || dt_s <= 0.0f) {
         return s_state.last_status;
@@ -96,7 +97,7 @@ rate_controller_status_t controller_update_rate(const axis3f_t *rate_setpoint_dp
                            params->rate_output_limit,
                            &s_state.integral.roll,
                            &s_state.prev_error.roll,
-                           &axis_initialized,
+                           &s_state.roll_initialized,
                            &status.p_term.roll,
                            &status.i_term.roll,
                            &status.d_term.roll,
@@ -111,7 +112,7 @@ rate_controller_status_t controller_update_rate(const axis3f_t *rate_setpoint_dp
                            params->rate_output_limit,
                            &s_state.integral.pitch,
                            &s_state.prev_error.pitch,
-                           &axis_initialized,
+                           &s_state.pitch_initialized,
                            &status.p_term.pitch,
                            &status.i_term.pitch,
                            &status.d_term.pitch,
@@ -126,13 +127,12 @@ rate_controller_status_t controller_update_rate(const axis3f_t *rate_setpoint_dp
                            params->rate_output_limit,
                            &s_state.integral.yaw,
                            &s_state.prev_error.yaw,
-                           &axis_initialized,
+                           &s_state.yaw_initialized,
                            &status.p_term.yaw,
                            &status.i_term.yaw,
                            &status.d_term.yaw,
                            &status.output.yaw);
 
-    s_state.initialized = axis_initialized;
     s_state.last_status = status;
     return status;
 }

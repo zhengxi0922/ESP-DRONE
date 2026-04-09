@@ -1,6 +1,6 @@
 # Python GUI Usage
 
-**Language / 语言：** **English** | [简体中文](./python_gui_usage.zh-CN.md)
+**Language / 语言:** **English** | [简体中文](./python_gui_usage.zh-CN.md)
 
 ## Goal
 
@@ -9,50 +9,35 @@
 It uses the same `esp_drone_cli.core.device_session.DeviceSession` as the CLI, so GUI and CLI share:
 
 - framing
-- serial transport
-- UDP transport
+- serial and UDP transport
 - telemetry decoding
 - parameter commands
 - device commands
 - CSV logging
 
-The GUI is for human-in-the-loop bench debugging. The CLI remains the preferred entry for automation and scripted tests.
+The GUI is a bench workbench, not a second protocol stack.
 
-## Install On Windows
-
-CLI only:
-
-```powershell
-cd tools\esp_drone_cli
-pip install -e .
-```
-
-CLI + GUI:
+## Install
 
 ```powershell
 cd tools\esp_drone_cli
 pip install -e .[gui]
 ```
 
-The `gui` extra installs:
+If only the CLI is needed:
 
-- `PyQt5`
-- `pyqtgraph`
+```powershell
+cd tools\esp_drone_cli
+pip install -e .
+```
 
-If `PyQt5` or `pyqtgraph` is missing:
-
-- `esp-drone-cli` still works
-- `esp-drone-gui` exits with a clear install hint
-
-## Start GUI
-
-Installed entrypoint:
+## Start
 
 ```powershell
 esp-drone-gui
 ```
 
-Module entrypoint:
+or:
 
 ```powershell
 python -m esp_drone_cli.gui_main
@@ -60,212 +45,141 @@ python -m esp_drone_cli.gui_main
 
 ## Window Layout
 
-The GUI is arranged as a three-column workbench plus a collapsible bottom log:
+The workbench keeps the current three-column layout plus a collapsible bottom log:
 
-- left column, narrow:
+- left column:
   - connection
   - safety control
   - debug actions
-- center column, largest:
-  - one large realtime chart
-  - live numeric telemetry table below it
+- center column:
+  - large realtime chart
+  - live numeric telemetry table below the chart
 - right column:
   - key status cards
-  - large parameter table and compact edit or detail area
+  - parameter search, edit, save, reset, export, import
 - bottom log:
-  - recent events
+  - recent command results
+  - recent errors
   - last result
   - last log path
-  - last error
 
-The chart and numeric telemetry stay visible at the same time. They are no longer separated into mutually exclusive tabs.
+The chart and numeric telemetry stay visible together. They are not split into mutually exclusive tabs.
 
 ## Language
 
 - default UI language: Chinese
-- top-right language switch: `中文 / English`
+- language switch: `中文 / English`
 
-The main controls, labels, group titles, and status texts are localized for bench use.
+## Connection Rules
 
-## Serial Connection Example
+Bench bring-up should use USB CDC:
 
-1. Plug the aircraft into USB CDC.
-2. Start the GUI.
-3. In the `Connection` area:
-   - choose `Serial`
-   - choose the COM port or type it manually
-   - keep the baudrate at `115200` unless the firmware changes later
+- `UART0` stays dedicated to `ATK-MS901M`
+- `USB CDC` stays dedicated to CLI, GUI, and debug telemetry
+
+Typical serial connection:
+
+1. Select `Serial`.
+2. Pick the COM port.
+3. Keep `115200` unless the firmware changes later.
 4. Click `Connect`.
 
-Expected result:
+## Rate Test Controls
 
-- the connection badge switches to connected
-- the parameter list refreshes automatically
-- telemetry starts updating after `Stream On`
+The left-side `Debug Actions` area now includes a usable rate-test panel for all three axes:
 
-## UDP Connection Example
+- axis selector: `roll / pitch / yaw`
+- value input: target rate in dps
+- `Start` button: sends `rate-test`
+- `Stop` button: sends `rate-test <axis> 0`
+- bench warning: props removed or frame restrained only
 
-1. Power the aircraft and make sure the UDP endpoint is reachable.
-2. In the `Connection` area:
-   - choose `UDP`
-   - set the host, for example `192.168.4.1`
-   - set the port, default `2391`
-3. Click `Connect`.
+Command results and command failures are pushed into the bottom log. The GUI no longer treats rejected device commands as silent success.
 
-Expected result:
+## Rate-Focused Charts
 
-- the connection badge switches to connected
-- commands are sent through the same `DeviceSession` path as serial
+The center chart group selector now includes:
 
-## GUI Areas
+- `Rate Roll`
+- `Rate Pitch`
+- `Rate Yaw`
 
-### Left Column
+Each axis-focused chart is designed for bench rate tuning:
 
-Connection:
+- `Rate Roll`:
+  - `gyro_y`
+  - `rate_setpoint_roll`
+  - `pid_out_roll`
+  - `motor1..motor4`
+- `Rate Pitch`:
+  - `gyro_x`
+  - `rate_setpoint_pitch`
+  - `pid_out_pitch`
+  - `motor1..motor4`
+- `Rate Yaw`:
+  - `gyro_z`
+  - `rate_setpoint_yaw`
+  - `pid_out_yaw`
+  - `motor1..motor4`
 
-- choose serial or UDP
-- serial mode only shows COM and baudrate controls
-- UDP mode only shows host and port controls
-- refresh serial ports
-- connect and disconnect
-- inspect current session info and the last connection error
+The telemetry table also includes:
 
-Safety:
-
-- `Arm`
-- `Disarm`
-- `Kill`
-- `Reboot`
-
-Debug actions:
-
-- `motor_test`
-- `calib gyro`
-- `calib level`
-- `rate_test`
-- `Start Log`
-- `Stop Log`
-- `Dump CSV`
-
-These actions are for restrained bench use only.
-
-### Center Column
-
-Main chart:
-
-- one large plot driven by `pyqtgraph`
-- switch chart group:
-  - `Gyro`
-  - `Attitude`
-  - `Motors`
-  - `Battery`
-  - `Barometer`
-- pause or resume
-- clear history
-- auto scale
-- reset view
-- `5s`, `10s`, `30s` window
-- per-channel visibility checkboxes
-
-Live numeric telemetry:
-
-- `Stream On` or `Stream Off`
-- apply target telemetry rate through `telemetry_usb_hz` or `telemetry_udp_hz`
-- view live values for gyro, attitude, rate setpoints, motors, battery, barometer, loop timing, and safety state
-- copy selected table cells with `Ctrl+C`
-
-### Right Column
-
-Key status cards:
-
-- `arm_state`
-- `failsafe_reason`
-- `control_mode`
-- `imu_mode`
-- `stream`
-- `battery_voltage`
-- `baro_altitude_m`
-- `baro_health`
+- `rate_pid_p_*`
+- `rate_pid_i_*`
+- `rate_pid_d_*`
+- `pid_out_*`
 - `imu_age_us`
 - `loop_dt_us`
 
-Parameter debug:
+## Parameter Tuning
 
-- refresh the parameter list
-- search by parameter name
-- select one parameter and edit a new value
-- view a local hint and compact description area
-- `Save`
-- `Reset`
-- `Export JSON`
-- `Import JSON`
+Use the right-side parameter area for bench tuning:
 
-GUI hints are advisory only. Final validation still happens on the device.
+- search with `rate_`
+- edit:
+  - `rate_kp_*`
+  - `rate_ki_*`
+  - `rate_kd_*`
+  - `rate_integral_limit`
+  - `rate_output_limit`
+- write one parameter at a time
+- observe the effect immediately in telemetry and charts
+- keep using:
+  - `Save`
+  - `Reset`
+  - `Export JSON`
+  - `Import JSON`
 
-### Bottom Log
+The GUI parameter path still goes through the shared `DeviceSession`.
 
-- event-log area for recent command results and errors
-- clear, copy, and save log
-- collapsed by default to a compact height
-- can be expanded or collapsed through the arrow button
+## Recommended GUI Bench Flow
 
-## QSettings State
-
-The GUI stores local state through `QSettings`, including:
-
-- window geometry
-- splitter positions
-- last link type
-- last serial port
-- last UDP host or port
-- last chart group
-- last chart window
-- last parameter search text
-- last CSV output path
-- last selected language
-- bottom-log collapsed or expanded state
+1. Remove props or fully restrain the frame.
+2. Connect over `Serial`.
+3. Click `Stream On`.
+4. Select `Rate Roll`, `Rate Pitch`, or `Rate Yaw` in the chart group.
+5. Arm only when the frame is safe for bench testing.
+6. In the left rate-test panel, choose the axis and start with a conservative command.
+7. Watch the matching gyro field, setpoint, `pid_out`, and motor split.
+8. Search `rate_` on the right and tune gains in small steps.
+9. Click `Stop` for the active axis and `Disarm` when finished.
 
 ## Common Errors
 
-`PyQt5 and pyqtgraph are required for esp-drone-gui`
+Typical GUI-side failures now show up clearly in the event log:
 
-- install GUI dependencies with `pip install -e .[gui]`
-
-No serial port selected
-
-- choose or type a valid COM port before connecting
-
-No UDP host provided
-
-- enter a valid host before connecting
-
-`HELLO` timeout or immediate disconnect
-
-- check cable quality
-- verify that the board is running the application rather than the ROM downloader
-- confirm that no other program owns the serial port
-
-No telemetry updates after connect
-
-- click `Stream On`
-- verify that the correct transport is connected
-- verify that the firmware is running and not held in reset or fault
-
-`set_param` or `save_params` fails
-
-- device-side parameter validation rejected the value
-- check parameter ranges and inter-parameter constraints in the firmware docs
-
-`dump csv` fails
-
-- check the target path
-- verify that the device is connected and the stream can be started
+- device not connected
+- arm required for nonzero `rate-test`
+- disarm required for `motor_test` or `axis_test`
+- IMU not ready
+- invalid parameter value rejected by firmware
 
 ## Scope Boundary
 
-Current GUI scope is intentionally focused:
+Current GUI scope remains intentionally limited:
 
-- good for bench connection, safety commands, telemetry, charts, parameters, motor or rate test, and CSV capture
-- not a second protocol stack
-- not the primary automation surface
-- not yet a heavy waveform-analysis suite
+- suitable for bench connection, telemetry, charts, rate test, parameter tuning, and CSV capture
+- not a second host stack
+- not an automation surface
+- not an angle-mode or autotune interface
+

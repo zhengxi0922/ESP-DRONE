@@ -370,6 +370,26 @@ def test_device_session_telemetry_subscription_receives_samples():
     assert received[0].baro_altitude_m == pytest.approx(1.25)
 
 
+def test_telemetry_sample_rate_debug_projection_uses_project_axis_truth():
+    sample = TelemetrySample.from_payload(build_telemetry_payload())
+    roll = sample.axis_rate_debug_map("roll")
+    pitch = sample.axis_rate_debug_map("pitch")
+    yaw = sample.axis_rate_debug_map("yaw")
+
+    assert roll["source_field"] == "gyro_y"
+    assert roll["source_value"] == pytest.approx(2.0)
+    assert roll["feedback_dps"] == pytest.approx(-2.0)
+    assert roll["setpoint_dps"] == pytest.approx(10.0)
+
+    assert pitch["source_field"] == "gyro_x"
+    assert pitch["feedback_dps"] == pytest.approx(1.0)
+    assert pitch["setpoint_dps"] == pytest.approx(11.0)
+
+    assert yaw["source_field"] == "gyro_z"
+    assert yaw["feedback_dps"] == pytest.approx(-3.0)
+    assert yaw["setpoint_dps"] == pytest.approx(12.0)
+
+
 def test_telemetry_sample_v1_payload_keeps_baro_defaults():
     sample = TelemetrySample.from_payload(build_telemetry_payload_v1())
     assert sample.gyro_x == 1.0
@@ -657,6 +677,65 @@ def test_cli_baro_command_uses_device_session(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "pressure_pa=" in output
     assert "altitude_m=" in output
+
+
+def test_cli_rate_status_command_uses_device_session(monkeypatch, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    session.device_info = type("DeviceInfoStub", (), {
+        "protocol_version": 2,
+        "imu_mode": 1,
+        "arm_state": 1,
+        "stream_enabled": 0,
+        "feature_bitmap": 0x1F,
+    })()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+
+    real_sleep = cli_main.time.sleep
+
+    def fake_sleep(duration: float) -> None:
+        session.emit_telemetry(TelemetrySample.from_payload(build_telemetry_payload()))
+        real_sleep(min(duration, 0.001))
+
+    monkeypatch.setattr(cli_main.time, "sleep", fake_sleep)
+    assert cli_main.main(["--serial", "COM7", "rate-status", "roll", "--timeout", "0.05", "--interval", "0.01"]) == 0
+    output = capsys.readouterr().out
+    assert "roll sp=10.000" in output
+    assert "fb=-2.000" in output
+    assert "gyro_y=2.000" in output
+
+
+def test_cli_rate_test_returns_firmware_status_on_error(monkeypatch, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+    monkeypatch.setattr(session, "rate_test", lambda axis_index, value_dps: 4)
+
+    assert cli_main.main(["--serial", "COM7", "rate-test", "yaw", "30"]) == 4
+    error_text = capsys.readouterr().err
+    assert "rate-test failed: device must be armed first" in error_text
+
+
+def test_set_param_detects_device_rejection():
+    class RejectingTransport(MockTransport):
+        def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
+            if msg_type == MsgType.PARAM_SET:
+                type_id = payload[0]
+                name_len = payload[1]
+                name = payload[2 : 2 + name_len].decode("ascii")
+                value_bytes = b"\x00\x00\x00\x00" if type_id == 4 else payload[2 + name_len :]
+                self.inject(Frame(MsgType.PARAM_VALUE, flags, seq, encode_param_payload(name, type_id, value_bytes)))
+                return
+            super().send_message(msg_type, payload, flags=flags, seq=seq)
+
+    session = DeviceSession()
+    transport = RejectingTransport()
+    session.connect_transport(transport)
+    with pytest.raises(RuntimeError, match="set_param rejected by device"):
+        session.set_param("rate_kp_roll", 4, "0.0035")
+    session.disconnect()
 
 
 def test_gui_entry_reports_missing_pyqt5_without_affecting_cli(monkeypatch):

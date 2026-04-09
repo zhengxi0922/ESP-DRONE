@@ -22,6 +22,7 @@ from .models import (
     ParamSnapshot,
     ParamValue,
     TelemetrySample,
+    coerce_param_value,
     decode_device_info,
     decode_event_text,
     decode_param_value,
@@ -36,6 +37,12 @@ from .transport.udp_link import UdpTransport
 TelemetryCallback = Callable[[TelemetrySample], None]
 EventCallback = Callable[[str], None]
 ConnectionCallback = Callable[[dict[str, object]], None]
+
+
+def _param_values_match(type_id: int, expected: object, actual: object) -> bool:
+    if type_id == 4:
+        return abs(float(expected) - float(actual)) <= 1e-6
+    return expected == actual
 
 
 class DeviceSession:
@@ -593,7 +600,7 @@ class DeviceSession:
             frame = self._recv_until(MsgType.PARAM_VALUE, timeout=timeout)
             return decode_param_value(frame.payload)
 
-    def set_param(self, name: str, type_id: int, value: str | bytes) -> ParamValue:
+    def set_param(self, name: str, type_id: int, value: object) -> ParamValue:
         """将文本值编码后写入参数。
 
         Args:
@@ -610,8 +617,17 @@ class DeviceSession:
             TimeoutError: 在限定时间内未收到参数响应。
         """
 
-        value_bytes = value if isinstance(value, bytes) else encode_param_value(type_id, value)
-        return self.set_param_raw(name, type_id, value_bytes)
+        value_bytes = value if isinstance(value, bytes) else encode_param_value(type_id, str(value))
+        result = self.set_param_raw(name, type_id, value_bytes)
+        if isinstance(value, bytes):
+            return result
+
+        expected_value = coerce_param_value(type_id, value)
+        if result.type_id != type_id or not _param_values_match(type_id, expected_value, result.value):
+            raise RuntimeError(
+                f"set_param rejected by device: requested {name}={expected_value!r}, got {result.value!r}"
+            )
+        return result
 
     def list_params(self, timeout: float = 1.0) -> list[ParamValue]:
         """读取设备当前全部参数。

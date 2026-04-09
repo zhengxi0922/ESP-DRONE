@@ -64,6 +64,18 @@ typedef enum {
     CMD_RATE_TEST = 9,   /**< 发送速率环测试目标。 */
 } console_cmd_id_t;
 
+typedef enum {
+    CMD_STATUS_OK = 0,
+    CMD_STATUS_REJECTED = 1,
+    CMD_STATUS_UNSUPPORTED = 2,
+    CMD_STATUS_INVALID_ARGUMENT = 3,
+    CMD_STATUS_ARM_REQUIRED = 4,
+    CMD_STATUS_DISARM_REQUIRED = 5,
+    CMD_STATUS_IMU_NOT_READY = 6,
+    CMD_STATUS_CONFLICT = 7,
+    CMD_STATUS_STORAGE_ERROR = 8,
+} console_cmd_status_t;
+
 /**
  * @brief 所有二进制消息共用的帧头。
  */

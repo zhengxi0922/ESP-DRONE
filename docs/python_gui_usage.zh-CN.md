@@ -1,58 +1,43 @@
 # Python GUI 使用说明
 
-**语言 / Language：** [English](./python_gui_usage.md) | **简体中文**
+**语言 / Language:** [English](./python_gui_usage.md) | **简体中文**
 
 ## 目标
 
-`esp-drone-gui` 是 Python 工具链中的人工台架调试工作台。
+`esp-drone-gui` 是 Python 工具链中面向人工台架调试的工作台。
 
-它与 CLI 共用同一个 `esp_drone_cli.core.device_session.DeviceSession`，因此 GUI 与 CLI 共享：
+它与 CLI 共用同一个 `esp_drone_cli.core.device_session.DeviceSession`，因此 GUI 和 CLI 共用：
 
 - framing
-- serial transport
-- UDP transport
+- serial / UDP 传输
 - telemetry 解码
 - 参数命令
 - 设备命令
-- CSV logging
+- CSV 日志
 
-GUI 面向人工参与的台架调试。自动化和脚本测试仍以 CLI 为首选入口。
+GUI 仍然只是台架工作台，不是第二套协议栈。
 
-## 在 Windows 上安装
-
-仅安装 CLI：
-
-```powershell
-cd tools\esp_drone_cli
-pip install -e .
-```
-
-安装 CLI + GUI：
+## 安装
 
 ```powershell
 cd tools\esp_drone_cli
 pip install -e .[gui]
 ```
 
-`gui` extra 会安装：
+如果只需要 CLI：
 
-- `PyQt5`
-- `pyqtgraph`
+```powershell
+cd tools\esp_drone_cli
+pip install -e .
+```
 
-如果缺少 `PyQt5` 或 `pyqtgraph`：
-
-- `esp-drone-cli` 仍可运行
-- `esp-drone-gui` 会退出并给出明确安装提示
-
-## 启动 GUI
-
-安装后的入口：
+## 启动
 
 ```powershell
 esp-drone-gui
 ```
 
-模块入口：
+或：
 
 ```powershell
 python -m esp_drone_cli.gui_main
@@ -60,212 +45,140 @@ python -m esp_drone_cli.gui_main
 
 ## 窗口布局
 
-GUI 采用“三列工作台 + 可折叠底部日志”的结构：
+工作台继续保持“三栏 + 底部可折叠日志”的布局：
 
-- 左列，较窄：
+- 左侧：
   - 连接
   - 安全控制
   - 调试动作
-- 中列，最大：
-  - 一张大型实时图表
-  - 下方实时数值 telemetry 表
-- 右列：
+- 中间：
+  - 大实时图表
+  - 图表下方实时数值 telemetry
+- 右侧：
   - 关键状态卡片
-  - 大型参数表和紧凑编辑 / 详情区
+  - 参数搜索、编辑、保存、恢复、导入、导出
 - 底部日志：
-  - 最近事件
+  - 最近命令结果
+  - 最近错误
   - 最近结果
   - 最近日志路径
-  - 最近错误
 
-图表和实时数值 telemetry 可以同时显示，不再被拆成互斥 tab。
+图表和数值 telemetry 会同时可见，不再拆成互斥 tab。
 
 ## 语言
 
-- 默认 UI 语言：中文
-- 右上角语言切换：`中文 / English`
+- 默认语言：中文
+- 右上角切换：`中文 / English`
 
-主要控件、标签、分组标题和状态文本都做了面向台架使用的本地化。
+## 连接约束
 
-## Serial 连接示例
+当前台架 bring-up 建议走 USB CDC：
 
-1. 将飞行器接入 USB CDC。
-2. 启动 GUI。
-3. 在 `Connection` 区域：
-   - 选择 `Serial`
-   - 选择 COM 端口，或手动输入
-   - 除非固件后续调整，否则波特率保持 `115200`
-4. 点击 `Connect`。
+- `UART0` 继续只给 `ATK-MS901M`
+- `USB CDC` 继续只给 CLI、GUI 和调试遥测
 
-预期结果：
+典型串口连接流程：
 
-- 连接状态标记切换为已连接
-- 参数列表自动刷新
-- 点击 `Stream On` 后开始刷新 telemetry
+1. 选择 `Serial`
+2. 选择 COM 口
+3. 波特率保持 `115200`
+4. 点击 `Connect`
 
-## UDP 连接示例
+## Rate Test 控件
 
-1. 给飞行器上电，并确认 UDP 端点可达。
-2. 在 `Connection` 区域：
-   - 选择 `UDP`
-   - 设置主机地址，例如 `192.168.4.1`
-   - 设置端口，默认 `2391`
-3. 点击 `Connect`。
+左侧 `Debug Actions` 区现在已经具备完整的三轴 rate test 控件：
 
-预期结果：
+- 轴选择：`roll / pitch / yaw`
+- 数值输入：目标角速度 dps
+- `Start`：发送 `rate-test`
+- `Stop`：发送 `rate-test <axis> 0`
+- 明确台架警告：仅限拆桨或严格约束状态
 
-- 连接状态标记切换为已连接
-- 命令通过与 serial 相同的 `DeviceSession` 路径发送
+命令结果和命令失败都会进入底部日志。GUI 不再把设备端拒绝误当成成功。
 
-## GUI 区域说明
+## Rate 调试图表
 
-### 左列
+中间图表组现在包含：
 
-连接区：
+- `Rate Roll`
+- `Rate Pitch`
+- `Rate Yaw`
 
-- 选择 serial 或 UDP
-- serial 模式只显示 COM 和波特率控件
-- UDP 模式只显示 host 和 port 控件
-- 刷新串口列表
-- connect / disconnect
-- 查看当前 session 信息与最近连接错误
+每个图表组都直接服务于对应轴的台架调试：
 
-安全区：
+- `Rate Roll`：
+  - `gyro_y`
+  - `rate_setpoint_roll`
+  - `pid_out_roll`
+  - `motor1..motor4`
+- `Rate Pitch`：
+  - `gyro_x`
+  - `rate_setpoint_pitch`
+  - `pid_out_pitch`
+  - `motor1..motor4`
+- `Rate Yaw`：
+  - `gyro_z`
+  - `rate_setpoint_yaw`
+  - `pid_out_yaw`
+  - `motor1..motor4`
 
-- `Arm`
-- `Disarm`
-- `Kill`
-- `Reboot`
+实时数值表也包含以下调试字段：
 
-调试动作区：
-
-- `motor_test`
-- `calib gyro`
-- `calib level`
-- `rate_test`
-- `Start Log`
-- `Stop Log`
-- `Dump CSV`
-
-这些动作仅用于受限台架环境。
-
-### 中列
-
-主图区域：
-
-- 一张基于 `pyqtgraph` 的大型图
-- 可切换图表组：
-  - `Gyro`
-  - `Attitude`
-  - `Motors`
-  - `Battery`
-  - `Barometer`
-- pause / resume
-- clear history
-- auto scale
-- reset view
-- `5s` / `10s` / `30s` 时间窗
-- 每通道可见性勾选框
-
-实时数值 telemetry：
-
-- `Stream On` / `Stream Off`
-- 通过 `telemetry_usb_hz` 或 `telemetry_udp_hz` 调整目标 telemetry 频率
-- 查看 gyro、姿态、rate setpoint、电机、电池、barometer、循环计时和安全状态等实时字段
-- 支持用 `Ctrl+C` 复制选中表格单元格
-
-### 右列
-
-关键状态卡片：
-
-- `arm_state`
-- `failsafe_reason`
-- `control_mode`
-- `imu_mode`
-- `stream`
-- `battery_voltage`
-- `baro_altitude_m`
-- `baro_health`
+- `rate_pid_p_*`
+- `rate_pid_i_*`
+- `rate_pid_d_*`
+- `pid_out_*`
 - `imu_age_us`
 - `loop_dt_us`
 
-参数调试区：
+## 参数调试
 
-- 刷新参数列表
-- 按参数名搜索
-- 选中单个参数并编辑新值
-- 查看本地提示和紧凑说明区
-- `Save`
-- `Reset`
-- `Export JSON`
-- `Import JSON`
+右侧参数区可直接用于 rate PID 调试：
 
-GUI 中的提示只作为辅助，最终校验仍由设备端完成。
+- 搜索 `rate_`
+- 编辑：
+  - `rate_kp_*`
+  - `rate_ki_*`
+  - `rate_kd_*`
+  - `rate_integral_limit`
+  - `rate_output_limit`
+- 写入后可立刻在 telemetry 和图表里观察变化
+- 保留：
+  - `Save`
+  - `Reset`
+  - `Export JSON`
+  - `Import JSON`
 
-### 底部日志
+GUI 参数通路仍然完全复用共享 `DeviceSession`。
 
-- 用于显示最近命令结果和错误的事件日志区
-- 支持 clear、copy、save log
-- 默认折叠为较低高度
-- 可通过箭头按钮展开或折叠
+## 推荐 GUI 台架流程
 
-## QSettings 状态
-
-GUI 会通过 `QSettings` 保存本地状态，包括：
-
-- 窗口几何信息
-- splitter 位置
-- 上次链路类型
-- 上次 serial 端口
-- 上次 UDP host / port
-- 上次图表组
-- 上次图表时间窗
-- 上次参数搜索文本
-- 上次 CSV 输出路径
-- 上次所选语言
-- 底部日志折叠 / 展开状态
+1. 拆桨或把机体完全约束。
+2. 用 `Serial` 连接。
+3. 点击 `Stream On`。
+4. 在图表组切换到 `Rate Roll`、`Rate Pitch` 或 `Rate Yaw`。
+5. 只有在台架安全条件满足时才解锁。
+6. 在左侧 rate test 面板选择轴，从保守值开始点击 `Start`。
+7. 观察对应的 gyro、setpoint、`pid_out` 和电机分配。
+8. 在右侧搜索 `rate_`，小步修改 PID。
+9. 测试结束后点击 `Stop`，再 `Disarm`。
 
 ## 常见错误
 
-`PyQt5 and pyqtgraph are required for esp-drone-gui`
+以下问题现在都会明确显示在事件日志里：
 
-- 使用 `pip install -e .[gui]` 安装 GUI 依赖
-
-No serial port selected
-
-- 连接前先选择或输入有效 COM 端口
-
-No UDP host provided
-
-- 连接前输入有效 host
-
-`HELLO` timeout 或连接后立刻断开
-
-- 检查线缆质量
-- 确认板子运行的是应用程序，而不是 ROM downloader
-- 确认没有其它程序占用串口
-
-连接后没有 telemetry 更新
-
-- 点击 `Stream On`
-- 确认连接的是正确传输方式
-- 确认固件正在运行，且未处于 reset 或 fault
-
-`set_param` 或 `save_params` 失败
-
-- 设备端参数校验拒绝了该值
-- 根据固件文档检查参数范围和参数间约束
-
-`dump csv` 失败
-
-- 检查目标路径
-- 确认设备已连接且能够启动数据流
+- 设备未连接
+- 非零 `rate-test` 需要先 arm
+- `motor_test` 或 `axis_test` 需要先 disarm
+- IMU 未就绪
+- 参数值被固件校验拒绝
 
 ## 范围边界
 
-当前 GUI 范围刻意聚焦于：
+当前 GUI 仍然只覆盖以下范围：
 
-- 适合用于台架连接、安全命令、telemetry、图表、参数、电机 / 速率测试和 CSV 采集
-- 不是第二套协议栈
-- 不是自动化首选入口
-- 暂时也不是重型波形分析平台
+- 适合台架连接、遥测、图表、rate test、参数调试和 CSV 采集
+- 不引入第二套主机协议栈
+- 不是自动化入口
+- 不做 angle mode 或 autotune 界面
+
