@@ -11,6 +11,7 @@
 
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "runtime_state.h"
 
 typedef struct {
     uint32_t magic;
@@ -89,6 +90,17 @@ static const param_descriptor_t s_param_descs[] = {
     {"rate_integral_limit", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_integral_limit)},
     {"rate_output_limit", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_output_limit)},
     {"log_event_text_enabled", PARAM_TYPE_BOOL, offsetof(params_store_t, log_event_text_enabled)},
+    {"attitude_kp_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, attitude_kp_roll)},
+    {"attitude_kp_pitch", PARAM_TYPE_FLOAT, offsetof(params_store_t, attitude_kp_pitch)},
+    {"attitude_rate_limit_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, attitude_rate_limit_roll)},
+    {"attitude_rate_limit_pitch", PARAM_TYPE_FLOAT, offsetof(params_store_t, attitude_rate_limit_pitch)},
+    {"attitude_error_deadband_deg", PARAM_TYPE_FLOAT, offsetof(params_store_t, attitude_error_deadband_deg)},
+    {"attitude_trip_deg", PARAM_TYPE_FLOAT, offsetof(params_store_t, attitude_trip_deg)},
+    {"attitude_test_base_duty", PARAM_TYPE_FLOAT, offsetof(params_store_t, attitude_test_base_duty)},
+};
+
+static const param_descriptor_t s_runtime_param_descs[] = {
+    {"attitude_ref_valid", PARAM_TYPE_BOOL, 0u},
 };
 
 static void params_apply_defaults(params_store_t *store)
@@ -145,6 +157,13 @@ static void params_apply_defaults(params_store_t *store)
     store->rate_kd_yaw = 0.0f;
     store->rate_integral_limit = 100.0f;
     store->rate_output_limit = 0.20f;
+    store->attitude_kp_roll = 2.0f;
+    store->attitude_kp_pitch = 2.0f;
+    store->attitude_rate_limit_roll = 25.0f;
+    store->attitude_rate_limit_pitch = 25.0f;
+    store->attitude_error_deadband_deg = 1.0f;
+    store->attitude_trip_deg = 30.0f;
+    store->attitude_test_base_duty = 0.05f;
 
     store->log_event_text_enabled = true;
 }
@@ -268,11 +287,15 @@ static bool params_validate_motor_duty_limits(const params_store_t *store)
            store->motor_startup_boost_duty <= 1.0f &&
            store->bringup_test_base_duty >= 0.0f &&
            store->bringup_test_base_duty <= 1.0f &&
+           store->attitude_test_base_duty >= 0.0f &&
+           store->attitude_test_base_duty <= 1.0f &&
            store->motor_idle_duty <= store->motor_max_duty &&
            store->motor_startup_boost_duty >= store->motor_idle_duty &&
            store->motor_startup_boost_duty <= store->motor_max_duty &&
            store->bringup_test_base_duty >= store->motor_idle_duty &&
-           store->bringup_test_base_duty <= store->motor_max_duty;
+           store->bringup_test_base_duty <= store->motor_max_duty &&
+           store->attitude_test_base_duty >= store->motor_idle_duty &&
+           store->attitude_test_base_duty <= store->motor_max_duty;
 }
 
 static bool params_float_in_range(float value, float min_value, float max_value)
@@ -303,6 +326,24 @@ static bool params_validate_rate_pid_limits(const params_store_t *store)
     return (store->bringup_test_base_duty + store->rate_output_limit) <= store->motor_max_duty;
 }
 
+static bool params_validate_attitude_bench_limits(const params_store_t *store)
+{
+    if (!params_float_in_range(store->attitude_kp_roll, 0.0f, 10.0f) ||
+        !params_float_in_range(store->attitude_kp_pitch, 0.0f, 10.0f) ||
+        !params_float_in_range(store->attitude_rate_limit_roll, 0.0f, 180.0f) ||
+        !params_float_in_range(store->attitude_rate_limit_pitch, 0.0f, 180.0f) ||
+        !params_float_in_range(store->attitude_error_deadband_deg, 0.0f, 10.0f) ||
+        !params_float_in_range(store->attitude_trip_deg, 1.0f, 90.0f)) {
+        return false;
+    }
+
+    if (store->attitude_error_deadband_deg > store->attitude_trip_deg) {
+        return false;
+    }
+
+    return (store->attitude_test_base_duty + store->rate_output_limit) <= store->motor_max_duty;
+}
+
 static bool params_validate_store(const params_store_t *store)
 {
     if (store == NULL) {
@@ -315,7 +356,8 @@ static bool params_validate_store(const params_store_t *store)
            params_validate_telemetry_rates(store) &&
            params_validate_battery_thresholds(store) &&
            params_validate_motor_duty_limits(store) &&
-           params_validate_rate_pid_limits(store);
+           params_validate_rate_pid_limits(store) &&
+           params_validate_attitude_bench_limits(store);
 }
 
 static bool params_try_load_from_nvs(params_store_t *store)
@@ -401,16 +443,24 @@ esp_err_t params_save(void)
 
 size_t params_count(void)
 {
-    return sizeof(s_param_descs) / sizeof(s_param_descs[0]);
+    return (sizeof(s_param_descs) / sizeof(s_param_descs[0])) +
+           (sizeof(s_runtime_param_descs) / sizeof(s_runtime_param_descs[0]));
 }
 
 const param_descriptor_t *params_get_descriptor(size_t index)
 {
-    if (index >= params_count()) {
+    const size_t store_count = sizeof(s_param_descs) / sizeof(s_param_descs[0]);
+    const size_t runtime_count = sizeof(s_runtime_param_descs) / sizeof(s_runtime_param_descs[0]);
+
+    if (index >= (store_count + runtime_count)) {
         return NULL;
     }
 
-    return &s_param_descs[index];
+    if (index < store_count) {
+        return &s_param_descs[index];
+    }
+
+    return &s_runtime_param_descs[index - store_count];
 }
 
 static void *params_ptr_from_desc(const param_descriptor_t *desc)
@@ -424,7 +474,14 @@ bool params_try_get(const char *name, param_value_t *out_value, param_type_t *ou
         return false;
     }
 
-    for (size_t i = 0; i < params_count(); ++i) {
+    if (strcmp(name, "attitude_ref_valid") == 0) {
+        *out_type = PARAM_TYPE_BOOL;
+        out_value->b = runtime_state_get_attitude_hang_state().ref_valid;
+        return true;
+    }
+
+    const size_t store_count = sizeof(s_param_descs) / sizeof(s_param_descs[0]);
+    for (size_t i = 0; i < store_count; ++i) {
         const param_descriptor_t *desc = &s_param_descs[i];
         if (strcmp(desc->name, name) != 0) {
             continue;
@@ -460,7 +517,14 @@ bool params_try_set(const char *name, param_value_t value, param_type_t type)
         return false;
     }
 
-    for (size_t i = 0; i < params_count(); ++i) {
+    if (strcmp(name, "attitude_ref_valid") == 0) {
+        (void)value;
+        (void)type;
+        return false;
+    }
+
+    const size_t store_count = sizeof(s_param_descs) / sizeof(s_param_descs[0]);
+    for (size_t i = 0; i < store_count; ++i) {
         const param_descriptor_t *desc = &s_param_descs[i];
         if (strcmp(desc->name, name) != 0 || desc->type != type) {
             continue;

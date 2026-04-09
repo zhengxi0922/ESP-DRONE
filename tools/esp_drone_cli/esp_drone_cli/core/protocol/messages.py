@@ -1,5 +1,3 @@
-"""协议消息类型与帧结构定义。"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -10,8 +8,6 @@ FRAME_VERSION = 0x01
 
 
 class MsgType:
-    """设备控制台协议的消息类型常量。"""
-
     HELLO_REQ = 0x01
     HELLO_RESP = 0x02
     CMD_REQ = 0x10
@@ -30,8 +26,6 @@ class MsgType:
 
 
 class CmdId:
-    """设备命令编号常量。"""
-
     ARM = 1
     DISARM = 2
     KILL = 3
@@ -41,11 +35,12 @@ class CmdId:
     CALIB_LEVEL = 7
     AXIS_TEST = 8
     RATE_TEST = 9
+    ATTITUDE_CAPTURE_REF = 10
+    ATTITUDE_TEST_START = 11
+    ATTITUDE_TEST_STOP = 12
 
 
 class CmdStatus:
-    """Firmware command status codes."""
-
     OK = 0
     REJECTED = 1
     UNSUPPORTED = 2
@@ -55,6 +50,7 @@ class CmdStatus:
     IMU_NOT_READY = 6
     CONFLICT = 7
     STORAGE_ERROR = 8
+    REF_REQUIRED = 9
 
 
 CMD_NAMES = {
@@ -67,6 +63,9 @@ CMD_NAMES = {
     CmdId.CALIB_LEVEL: "calib level",
     CmdId.AXIS_TEST: "axis-test",
     CmdId.RATE_TEST: "rate-test",
+    CmdId.ATTITUDE_CAPTURE_REF: "attitude-capture-ref",
+    CmdId.ATTITUDE_TEST_START: "attitude-test start",
+    CmdId.ATTITUDE_TEST_STOP: "attitude-test stop",
 }
 
 CMD_STATUS_TEXT = {
@@ -76,15 +75,14 @@ CMD_STATUS_TEXT = {
     CmdStatus.INVALID_ARGUMENT: "argument is invalid or outside the allowed bench range",
     CmdStatus.ARM_REQUIRED: "device must be armed first",
     CmdStatus.DISARM_REQUIRED: "device must be disarmed first",
-    CmdStatus.IMU_NOT_READY: "fresh IMU / gyro feedback is not ready",
+    CmdStatus.IMU_NOT_READY: "fresh IMU / quaternion / gyro feedback is not ready",
     CmdStatus.CONFLICT: "command conflicts with the current control mode or safety state",
     CmdStatus.STORAGE_ERROR: "device-side persistence or internal operation failed",
+    CmdStatus.REF_REQUIRED: "attitude reference has not been captured yet",
 }
 
 
 class CommandError(RuntimeError):
-    """Raised when the firmware rejects a command."""
-
     def __init__(self, cmd_id: int, status: int) -> None:
         self.cmd_id = cmd_id
         self.status = status
@@ -92,20 +90,14 @@ class CommandError(RuntimeError):
 
 
 def command_name(cmd_id: int) -> str:
-    """Return the user-facing name for a command id."""
-
     return CMD_NAMES.get(cmd_id, f"cmd-{cmd_id}")
 
 
 def describe_command_status(cmd_id: int, status: int) -> str:
-    """Describe one command response status."""
-
     return f"{command_name(cmd_id)} failed: {CMD_STATUS_TEXT.get(status, f'unknown status {status}')}"
 
 
 def ensure_command_ok(cmd_id: int, status: int) -> int:
-    """Raise when a firmware command does not return success."""
-
     if status != CmdStatus.OK:
         raise CommandError(cmd_id, status)
     return status
@@ -113,8 +105,6 @@ def ensure_command_ok(cmd_id: int, status: int) -> int:
 
 @dataclass(slots=True)
 class Frame:
-    """一帧已通过基础校验的协议消息。"""
-
     msg_type: int
     flags: int
     seq: int

@@ -39,7 +39,7 @@
  *
  * @note 参数布局发生不兼容变化时应递增。
  */
-#define PARAMS_SCHEMA_VERSION 1u
+#define PARAMS_SCHEMA_VERSION 2u
 
 /**
  * @brief 参数值类型编号。
@@ -125,6 +125,13 @@ typedef struct {
     float rate_output_limit;          /**< 速率环总输出限幅。 */
 
     bool log_event_text_enabled;      /**< 是否允许发送文本事件日志。 */
+    float attitude_kp_roll;
+    float attitude_kp_pitch;
+    float attitude_rate_limit_roll;
+    float attitude_rate_limit_pitch;
+    float attitude_error_deadband_deg;
+    float attitude_trip_deg;
+    float attitude_test_base_duty;
 } params_store_t;
 
 /**

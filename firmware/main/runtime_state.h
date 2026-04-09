@@ -126,3 +126,19 @@ void runtime_state_set_rate_setpoint_request(axis3f_t request);
  * @return 当前三轴速率目标，单位为 deg/s。
  */
 axis3f_t runtime_state_get_rate_setpoint_request(void);
+
+/**
+ * @brief 璁剧疆 attitude hang 鍙傝€冨Э鎬併€? */
+void runtime_state_set_attitude_reference(bool valid, quatf_t ref_q_body_to_world);
+
+/**
+ * @brief 娓呴櫎 attitude hang 鍙傝€冨Э鎬併€? */
+void runtime_state_clear_attitude_reference(void);
+
+/**
+ * @brief 鑾峰彇 attitude hang 杩愯鎬佸揩鐓с€? */
+attitude_hang_state_t runtime_state_get_attitude_hang_state(void);
+
+/**
+ * @brief 璁剧疆 attitude hang 杩愯鎬佸揩鐓с€? */
+void runtime_state_set_attitude_hang_state(attitude_hang_state_t state);

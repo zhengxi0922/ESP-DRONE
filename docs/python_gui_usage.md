@@ -17,6 +17,14 @@ It uses the same `esp_drone_cli.core.device_session.DeviceSession` as the CLI, s
 
 The GUI is a bench workbench, not a second protocol stack.
 
+## Scope Warning
+
+The new `Hang Attitude` controls are bench-only and only for a constrained circular-rod or hanging rig.
+
+They are not a free-flight stabilize interface.
+They are not an angle-flight-ready interface.
+Never use them on a prop-on free-flight vehicle.
+
 ## Install
 
 ```powershell
@@ -63,7 +71,7 @@ The workbench keeps the current three-column layout plus a collapsible bottom lo
   - last result
   - last log path
 
-The chart and numeric telemetry stay visible together. They are not split into mutually exclusive tabs.
+The chart and numeric telemetry stay visible together.
 
 ## Language
 
@@ -84,102 +92,135 @@ Typical serial connection:
 3. Keep `115200` unless the firmware changes later.
 4. Click `Connect`.
 
-## Rate Test Controls
+## Debug Actions
 
-The left-side `Debug Actions` area now includes a usable rate-test panel for all three axes:
+The left-side `Debug Actions` area now covers both the original rate-test path and the new bench-only hang-attitude path.
+
+Rate-test controls:
 
 - axis selector: `roll / pitch / yaw`
 - value input: target rate in dps
-- `Start` button: sends `rate-test`
-- `Stop` button: sends `rate-test <axis> 0`
-- bench warning: props removed or frame restrained only
+- `Start`: sends `rate-test`
+- `Stop`: sends `rate-test <axis> 0`
 
-Command results and command failures are pushed into the bottom log. The GUI no longer treats rejected device commands as silent success.
+Hang-attitude controls:
 
-## Rate-Focused Charts
+- `Capture Ref`
+- `Attitude Test Start`
+- `Attitude Test Stop`
+- `Base Duty`
+- quick-edit boxes for:
+  - `attitude_kp_roll`
+  - `attitude_kp_pitch`
+  - `attitude_rate_limit_roll`
+  - `attitude_rate_limit_pitch`
+  - `attitude_error_deadband_deg`
+  - `attitude_trip_deg`
 
-The center chart group selector now includes:
+The GUI explicitly labels this area as a constrained-rig bench path and not a free-flight mode.
+
+Command results and command failures are pushed into the bottom log.
+
+## Charts
+
+The chart group selector includes:
 
 - `Rate Roll`
 - `Rate Pitch`
 - `Rate Yaw`
+- `Hang Attitude Roll`
+- `Hang Attitude Pitch`
 
-Each axis-focused chart is designed for bench rate tuning:
+The hang-attitude charts are designed for the new outer-loop bring-up:
 
-- `Rate Roll`:
-  - `gyro_y`
-  - `rate_setpoint_roll`
+- `Hang Attitude Roll`:
+  - `attitude_err_roll_deg`
+  - `attitude_rate_sp_roll`
   - `pid_out_roll`
   - `motor1..motor4`
-- `Rate Pitch`:
-  - `gyro_x`
-  - `rate_setpoint_pitch`
+- `Hang Attitude Pitch`:
+  - `attitude_err_pitch_deg`
+  - `attitude_rate_sp_pitch`
   - `pid_out_pitch`
-  - `motor1..motor4`
-- `Rate Yaw`:
-  - `gyro_z`
-  - `rate_setpoint_yaw`
-  - `pid_out_yaw`
   - `motor1..motor4`
 
 The telemetry table also includes:
 
-- `rate_pid_p_*`
-- `rate_pid_i_*`
-- `rate_pid_d_*`
-- `pid_out_*`
-- `imu_age_us`
-- `loop_dt_us`
+- `attitude_ref_valid`
+- `attitude_ref_qw`
+- `attitude_ref_qx`
+- `attitude_ref_qy`
+- `attitude_ref_qz`
+- `base_duty_active`
+- existing `pid_out_*`, `imu_age_us`, and `loop_dt_us`
+
+Use the chart chain to verify:
+
+```text
+manual disturbance -> attitude error -> outer-loop rate setpoint -> PID output -> motor mix
+```
 
 ## Parameter Tuning
 
-Use the right-side parameter area for bench tuning:
+Use the right-side parameter area for bench tuning.
 
-- search with `rate_`
-- edit:
-  - `rate_kp_*`
-  - `rate_ki_*`
-  - `rate_kd_*`
-  - `rate_integral_limit`
-  - `rate_output_limit`
-- write one parameter at a time
-- observe the effect immediately in telemetry and charts
-- keep using:
-  - `Save`
-  - `Reset`
-  - `Export JSON`
-  - `Import JSON`
+Rate-loop parameters remain available:
+
+- `rate_kp_*`
+- `rate_ki_*`
+- `rate_kd_*`
+- `rate_integral_limit`
+- `rate_output_limit`
+
+Hang-attitude parameters are also available:
+
+- `attitude_kp_roll`
+- `attitude_kp_pitch`
+- `attitude_rate_limit_roll`
+- `attitude_rate_limit_pitch`
+- `attitude_error_deadband_deg`
+- `attitude_trip_deg`
+- `attitude_test_base_duty`
+- read-only runtime flag `attitude_ref_valid`
 
 The GUI parameter path still goes through the shared `DeviceSession`.
 
 ## Recommended GUI Bench Flow
 
-1. Remove props or fully restrain the frame.
+For the bench-only hang-attitude bring-up:
+
+1. Remove props and keep the airframe constrained on the circular rod or hanging fixture.
 2. Connect over `Serial`.
 3. Click `Stream On`.
-4. Select `Rate Roll`, `Rate Pitch`, or `Rate Yaw` in the chart group.
-5. Arm only when the frame is safe for bench testing.
-6. In the left rate-test panel, choose the axis and start with a conservative command.
-7. Watch the matching gyro field, setpoint, `pid_out`, and motor split.
-8. Search `rate_` on the right and tune gains in small steps.
-9. Click `Stop` for the active axis and `Disarm` when finished.
+4. Confirm IMU freshness and basic hand-motion telemetry.
+5. Put the airframe into its natural hanging equilibrium and click `Capture Ref`.
+6. Confirm `attitude_ref_valid` becomes true.
+7. Arm only after the rig is confirmed safe.
+8. Keep conservative `Base Duty`, `attitude_kp_*`, and `attitude_rate_limit_*`.
+9. Click `Attitude Test Start`.
+10. Select `Hang Attitude Roll` or `Hang Attitude Pitch`.
+11. Apply small manual disturbances and verify corrective sign:
+    `+roll` disturbance must drive `M2/M3` up and `M1/M4` down.
+    `+pitch` disturbance must drive `M1/M2` up and `M3/M4` down.
+12. Click `Attitude Test Stop` immediately if the sign chain is wrong, a trip occurs, or the rig is not stable.
+13. `Disarm` when finished.
 
 ## Common Errors
 
-Typical GUI-side failures now show up clearly in the event log:
+Typical GUI-side failures show up clearly in the event log:
 
 - device not connected
-- arm required for nonzero `rate-test`
-- disarm required for `motor_test` or `axis_test`
-- IMU not ready
+- arm required for `Attitude Test Start`
+- reference not captured
+- IMU not ready or not fresh
+- trip limit exceeded
 - invalid parameter value rejected by firmware
 
 ## Scope Boundary
 
 Current GUI scope remains intentionally limited:
 
-- suitable for bench connection, telemetry, charts, rate test, parameter tuning, and CSV capture
+- suitable for constrained bench connection, telemetry, charts, rate test, hang-attitude bring-up, parameter tuning, and CSV capture
 - not a second host stack
 - not an automation surface
-- not an angle-mode or autotune interface
-
+- not a free-flight stabilize, angle, or autotune interface

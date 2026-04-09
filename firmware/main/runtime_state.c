@@ -23,6 +23,16 @@ static _Atomic uint32_t g_axis_test_yaw_bits;
 static _Atomic uint32_t g_rate_setpoint_roll_bits;
 static _Atomic uint32_t g_rate_setpoint_pitch_bits;
 static _Atomic uint32_t g_rate_setpoint_yaw_bits;
+static _Atomic bool g_attitude_ref_valid;
+static _Atomic uint32_t g_attitude_ref_qw_bits;
+static _Atomic uint32_t g_attitude_ref_qx_bits;
+static _Atomic uint32_t g_attitude_ref_qy_bits;
+static _Atomic uint32_t g_attitude_ref_qz_bits;
+static _Atomic uint32_t g_attitude_err_roll_bits;
+static _Atomic uint32_t g_attitude_err_pitch_bits;
+static _Atomic uint32_t g_attitude_rate_sp_roll_bits;
+static _Atomic uint32_t g_attitude_rate_sp_pitch_bits;
+static _Atomic uint32_t g_base_duty_active_bits;
 
 static uint32_t runtime_state_float_bits(float value)
 {
@@ -55,6 +65,16 @@ void runtime_state_init(void)
     atomic_store(&g_rate_setpoint_roll_bits, 0u);
     atomic_store(&g_rate_setpoint_pitch_bits, 0u);
     atomic_store(&g_rate_setpoint_yaw_bits, 0u);
+    atomic_store(&g_attitude_ref_valid, false);
+    atomic_store(&g_attitude_ref_qw_bits, 0u);
+    atomic_store(&g_attitude_ref_qx_bits, 0u);
+    atomic_store(&g_attitude_ref_qy_bits, 0u);
+    atomic_store(&g_attitude_ref_qz_bits, 0u);
+    atomic_store(&g_attitude_err_roll_bits, 0u);
+    atomic_store(&g_attitude_err_pitch_bits, 0u);
+    atomic_store(&g_attitude_rate_sp_roll_bits, 0u);
+    atomic_store(&g_attitude_rate_sp_pitch_bits, 0u);
+    atomic_store(&g_base_duty_active_bits, 0u);
 }
 
 void runtime_state_set_arm_state(arm_state_t state)
@@ -160,4 +180,47 @@ axis3f_t runtime_state_get_rate_setpoint_request(void)
         .pitch = runtime_state_bits_float(atomic_load(&g_rate_setpoint_pitch_bits)),
         .yaw = runtime_state_bits_float(atomic_load(&g_rate_setpoint_yaw_bits)),
     };
+}
+
+void runtime_state_set_attitude_reference(bool valid, quatf_t ref_q_body_to_world)
+{
+    atomic_store(&g_attitude_ref_valid, valid);
+    atomic_store(&g_attitude_ref_qw_bits, runtime_state_float_bits(ref_q_body_to_world.w));
+    atomic_store(&g_attitude_ref_qx_bits, runtime_state_float_bits(ref_q_body_to_world.x));
+    atomic_store(&g_attitude_ref_qy_bits, runtime_state_float_bits(ref_q_body_to_world.y));
+    atomic_store(&g_attitude_ref_qz_bits, runtime_state_float_bits(ref_q_body_to_world.z));
+}
+
+void runtime_state_clear_attitude_reference(void)
+{
+    runtime_state_set_attitude_reference(false, (quatf_t){0});
+}
+
+attitude_hang_state_t runtime_state_get_attitude_hang_state(void)
+{
+    return (attitude_hang_state_t){
+        .ref_valid = atomic_load(&g_attitude_ref_valid),
+        .ref_q_body_to_world =
+            {
+                .w = runtime_state_bits_float(atomic_load(&g_attitude_ref_qw_bits)),
+                .x = runtime_state_bits_float(atomic_load(&g_attitude_ref_qx_bits)),
+                .y = runtime_state_bits_float(atomic_load(&g_attitude_ref_qy_bits)),
+                .z = runtime_state_bits_float(atomic_load(&g_attitude_ref_qz_bits)),
+            },
+        .err_roll_deg = runtime_state_bits_float(atomic_load(&g_attitude_err_roll_bits)),
+        .err_pitch_deg = runtime_state_bits_float(atomic_load(&g_attitude_err_pitch_bits)),
+        .rate_sp_roll_dps = runtime_state_bits_float(atomic_load(&g_attitude_rate_sp_roll_bits)),
+        .rate_sp_pitch_dps = runtime_state_bits_float(atomic_load(&g_attitude_rate_sp_pitch_bits)),
+        .base_duty_active = runtime_state_bits_float(atomic_load(&g_base_duty_active_bits)),
+    };
+}
+
+void runtime_state_set_attitude_hang_state(attitude_hang_state_t state)
+{
+    runtime_state_set_attitude_reference(state.ref_valid, state.ref_q_body_to_world);
+    atomic_store(&g_attitude_err_roll_bits, runtime_state_float_bits(state.err_roll_deg));
+    atomic_store(&g_attitude_err_pitch_bits, runtime_state_float_bits(state.err_pitch_deg));
+    atomic_store(&g_attitude_rate_sp_roll_bits, runtime_state_float_bits(state.rate_sp_roll_dps));
+    atomic_store(&g_attitude_rate_sp_pitch_bits, runtime_state_float_bits(state.rate_sp_pitch_dps));
+    atomic_store(&g_base_duty_active_bits, runtime_state_float_bits(state.base_duty_active));
 }

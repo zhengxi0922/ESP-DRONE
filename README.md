@@ -26,20 +26,31 @@ Direction-sensitive logic must follow:
 
 ## Current Status
 
-The repository now contains a usable three-axis rate-loop bench path:
+The repository now contains two constrained-rig control paths:
 
-- firmware supports `rate-test` for `roll`, `pitch`, and `yaw`
-- per-axis rate PID parameters are live in the control chain
-- CLI supports `rate-test`, `rate-status`, parameter edit, save, export, and import
-- the PyQt5 GUI supports rate-test controls, rate-focused charts, rate PID editing, and shared-session command handling
-- software verification currently includes Python tests and firmware build success
+- a usable three-axis rate-loop bench path for `roll / pitch / yaw`
+- a bench-only hang-attitude outer-loop bring-up path for a circular-rod or hanging rig with a natural `+Z down` equilibrium
+
+The new hang-attitude path is intentionally limited:
+
+- firmware adds `CONTROL_MODE_ATTITUDE_HANG_TEST`
+- reference attitude must be captured explicitly with `attitude-capture-ref`
+- control uses relative quaternion error `q_rel = q_ref^-1 * q_now`, not global Euler subtraction against `roll=0 / pitch=0`
+- only `roll / pitch` go through the outer loop in this stage
+- outer loop is P-only and feeds the existing rate inner loop
+- thrust stays open-loop through `attitude_test_base_duty`
+
+This is not a free-flight stabilize mode and not an angle-flight-ready mode.
+
+Never use `CONTROL_MODE_ATTITUDE_HANG_TEST` on a prop-on free-flight vehicle.
 
 Still out of scope for this stage:
 
-- angle outer loop
-- autotune
+- free-flight stabilize or angle tuning
+- yaw heading hold
 - altitude-hold closed loop
-- free-flight tuning
+- auto takeoff
+- autotune
 
 ## Build Firmware
 
@@ -77,8 +88,10 @@ pip install -e .[gui]
 
 ## Main Docs
 
+- [docs/hang_attitude_bringup_plan.md](./docs/hang_attitude_bringup_plan.md)
 - [docs/python_cli_usage.md](./docs/python_cli_usage.md)
 - [docs/python_gui_usage.md](./docs/python_gui_usage.md)
+- [docs/bringup_checklist.md](./docs/bringup_checklist.md)
+- [docs/python_gui_manual_checklist.md](./docs/python_gui_manual_checklist.md)
 - [docs/rate_bringup_results.md](./docs/rate_bringup_results.md)
 - [docs/README.md](./docs/README.md)
-

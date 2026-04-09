@@ -18,6 +18,7 @@
 #include "esp_system.h"
 #include "esp_vfs_cdcacm.h"
 
+#include "attitude_bench.h"
 #include "console_protocol.h"
 #include "controller.h"
 #include "imu.h"
@@ -156,6 +157,39 @@ static void console_send_cmd_resp(uint8_t cmd_id, console_cmd_status_t status)
     console_send_frame(MSG_CMD_RESP, &resp, sizeof(resp));
 }
 
+static bool console_has_active_motor_test(void)
+{
+    int logical_motor = -1;
+    float duty = 0.0f;
+    runtime_state_get_motor_test(&logical_motor, &duty);
+    return logical_motor >= 0 && duty > 0.0f;
+}
+
+static bool console_sample_supports_attitude_ref(const imu_sample_t *sample)
+{
+    return sample != NULL &&
+           sample->health == IMU_HEALTH_OK &&
+           sample->has_gyro_acc &&
+           sample->has_quaternion;
+}
+
+static void console_reset_attitude_state(bool clear_reference)
+{
+    if (clear_reference) {
+        attitude_bench_clear_reference();
+    } else {
+        attitude_bench_reset_status();
+    }
+}
+
+static void console_stop_active_control(bool clear_attitude_reference)
+{
+    runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+    runtime_state_set_axis_test_request((axis3f_t){0});
+    runtime_state_set_rate_setpoint_request((axis3f_t){0});
+    console_reset_attitude_state(clear_attitude_reference);
+}
+
 static bool console_value_is_finite_in_range(float value, float min_value, float max_value)
 {
     return isfinite(value) && value >= min_value && value <= max_value;
@@ -251,27 +285,21 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
     case CMD_DISARM:
         safety_request_disarm();
         runtime_state_set_motor_test(-1, 0.0f);
-        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
-        runtime_state_set_axis_test_request((axis3f_t){0});
-        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        console_stop_active_control(false);
         motor_stop_all();
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
     case CMD_KILL:
         safety_request_kill();
         runtime_state_set_motor_test(-1, 0.0f);
-        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
-        runtime_state_set_axis_test_request((axis3f_t){0});
-        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        console_stop_active_control(false);
         motor_stop_all();
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
     case CMD_REBOOT:
         runtime_state_set_stream_enabled(false);
         runtime_state_set_motor_test(-1, 0.0f);
-        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
-        runtime_state_set_axis_test_request((axis3f_t){0});
-        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        console_stop_active_control(true);
         motor_stop_all();
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         fflush(stdout);
@@ -296,9 +324,7 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
             runtime_state_set_motor_test(-1, 0.0f);
             motor_stop_all();
         } else {
-            runtime_state_set_control_mode(CONTROL_MODE_IDLE);
-            runtime_state_set_axis_test_request((axis3f_t){0});
-            runtime_state_set_rate_setpoint_request((axis3f_t){0});
+            console_stop_active_control(false);
             runtime_state_set_motor_test(req.arg_u8, req.arg_f32);
         }
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
@@ -319,6 +345,7 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         }
         runtime_state_set_motor_test(-1, 0.0f);
         runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        console_reset_attitude_state(false);
         runtime_state_set_axis_test_request(request);
         runtime_state_set_control_mode((req.arg_f32 == 0.0f) ? CONTROL_MODE_IDLE : CONTROL_MODE_AXIS_TEST);
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
@@ -347,11 +374,68 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         }
         runtime_state_set_motor_test(-1, 0.0f);
         runtime_state_set_axis_test_request((axis3f_t){0});
+        console_reset_attitude_state(false);
         runtime_state_set_rate_setpoint_request(request);
         runtime_state_set_control_mode((req.arg_f32 == 0.0f) ? CONTROL_MODE_IDLE : CONTROL_MODE_RATE_TEST);
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
     }
+    case CMD_ATTITUDE_CAPTURE_REF: {
+        imu_sample_t sample = {0};
+        const arm_state_t arm_state = runtime_state_get_arm_state();
+
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || console_has_active_motor_test()) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_CONFLICT);
+            break;
+        }
+        if (arm_state == ARM_STATE_FAILSAFE || arm_state == ARM_STATE_FAULT_LOCK) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_REJECTED);
+            break;
+        }
+        if (!imu_get_latest(&sample, NULL) || !console_sample_supports_attitude_ref(&sample)) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_IMU_NOT_READY);
+            break;
+        }
+        if (!attitude_bench_capture_reference(&sample)) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_IMU_NOT_READY);
+            break;
+        }
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
+    }
+    case CMD_ATTITUDE_TEST_START: {
+        imu_sample_t sample = {0};
+
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || console_has_active_motor_test()) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_CONFLICT);
+            break;
+        }
+        if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_ARM_REQUIRED);
+            break;
+        }
+        if (!runtime_state_get_attitude_hang_state().ref_valid) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_REF_REQUIRED);
+            break;
+        }
+        if (!imu_get_latest(&sample, NULL) || !console_sample_supports_attitude_ref(&sample)) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_IMU_NOT_READY);
+            break;
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        console_reset_attitude_state(false);
+        runtime_state_set_control_mode(CONTROL_MODE_ATTITUDE_HANG_TEST);
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
+    }
+    case CMD_ATTITUDE_TEST_STOP:
+        runtime_state_set_motor_test(-1, 0.0f);
+        console_stop_active_control(false);
+        motor_stop_all();
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
     case CMD_CALIB_GYRO:
         console_send_cmd_resp(req.cmd_id, (imu_calibrate_gyro() == ESP_OK) ? CMD_STATUS_OK : CMD_STATUS_IMU_NOT_READY);
         break;
@@ -444,7 +528,7 @@ static void console_handle_message(uint8_t msg_type, const uint8_t *payload, siz
             .imu_mode = (uint8_t)params_get()->imu_mode,
             .arm_state = (uint8_t)runtime_state_get_arm_state(),
             .stream_enabled = runtime_state_get_stream_enabled() ? 1u : 0u,
-            .feature_bitmap = 0x0000001Fu,
+            .feature_bitmap = 0x0000003Fu,
         };
         console_send_frame(MSG_HELLO_RESP, &resp, sizeof(resp));
         break;
@@ -603,6 +687,7 @@ void console_send_telemetry(const imu_sample_t *imu_sample,
     const axis3f_t rate_setpoint_request = runtime_state_get_rate_setpoint_request();
     const rate_controller_status_t rate_status = controller_get_last_rate_status();
     const control_mode_t control_mode = runtime_state_get_control_mode();
+    const attitude_hang_state_t attitude_state = runtime_state_get_attitude_hang_state();
 
     const console_telemetry_sample_t sample = {
         .timestamp_us = imu_sample->timestamp_us,
@@ -659,6 +744,17 @@ void console_send_telemetry(const imu_sample_t *imu_sample,
         .baro_valid = (baro_state != NULL && baro_state->valid) ? 1u : 0u,
         .baro_health = (baro_state != NULL) ? (uint8_t)baro_state->health : (uint8_t)BARO_HEALTH_INIT,
         .baro_reserved = {0, 0},
+        .attitude_err_roll_deg = attitude_state.err_roll_deg,
+        .attitude_err_pitch_deg = attitude_state.err_pitch_deg,
+        .attitude_rate_sp_roll = attitude_state.rate_sp_roll_dps,
+        .attitude_rate_sp_pitch = attitude_state.rate_sp_pitch_dps,
+        .attitude_ref_qw = attitude_state.ref_q_body_to_world.w,
+        .attitude_ref_qx = attitude_state.ref_q_body_to_world.x,
+        .attitude_ref_qy = attitude_state.ref_q_body_to_world.y,
+        .attitude_ref_qz = attitude_state.ref_q_body_to_world.z,
+        .base_duty_active = attitude_state.base_duty_active,
+        .attitude_ref_valid = attitude_state.ref_valid ? 1u : 0u,
+        .attitude_reserved = {0, 0, 0},
     };
 
     console_send_frame(MSG_TELEMETRY_SAMPLE, &sample, sizeof(sample));
