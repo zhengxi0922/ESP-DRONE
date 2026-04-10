@@ -67,6 +67,56 @@ def format_rate_status_line_all(sample: TelemetrySample) -> str:
     return " | ".join(parts)
 
 
+def format_attitude_status_line(sample: TelemetrySample, axis_name: str) -> str:
+    snapshot = sample.axis_attitude_debug_map(axis_name)
+    motors = ", ".join(f"{value:.3f}" for value in snapshot["motor_outputs"])
+    return (
+        f"{axis_name} "
+        f"ref_valid={snapshot['attitude_ref_valid']} "
+        f"err={snapshot['error_deg']:.3f}deg "
+        f"rate_sp={snapshot['rate_sp_dps']:.3f}dps "
+        f"pid_out={snapshot['pid_out']:.4f} "
+        f"base={snapshot['base_duty_active']:.3f} "
+        f"motors=[{motors}] "
+        f"arm={snapshot['arm_state']} "
+        f"mode={snapshot['control_mode']} "
+        f"imu_age_us={snapshot['imu_age_us']} "
+        f"loop_dt_us={snapshot['loop_dt_us']}"
+    )
+
+
+def format_attitude_status_line_all(sample: TelemetrySample) -> str:
+    parts = [format_attitude_status_line(sample, axis_name) for axis_name in ("roll", "pitch")]
+    ref_q = (
+        f"ref_q=[{sample.attitude_ref_qw:.4f}, {sample.attitude_ref_qx:.4f}, "
+        f"{sample.attitude_ref_qy:.4f}, {sample.attitude_ref_qz:.4f}]"
+    )
+    return " | ".join(parts + [ref_q])
+
+
+def wait_for_one_sample(session: DeviceSession, timeout: float) -> TelemetrySample:
+    samples: deque[TelemetrySample] = deque(maxlen=1)
+
+    def on_telemetry(sample: TelemetrySample) -> None:
+        samples.append(sample)
+
+    token = session.subscribe_telemetry(on_telemetry)
+    try:
+        session.start_stream()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if samples:
+                return samples[-1]
+            time.sleep(0.02)
+    finally:
+        try:
+            session.stop_stream()
+        except Exception:
+            pass
+        session.unsubscribe(token)
+    raise TimeoutError("attitude-status did not receive telemetry within timeout")
+
+
 def connect_session_from_args(args) -> DeviceSession:
     """根据命令行参数创建并连接设备会话。
 
@@ -397,6 +447,76 @@ def cmd_rate_status(session: DeviceSession, args) -> int:
         session.unsubscribe(token)
 
 
+def cmd_attitude_capture_ref(session: DeviceSession, _args) -> int:
+    """Capture the natural hanging reference for the bench-only attitude test."""
+
+    ensure_command_ok(CmdId.ATTITUDE_CAPTURE_REF, session.attitude_capture_ref())
+    return 0
+
+
+def cmd_attitude_test(session: DeviceSession, args) -> int:
+    """Start or stop the bench-only hang-attitude outer loop."""
+
+    if args.action == "start":
+        if args.base_duty is not None:
+            session.set_param("attitude_test_base_duty", 4, args.base_duty)
+        ensure_command_ok(CmdId.ATTITUDE_TEST_START, session.attitude_test_start())
+        return 0
+
+    ensure_command_ok(CmdId.ATTITUDE_TEST_STOP, session.attitude_test_stop())
+    return 0
+
+
+def cmd_attitude_status(session: DeviceSession, args) -> int:
+    """Print one hang-attitude bench status snapshot."""
+
+    sample = wait_for_one_sample(session, timeout=args.timeout)
+    print(format_attitude_status_line_all(sample))
+    return 0
+
+
+def cmd_watch_attitude(session: DeviceSession, args) -> int:
+    """Watch hang-attitude bench telemetry for roll, pitch, or both axes."""
+
+    samples: deque[TelemetrySample] = deque(maxlen=1)
+
+    def on_telemetry(sample: TelemetrySample) -> None:
+        samples.append(sample)
+
+    token = session.subscribe_telemetry(on_telemetry)
+    had_sample = False
+    next_emit = time.monotonic()
+    try:
+        session.start_stream()
+        deadline = time.monotonic() + args.timeout
+        while time.monotonic() < deadline:
+            if not samples:
+                time.sleep(0.02)
+                continue
+            if time.monotonic() < next_emit:
+                time.sleep(0.02)
+                continue
+
+            sample = samples[-1]
+            had_sample = True
+            if args.axis == "all":
+                print(format_attitude_status_line_all(sample))
+            else:
+                print(format_attitude_status_line(sample, args.axis))
+            next_emit = time.monotonic() + args.interval
+
+        if not had_sample:
+            print("watch-attitude did not receive telemetry within timeout")
+            return 1
+        return 0
+    finally:
+        try:
+            session.stop_stream()
+        except Exception:
+            pass
+        session.unsubscribe(token)
+
+
 def cmd_dump_csv(session: DeviceSession, args) -> int:
     """在指定时长内采集遥测并导出 CSV。
 
@@ -690,6 +810,42 @@ def build_parser() -> argparse.ArgumentParser:
     rate_p.add_argument("axis", choices=["roll", "pitch", "yaw"])
     rate_p.add_argument("value")
 
+    attitude_capture_p = sub.add_parser(
+        "attitude-capture-ref",
+        help="capture the current +Z-down hanging pose as the bench-only attitude reference",
+        description="Capture the current +Z-down hanging pose as the reference for the bench-only attitude outer-loop. Never use this workflow as a free-flight stabilize/angle mode.",
+    )
+    attitude_capture_p.set_defaults(command="attitude-capture-ref")
+
+    attitude_test_p = sub.add_parser(
+        "attitude-test",
+        help="bench-only hang attitude outer-loop bring-up; never use for free flight",
+        description="Bench-only hang attitude outer-loop bring-up for a constrained rod/hanging rig. This is not a free-flight stabilize/angle mode.",
+    )
+    attitude_test_sub = attitude_test_p.add_subparsers(dest="action", required=True)
+    attitude_test_start_p = attitude_test_sub.add_parser(
+        "start",
+        help="start the bench-only hang attitude outer loop",
+    )
+    attitude_test_start_p.add_argument("--base-duty", type=float)
+    attitude_test_sub.add_parser("stop", help="stop the bench-only hang attitude outer loop")
+
+    attitude_status_p = sub.add_parser(
+        "attitude-status",
+        help="print one bench-only hang attitude status snapshot",
+        description="Print one telemetry snapshot for the bench-only hang attitude bring-up path.",
+    )
+    attitude_status_p.add_argument("--timeout", type=float, default=2.0)
+
+    watch_attitude_p = sub.add_parser(
+        "watch-attitude",
+        help="watch bench-only hang attitude telemetry",
+        description="Watch bench-only hang attitude telemetry. Do not treat this as a free-flight stabilize/angle mode.",
+    )
+    watch_attitude_p.add_argument("axis", nargs="?", choices=["roll", "pitch", "all"], default="all")
+    watch_attitude_p.add_argument("--timeout", type=float, default=5.0)
+    watch_attitude_p.add_argument("--interval", type=float, default=0.2)
+
     calib_p = sub.add_parser("calib")
     calib_p.add_argument("kind", choices=["gyro", "level"])
 
@@ -787,6 +943,10 @@ def main(argv: list[str] | None = None) -> int:
             "motor-test": cmd_motor_test,
             "axis-test": cmd_axis_test,
             "rate-test": cmd_rate_test,
+            "attitude-capture-ref": cmd_attitude_capture_ref,
+            "attitude-test": cmd_attitude_test,
+            "attitude-status": cmd_attitude_status,
+            "watch-attitude": cmd_watch_attitude,
             "calib": cmd_calib,
             "axis-bench": cmd_axis_bench,
             "rate-bench": cmd_axis_bench,

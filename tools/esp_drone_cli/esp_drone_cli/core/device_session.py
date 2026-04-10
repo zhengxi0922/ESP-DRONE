@@ -502,6 +502,21 @@ class DeviceSession:
 
         return self.command(CmdId.RATE_TEST, arg_u8=axis_index, arg_f32=value_dps)
 
+    def attitude_capture_ref(self) -> int:
+        """Capture the current natural hanging attitude as the bench reference."""
+
+        return self.command(CmdId.ATTITUDE_CAPTURE_REF)
+
+    def attitude_test_start(self) -> int:
+        """Start the bench-only hang-attitude outer loop."""
+
+        return self.command(CmdId.ATTITUDE_TEST_START)
+
+    def attitude_test_stop(self) -> int:
+        """Stop the bench-only hang-attitude outer loop."""
+
+        return self.command(CmdId.ATTITUDE_TEST_STOP)
+
     def calib_gyro(self) -> int:
         """请求执行陀螺仪校准。"""
 

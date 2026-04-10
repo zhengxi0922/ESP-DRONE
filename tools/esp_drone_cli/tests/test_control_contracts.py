@@ -11,7 +11,7 @@ from __future__ import annotations
 
 
 from esp_drone_cli.client import TELEMETRY_STRUCT
-from esp_drone_cli.core.models import TELEMETRY_STRUCT_V1, TELEMETRY_STRUCT_V2
+from esp_drone_cli.core.models import TELEMETRY_STRUCT_V1, TELEMETRY_STRUCT_V2, TELEMETRY_STRUCT_V3
 
 
 MOTOR_LAYOUT = (
@@ -78,4 +78,15 @@ def test_mixer_positive_and_negative_yaw_direction():
 def test_telemetry_struct_matches_stage3_rate_bringup_payload():
     assert TELEMETRY_STRUCT_V1.size == 172
     assert TELEMETRY_STRUCT_V2.size == 196
-    assert TELEMETRY_STRUCT.size == TELEMETRY_STRUCT_V2.size
+    assert TELEMETRY_STRUCT_V3.size == 236
+    assert TELEMETRY_STRUCT.size == TELEMETRY_STRUCT_V3.size
+
+
+def test_hang_attitude_positive_roll_error_requires_negative_roll_correction():
+    outputs = mix_axis_outputs(roll=-0.05)
+    assert_higher(outputs, ("M2", "M3"), ("M1", "M4"))
+
+
+def test_hang_attitude_positive_pitch_error_requires_negative_pitch_correction():
+    outputs = mix_axis_outputs(pitch=-0.05)
+    assert_higher(outputs, ("M1", "M2"), ("M3", "M4"))

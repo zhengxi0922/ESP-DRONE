@@ -1,5 +1,3 @@
-"""CLI、GUI 与脚本共享的数据模型。"""
-
 from __future__ import annotations
 
 import json
@@ -13,7 +11,8 @@ CMD_RESP_STRUCT = struct.Struct("<BBH")
 HELLO_RESP_STRUCT = struct.Struct("<BBBBI")
 TELEMETRY_STRUCT_V1 = struct.Struct("<Q" + "f" * 36 + "III8B")
 TELEMETRY_STRUCT_V2 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B")
-TELEMETRY_STRUCT = TELEMETRY_STRUCT_V2
+TELEMETRY_STRUCT_V3 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B" + "f" * 9 + "4B")
+TELEMETRY_STRUCT = TELEMETRY_STRUCT_V3
 
 TELEMETRY_CSV_FIELDS = [
     "timestamp_us",
@@ -32,6 +31,10 @@ TELEMETRY_CSV_FIELDS = [
     "imu_mode", "imu_health", "arm_state", "failsafe_reason", "control_mode",
     "baro_pressure_pa", "baro_temperature_c", "baro_altitude_m", "baro_vspeed_mps",
     "baro_update_age_us", "baro_valid", "baro_health",
+    "attitude_err_roll_deg", "attitude_err_pitch_deg",
+    "attitude_rate_sp_roll", "attitude_rate_sp_pitch",
+    "attitude_ref_qw", "attitude_ref_qx", "attitude_ref_qy", "attitude_ref_qz",
+    "base_duty_active", "attitude_ref_valid",
 ]
 
 RATE_AXIS_SOURCES = {
@@ -40,11 +43,14 @@ RATE_AXIS_SOURCES = {
     "yaw": ("gyro_z", -1.0),
 }
 
+ATTITUDE_AXIS_FIELDS = {
+    "roll": ("attitude_err_roll_deg", "attitude_rate_sp_roll", "pid_out_roll"),
+    "pitch": ("attitude_err_pitch_deg", "attitude_rate_sp_pitch", "pid_out_pitch"),
+}
+
 
 @dataclass(slots=True)
 class ParamValue:
-    """参数项的名称、类型和值。"""
-
     name: str
     type_id: int
     value: object
@@ -52,8 +58,6 @@ class ParamValue:
 
 @dataclass(slots=True)
 class DeviceInfo:
-    """握手阶段返回的设备摘要信息。"""
-
     protocol_version: int
     imu_mode: int
     arm_state: int
@@ -63,39 +67,16 @@ class DeviceInfo:
 
 @dataclass(slots=True)
 class ParamSnapshot:
-    """参数导出快照。
-
-    Attributes:
-        schema: 导出文件格式版本。
-        firmware: 设备侧固件摘要信息。
-        params: 参数列表，每一项包含名称、类型和值。
-    """
-
     schema: int
     firmware: dict[str, object]
     params: list[dict[str, object]]
 
     def write_json(self, path: Path) -> None:
-        """将快照写入 JSON 文件。
-
-        Args:
-            path: 输出文件路径。父目录需要已存在。
-
-        Returns:
-            None.
-
-        Raises:
-            OSError: 目标文件不可写时抛出。
-            TypeError: 快照中包含不可序列化对象时抛出。
-        """
-
         path.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
 
 @dataclass(slots=True)
 class TelemetrySample:
-    """一帧遥测样本的结构化表示。"""
-
     timestamp_us: int
     gyro_x: float
     gyro_y: float
@@ -148,10 +129,18 @@ class TelemetrySample:
     baro_update_age_us: int
     baro_valid: int
     baro_health: int
+    attitude_err_roll_deg: float
+    attitude_err_pitch_deg: float
+    attitude_rate_sp_roll: float
+    attitude_rate_sp_pitch: float
+    attitude_ref_qw: float
+    attitude_ref_qx: float
+    attitude_ref_qy: float
+    attitude_ref_qz: float
+    base_duty_active: float
+    attitude_ref_valid: int
 
     def axis_rate_feedback_dps(self, axis_name: str) -> float:
-        """Return the project-defined rate feedback for one axis."""
-
         try:
             source_field, sign = RATE_AXIS_SOURCES[axis_name]
         except KeyError as exc:
@@ -159,8 +148,6 @@ class TelemetrySample:
         return float(getattr(self, source_field)) * sign
 
     def axis_rate_source(self, axis_name: str) -> tuple[str, float]:
-        """Return the raw gyro field name and value used by one rate axis."""
-
         try:
             source_field, _sign = RATE_AXIS_SOURCES[axis_name]
         except KeyError as exc:
@@ -168,8 +155,6 @@ class TelemetrySample:
         return source_field, float(getattr(self, source_field))
 
     def axis_rate_debug_map(self, axis_name: str) -> dict[str, object]:
-        """Return the shared rate-debug view used by CLI and GUI."""
-
         if axis_name not in RATE_AXIS_SOURCES:
             raise ValueError(f"unsupported axis {axis_name}")
 
@@ -189,82 +174,150 @@ class TelemetrySample:
             "control_mode": self.control_mode,
             "imu_age_us": self.imu_age_us,
             "loop_dt_us": self.loop_dt_us,
+            "base_duty_active": self.base_duty_active,
+        }
+
+    def axis_attitude_debug_map(self, axis_name: str) -> dict[str, object]:
+        try:
+            error_field, rate_sp_field, pid_out_field = ATTITUDE_AXIS_FIELDS[axis_name]
+        except KeyError as exc:
+            raise ValueError(f"unsupported axis {axis_name}") from exc
+
+        return {
+            "axis": axis_name,
+            "error_deg": float(getattr(self, error_field)),
+            "rate_sp_dps": float(getattr(self, rate_sp_field)),
+            "pid_out": float(getattr(self, pid_out_field)),
+            "motor_outputs": (self.motor1, self.motor2, self.motor3, self.motor4),
+            "arm_state": self.arm_state,
+            "control_mode": self.control_mode,
+            "imu_age_us": self.imu_age_us,
+            "loop_dt_us": self.loop_dt_us,
+            "base_duty_active": self.base_duty_active,
+            "attitude_ref_valid": int(self.attitude_ref_valid),
+            "attitude_ref_q": (
+                self.attitude_ref_qw,
+                self.attitude_ref_qx,
+                self.attitude_ref_qy,
+                self.attitude_ref_qz,
+            ),
         }
 
     @classmethod
+    def _from_v1_values(cls, values: list[object]) -> "TelemetrySample":
+        return cls(
+            timestamp_us=int(values[0]),
+            gyro_x=float(values[1]),
+            gyro_y=float(values[2]),
+            gyro_z=float(values[3]),
+            acc_x=float(values[4]),
+            acc_y=float(values[5]),
+            acc_z=float(values[6]),
+            quat_w=float(values[7]),
+            quat_x=float(values[8]),
+            quat_y=float(values[9]),
+            quat_z=float(values[10]),
+            roll_deg=float(values[11]),
+            pitch_deg=float(values[12]),
+            yaw_deg=float(values[13]),
+            setpoint_roll=float(values[14]),
+            setpoint_pitch=float(values[15]),
+            setpoint_yaw=float(values[16]),
+            rate_setpoint_roll=float(values[17]),
+            rate_setpoint_pitch=float(values[18]),
+            rate_setpoint_yaw=float(values[19]),
+            rate_pid_p_roll=float(values[20]),
+            rate_pid_p_pitch=float(values[21]),
+            rate_pid_p_yaw=float(values[22]),
+            rate_pid_i_roll=float(values[23]),
+            rate_pid_i_pitch=float(values[24]),
+            rate_pid_i_yaw=float(values[25]),
+            rate_pid_d_roll=float(values[26]),
+            rate_pid_d_pitch=float(values[27]),
+            rate_pid_d_yaw=float(values[28]),
+            pid_out_roll=float(values[29]),
+            pid_out_pitch=float(values[30]),
+            pid_out_yaw=float(values[31]),
+            motor1=float(values[32]),
+            motor2=float(values[33]),
+            motor3=float(values[34]),
+            motor4=float(values[35]),
+            battery_voltage=float(values[36]),
+            battery_adc_raw=int(values[37]),
+            loop_dt_us=int(values[38]),
+            imu_age_us=int(values[39]),
+            imu_mode=int(values[40]),
+            imu_health=int(values[41]),
+            arm_state=int(values[42]),
+            failsafe_reason=int(values[43]),
+            control_mode=int(values[44]),
+            baro_pressure_pa=0.0,
+            baro_temperature_c=0.0,
+            baro_altitude_m=0.0,
+            baro_vspeed_mps=0.0,
+            baro_update_age_us=0,
+            baro_valid=0,
+            baro_health=0,
+            attitude_err_roll_deg=0.0,
+            attitude_err_pitch_deg=0.0,
+            attitude_rate_sp_roll=0.0,
+            attitude_rate_sp_pitch=0.0,
+            attitude_ref_qw=0.0,
+            attitude_ref_qx=0.0,
+            attitude_ref_qy=0.0,
+            attitude_ref_qz=0.0,
+            base_duty_active=0.0,
+            attitude_ref_valid=0,
+        )
+
+    @classmethod
+    def _from_v2_values(cls, values: list[object]) -> "TelemetrySample":
+        sample = cls._from_v1_values(values[:45])
+        sample.baro_pressure_pa = float(values[48])
+        sample.baro_temperature_c = float(values[49])
+        sample.baro_altitude_m = float(values[50])
+        sample.baro_vspeed_mps = float(values[51])
+        sample.baro_update_age_us = int(values[52])
+        sample.baro_valid = int(values[53])
+        sample.baro_health = int(values[54])
+        return sample
+
+    @classmethod
+    def _from_v3_values(cls, values: list[object]) -> "TelemetrySample":
+        sample = cls._from_v2_values(values[:57])
+        sample.attitude_err_roll_deg = float(values[57])
+        sample.attitude_err_pitch_deg = float(values[58])
+        sample.attitude_rate_sp_roll = float(values[59])
+        sample.attitude_rate_sp_pitch = float(values[60])
+        sample.attitude_ref_qw = float(values[61])
+        sample.attitude_ref_qx = float(values[62])
+        sample.attitude_ref_qy = float(values[63])
+        sample.attitude_ref_qz = float(values[64])
+        sample.base_duty_active = float(values[65])
+        sample.attitude_ref_valid = int(values[66])
+        return sample
+
+    @classmethod
     def from_payload(cls, payload: bytes) -> "TelemetrySample":
-        """从设备 payload 解析遥测样本。
-
-        Args:
-            payload: 设备协议返回的原始遥测负载。
-
-        Returns:
-            解析后的遥测样本对象。
-
-        Raises:
-            ValueError: 负载长度既不匹配 V1 也不匹配 V2 结构时抛出。
-
-        注意:
-            当前仓库同时兼容旧版无气压计字段的 V1 结构和追加气压计字段的 V2 结构。
-        """
-
+        if len(payload) == TELEMETRY_STRUCT_V3.size:
+            return cls._from_v3_values(list(TELEMETRY_STRUCT_V3.unpack(payload)))
         if len(payload) == TELEMETRY_STRUCT_V2.size:
-            values = list(TELEMETRY_STRUCT_V2.unpack(payload))
-            trimmed = values[:45] + values[48:55]
-            return cls(*trimmed)
-
+            return cls._from_v2_values(list(TELEMETRY_STRUCT_V2.unpack(payload)))
         if len(payload) == TELEMETRY_STRUCT_V1.size:
-            values = list(TELEMETRY_STRUCT_V1.unpack(payload))
-            trimmed = values[:45]
-            trimmed.extend([
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0,
-                0,
-                0,
-            ])
-            return cls(*trimmed)
-
+            return cls._from_v1_values(list(TELEMETRY_STRUCT_V1.unpack(payload)))
         raise ValueError(
             f"unsupported telemetry payload length {len(payload)}, "
-            f"expected {TELEMETRY_STRUCT_V1.size} or {TELEMETRY_STRUCT_V2.size}"
+            f"expected {TELEMETRY_STRUCT_V1.size}, {TELEMETRY_STRUCT_V2.size}, or {TELEMETRY_STRUCT_V3.size}"
         )
 
     def to_csv_row(self) -> list[object]:
-        """按 CSV 列顺序导出当前样本。
-
-        Returns:
-            与 `TELEMETRY_CSV_FIELDS` 一一对应的值列表。
-        """
-
         return [getattr(self, name) for name in TELEMETRY_CSV_FIELDS]
 
     def to_display_map(self) -> dict[str, object]:
-        """将样本转换为便于界面展示的字典。
-
-        Returns:
-            以字段名为键、字段值为值的映射。
-        """
-
         return {name: getattr(self, name) for name in TELEMETRY_CSV_FIELDS}
 
 
 def decode_param_value(payload: bytes) -> ParamValue:
-    """解析参数值响应负载。
-
-    Args:
-        payload: 设备返回的 `MSG_PARAM_VALUE` 负载。
-
-    Returns:
-        解析后的参数对象。
-
-    Raises:
-        IndexError: 负载过短且缺少类型或名称长度字段时抛出。
-        struct.error: 数值字段长度不足时抛出。
-    """
-
     type_id = payload[0]
     name_len = payload[1]
     name = payload[2 : 2 + name_len].decode("ascii")
@@ -285,32 +338,11 @@ def decode_param_value(payload: bytes) -> ParamValue:
 
 
 def decode_device_info(payload: bytes) -> DeviceInfo:
-    """解析握手响应负载。
-
-    Args:
-        payload: 设备返回的 `MSG_HELLO_RESP` 负载。
-
-    Returns:
-        设备摘要信息。
-
-    Raises:
-        struct.error: 负载长度与握手结构不匹配时抛出。
-    """
-
     protocol_version, imu_mode, arm_state, stream_enabled, feature_bitmap = HELLO_RESP_STRUCT.unpack(payload)
     return DeviceInfo(protocol_version, imu_mode, arm_state, stream_enabled, feature_bitmap)
 
 
 def decode_event_text(payload: bytes) -> str:
-    """解析文本事件负载。
-
-    Args:
-        payload: 设备返回的 `MSG_EVENT_LOG_TEXT` 负载。
-
-    Returns:
-        UTF-8 文本内容；负载过短时返回空字符串。
-    """
-
     if len(payload) < 2:
         return ""
     text_len = payload[1]
@@ -318,19 +350,13 @@ def decode_event_text(payload: bytes) -> str:
 
 
 def coerce_param_value(type_id: int, value: object) -> object:
-    """Coerce a user-provided value into the protocol scalar type."""
-
     if type_id == 0:
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
             return value.lower() in {"1", "true", "yes", "on"}
         return bool(value)
-    if type_id == 1:
-        return int(value)
-    if type_id == 2:
-        return int(value)
-    if type_id == 3:
+    if type_id in {1, 2, 3}:
         return int(value)
     if type_id == 4:
         return float(value)
@@ -338,19 +364,6 @@ def coerce_param_value(type_id: int, value: object) -> object:
 
 
 def encode_param_value(type_id: int, value_text: str) -> bytes:
-    """将文本参数值编码为协议字节串。
-
-    Args:
-        type_id: 参数类型编号。
-        value_text: 来自 CLI 或导入文件的文本值。
-
-    Returns:
-        可直接写入 `MSG_PARAM_SET` 的参数值字节串。
-
-    Raises:
-        ValueError: 参数类型不受支持，或文本无法转换为目标数值类型时抛出。
-    """
-
     if type_id == 0:
         return bytes([1 if value_text.lower() in {"1", "true", "yes", "on"} else 0])
     if type_id == 1:

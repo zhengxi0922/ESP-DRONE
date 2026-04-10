@@ -16,6 +16,7 @@
 
 - [ESP-IDF 环境](./esp_idf_env.zh-CN.md)
 - [Bring-up 清单](./bringup_checklist.zh-CN.md)
+- [圆棍姿态外环 Bring-Up 计划](./hang_attitude_bringup_plan.zh-CN.md)
 - [速率环 Bring-Up 结果](./rate_bringup_results.zh-CN.md)
 - [RAW 模式姿态方案](./raw_mode_attitude_plan.zh-CN.md)
 - [气压计框架](./barometer_framework.zh-CN.md)
@@ -25,9 +26,8 @@
 
 - [Python CLI 使用说明](./python_cli_usage.zh-CN.md)
 - [Python GUI 使用说明](./python_gui_usage.zh-CN.md)
-- [Python GUI 界面规划](./python_gui_ui_plan.zh-CN.md)
 - [Python GUI 人工检查清单](./python_gui_manual_checklist.zh-CN.md)
+- [Python GUI 界面规划](./python_gui_ui_plan.zh-CN.md)
 - [Python 工具 GUI + CLI 重构计划](./python_tool_gui_refactor_plan.zh-CN.md)
 - [CLI 联机测试矩阵](./cli_live_test_matrix.zh-CN.md)
 - [CLI 联机测试结果](./cli_live_test_results.zh-CN.md)
-

@@ -34,6 +34,11 @@ def build_telemetry_payload() -> bytes:
         100845.0, 26.5, 1.25, -0.10,
         15000,
         1, 1, 0, 0,
+        0.0, 0.0,
+        0.0, 0.0,
+        1.0, 0.0, 0.0, 0.0,
+        0.15,
+        1, 0, 0, 0,
     ]
     from esp_drone_cli.core.models import TELEMETRY_STRUCT
 
@@ -175,11 +180,11 @@ class FakeRollBenchSession:
             return 1
         sign = 1.0 if value_dps > 0.0 else -1.0 if value_dps < 0.0 else 0.0
         if abs(value_dps) <= 0.01:
-            self._latest.control_mode = 4
+            self._latest.control_mode = 2
             self._emit(command_dps=0.0, feedback_dps=0.0, pid_out=0.0, split=0.0, repeats=2)
             return 0
         if self._trip_on_nonzero:
-            self._latest.control_mode = 4
+            self._latest.control_mode = 2
             self._emit(
                 command_dps=value_dps,
                 feedback_dps=-2.0 * sign,
@@ -188,7 +193,7 @@ class FakeRollBenchSession:
                 repeats=25,
             )
             return 0
-        self._latest.control_mode = 4
+        self._latest.control_mode = 2
         self._emit(
             command_dps=value_dps,
             feedback_dps=0.30 * value_dps,

@@ -732,7 +732,10 @@ EXTRA_TRANSLATIONS = {
         "chart.rate_roll": "Rate Roll",
         "chart.rate_pitch": "Rate Pitch",
         "chart.rate_yaw": "Rate Yaw",
+        "chart.hang_roll": "Hang Attitude Roll",
+        "chart.hang_pitch": "Hang Attitude Pitch",
         "chart.y_rate_mix": "deg/s / duty",
+        "chart.y_attitude_mix": "deg / deg/s / duty",
         "field.baro_pressure_pa": "气压 (Pa)",
         "field.baro_temperature_c": "温度 (C)",
         "field.baro_altitude_m": "气压高度 (m)",
@@ -786,6 +789,16 @@ EXTRA_TRANSLATIONS = {
         "field.pid_out_roll": "pid_out_roll",
         "field.pid_out_pitch": "pid_out_pitch",
         "field.pid_out_yaw": "pid_out_yaw",
+        "field.attitude_ref_valid": "attitude_ref_valid",
+        "field.attitude_err_roll_deg": "attitude_err_roll_deg",
+        "field.attitude_err_pitch_deg": "attitude_err_pitch_deg",
+        "field.attitude_rate_sp_roll": "attitude_rate_sp_roll",
+        "field.attitude_rate_sp_pitch": "attitude_rate_sp_pitch",
+        "field.attitude_ref_qw": "attitude_ref_qw",
+        "field.attitude_ref_qx": "attitude_ref_qx",
+        "field.attitude_ref_qy": "attitude_ref_qy",
+        "field.attitude_ref_qz": "attitude_ref_qz",
+        "field.base_duty_active": "base_duty_active",
         "baro.init": "INIT",
         "baro.ok": "OK",
         "baro.stale": "STALE",
@@ -793,6 +806,7 @@ EXTRA_TRANSLATIONS = {
         "baro.valid": "VALID",
         "baro.invalid_data": "INVALID",
         "control.height_hold_reserved": "HEIGHT_HOLD_RESERVED",
+        "control.attitude_hang_test": "ATTITUDE_HANG_TEST",
     },
 }
 
@@ -826,6 +840,16 @@ TELEMETRY_FIELD_KEYS = {
     "arm_state": "field.arm_state",
     "failsafe_reason": "field.failsafe_reason",
     "control_mode": "field.control_mode",
+    "attitude_ref_valid": "field.attitude_ref_valid",
+    "attitude_err_roll_deg": "field.attitude_err_roll_deg",
+    "attitude_err_pitch_deg": "field.attitude_err_pitch_deg",
+    "attitude_rate_sp_roll": "field.attitude_rate_sp_roll",
+    "attitude_rate_sp_pitch": "field.attitude_rate_sp_pitch",
+    "attitude_ref_qw": "field.attitude_ref_qw",
+    "attitude_ref_qx": "field.attitude_ref_qx",
+    "attitude_ref_qy": "field.attitude_ref_qy",
+    "attitude_ref_qz": "field.attitude_ref_qz",
+    "base_duty_active": "field.base_duty_active",
 }
 
 STATUS_STYLE = {
@@ -874,6 +898,7 @@ CONTROL_MODE_TEXT = {
     1: ("control.axis_test", "active"),
     2: ("control.rate_test", "active"),
     3: ("control.height_hold_reserved", "warn"),
+    4: ("control.attitude_hang_test", "active"),
 }
 
 IMU_MODE_TEXT = {
@@ -1223,6 +1248,11 @@ class MainWindow(QMainWindow):
         "battery_voltage", "battery_adc_raw",
         "baro_pressure_pa", "baro_temperature_c", "baro_altitude_m", "baro_vspeed_mps",
         "baro_valid", "baro_health", "baro_update_age_us",
+        "attitude_ref_valid",
+        "attitude_err_roll_deg", "attitude_err_pitch_deg",
+        "attitude_rate_sp_roll", "attitude_rate_sp_pitch",
+        "attitude_ref_qw", "attitude_ref_qx", "attitude_ref_qy", "attitude_ref_qz",
+        "base_duty_active",
         "imu_age_us", "loop_dt_us",
         "imu_mode", "imu_health", "arm_state", "failsafe_reason", "control_mode",
     ]
@@ -1235,6 +1265,14 @@ class MainWindow(QMainWindow):
         "motor_idle_duty": "Brushed motor armed idle floor, normalized 0..1.",
         "motor_max_duty": "Brushed motor output ceiling, normalized 0..1.",
         "bringup_test_base_duty": "Base duty used in axis/rate bench tests. Keep low on a restrained frame.",
+        "attitude_kp_roll": "Bench-only hang attitude outer-loop P gain for roll. Do not use as a free-flight angle gain.",
+        "attitude_kp_pitch": "Bench-only hang attitude outer-loop P gain for pitch. Do not use as a free-flight angle gain.",
+        "attitude_rate_limit_roll": "Bench-only roll rate-setpoint clamp in deg/s for the hang-attitude outer loop.",
+        "attitude_rate_limit_pitch": "Bench-only pitch rate-setpoint clamp in deg/s for the hang-attitude outer loop.",
+        "attitude_error_deadband_deg": "Small-angle deadband around the captured hanging reference, in degrees.",
+        "attitude_trip_deg": "Safety trip threshold for roll/pitch attitude error on the constrained bench.",
+        "attitude_test_base_duty": "Base duty for the bench-only hang attitude mode. Keep conservative on the constrained rig.",
+        "attitude_ref_valid": "Runtime-only flag. True after attitude-capture-ref succeeds; not stored in flash.",
         "rate_kp_roll": "Roll rate-loop proportional gain. Start with small steps such as +0.0005.",
         "rate_ki_roll": "Roll rate-loop integral gain. Keep zero until P is stable on the bench.",
         "rate_kd_roll": "Roll rate-loop derivative gain. Add only after P direction and sign are verified.",
@@ -1290,6 +1328,32 @@ class MainWindow(QMainWindow):
                 ("motor4", "field.motor4"),
             ],
             "chart.y_rate_mix",
+        ),
+        "hang_roll": ChartSpec(
+            "chart.hang_roll",
+            [
+                ("attitude_err_roll_deg", "field.attitude_err_roll_deg"),
+                ("attitude_rate_sp_roll", "field.attitude_rate_sp_roll"),
+                ("pid_out_roll", "field.pid_out_roll"),
+                ("motor1", "field.motor1"),
+                ("motor2", "field.motor2"),
+                ("motor3", "field.motor3"),
+                ("motor4", "field.motor4"),
+            ],
+            "chart.y_attitude_mix",
+        ),
+        "hang_pitch": ChartSpec(
+            "chart.hang_pitch",
+            [
+                ("attitude_err_pitch_deg", "field.attitude_err_pitch_deg"),
+                ("attitude_rate_sp_pitch", "field.attitude_rate_sp_pitch"),
+                ("pid_out_pitch", "field.pid_out_pitch"),
+                ("motor1", "field.motor1"),
+                ("motor2", "field.motor2"),
+                ("motor3", "field.motor3"),
+                ("motor4", "field.motor4"),
+            ],
+            "chart.y_attitude_mix",
         ),
         "battery": ChartSpec("chart.battery", [("battery_voltage", "field.battery_voltage")], "chart.y_volt"),
         "baro": ChartSpec(
@@ -2003,8 +2067,81 @@ class MainWindow(QMainWindow):
         rate_layout.addWidget(self.rate_stop_button, 0, 5)
         self.rate_group = rate_box
 
+        hang_box = QWidget()
+        hang_layout = QGridLayout(hang_box)
+        hang_layout.setColumnStretch(1, 1)
+        hang_layout.setColumnStretch(3, 1)
+        hang_layout.setColumnStretch(5, 1)
+        self.hang_note_label = QLabel("Bench-only constrained rig. Never use with prop-on free flight.")
+        self.hang_note_label.setWordWrap(True)
+        self.hang_capture_button = QPushButton("Capture Ref")
+        self.hang_start_button = QPushButton("Attitude Test Start")
+        self.hang_stop_button = QPushButton("Attitude Test Stop")
+        self.hang_base_duty_label = QLabel("Base Duty")
+        self.hang_base_duty_spin = QDoubleSpinBox()
+        self.hang_base_duty_spin.setRange(0.0, 1.0)
+        self.hang_base_duty_spin.setDecimals(3)
+        self.hang_base_duty_spin.setSingleStep(0.01)
+        self.hang_base_duty_spin.setValue(0.05)
+        self.hang_kp_roll_label = QLabel("Kp Roll")
+        self.hang_kp_roll_spin = QDoubleSpinBox()
+        self.hang_kp_roll_spin.setRange(0.0, 10.0)
+        self.hang_kp_roll_spin.setDecimals(2)
+        self.hang_kp_roll_spin.setSingleStep(0.1)
+        self.hang_kp_roll_spin.setValue(2.0)
+        self.hang_kp_pitch_label = QLabel("Kp Pitch")
+        self.hang_kp_pitch_spin = QDoubleSpinBox()
+        self.hang_kp_pitch_spin.setRange(0.0, 10.0)
+        self.hang_kp_pitch_spin.setDecimals(2)
+        self.hang_kp_pitch_spin.setSingleStep(0.1)
+        self.hang_kp_pitch_spin.setValue(2.0)
+        self.hang_rate_limit_roll_label = QLabel("Rate Limit Roll")
+        self.hang_rate_limit_roll_spin = QDoubleSpinBox()
+        self.hang_rate_limit_roll_spin.setRange(0.0, 180.0)
+        self.hang_rate_limit_roll_spin.setDecimals(1)
+        self.hang_rate_limit_roll_spin.setSingleStep(1.0)
+        self.hang_rate_limit_roll_spin.setValue(25.0)
+        self.hang_rate_limit_pitch_label = QLabel("Rate Limit Pitch")
+        self.hang_rate_limit_pitch_spin = QDoubleSpinBox()
+        self.hang_rate_limit_pitch_spin.setRange(0.0, 180.0)
+        self.hang_rate_limit_pitch_spin.setDecimals(1)
+        self.hang_rate_limit_pitch_spin.setSingleStep(1.0)
+        self.hang_rate_limit_pitch_spin.setValue(25.0)
+        self.hang_deadband_label = QLabel("Deadband Deg")
+        self.hang_deadband_spin = QDoubleSpinBox()
+        self.hang_deadband_spin.setRange(0.0, 10.0)
+        self.hang_deadband_spin.setDecimals(1)
+        self.hang_deadband_spin.setSingleStep(0.1)
+        self.hang_deadband_spin.setValue(1.0)
+        self.hang_trip_label = QLabel("Trip Deg")
+        self.hang_trip_spin = QDoubleSpinBox()
+        self.hang_trip_spin.setRange(1.0, 90.0)
+        self.hang_trip_spin.setDecimals(1)
+        self.hang_trip_spin.setSingleStep(1.0)
+        self.hang_trip_spin.setValue(30.0)
+        self.hang_group = hang_box
+        hang_layout.addWidget(self.hang_note_label, 0, 0, 1, 6)
+        hang_layout.addWidget(self.hang_capture_button, 1, 0)
+        hang_layout.addWidget(self.hang_start_button, 1, 1)
+        hang_layout.addWidget(self.hang_stop_button, 1, 2)
+        hang_layout.addWidget(self.hang_base_duty_label, 1, 3)
+        hang_layout.addWidget(self.hang_base_duty_spin, 1, 4)
+        hang_layout.addWidget(self.hang_kp_roll_label, 2, 0)
+        hang_layout.addWidget(self.hang_kp_roll_spin, 2, 1)
+        hang_layout.addWidget(self.hang_kp_pitch_label, 2, 2)
+        hang_layout.addWidget(self.hang_kp_pitch_spin, 2, 3)
+        hang_layout.addWidget(self.hang_rate_limit_roll_label, 3, 0)
+        hang_layout.addWidget(self.hang_rate_limit_roll_spin, 3, 1)
+        hang_layout.addWidget(self.hang_rate_limit_pitch_label, 3, 2)
+        hang_layout.addWidget(self.hang_rate_limit_pitch_spin, 3, 3)
+        hang_layout.addWidget(self.hang_deadband_label, 4, 0)
+        hang_layout.addWidget(self.hang_deadband_spin, 4, 1)
+        hang_layout.addWidget(self.hang_trip_label, 4, 2)
+        hang_layout.addWidget(self.hang_trip_spin, 4, 3)
+
         self.debug_action_tabs.addTab(motor_box, "")
         self.debug_action_tabs.addTab(rate_box, "")
+        self.debug_action_tabs.addTab(hang_box, "Hang Attitude")
         layout.addWidget(self.debug_action_tabs)
 
         return group
@@ -2138,6 +2275,9 @@ class MainWindow(QMainWindow):
         )
         self.rate_start_button.clicked.connect(self._start_rate_test)
         self.rate_stop_button.clicked.connect(self._stop_rate_test)
+        self.hang_capture_button.clicked.connect(self._capture_attitude_ref)
+        self.hang_start_button.clicked.connect(self._start_attitude_test)
+        self.hang_stop_button.clicked.connect(self._stop_attitude_test)
         self.log_browse_button.clicked.connect(self._browse_log_path)
         self.log_path_edit.textChanged.connect(self._sync_log_path_tooltip)
         self.start_log_button.clicked.connect(self._start_log)
@@ -2254,6 +2394,17 @@ class MainWindow(QMainWindow):
         self.rate_dps_label.setText(self._t("label.rate_dps"))
         self.rate_start_button.setText(self._t("button.start"))
         self.rate_stop_button.setText(self._t("button.stop"))
+        self.hang_note_label.setText("Bench-only constrained rig. Never use with prop-on free flight.")
+        self.hang_capture_button.setText("Capture Ref")
+        self.hang_start_button.setText("Attitude Test Start")
+        self.hang_stop_button.setText("Attitude Test Stop")
+        self.hang_base_duty_label.setText("Base Duty")
+        self.hang_kp_roll_label.setText("Kp Roll")
+        self.hang_kp_pitch_label.setText("Kp Pitch")
+        self.hang_rate_limit_roll_label.setText("Rate Limit Roll")
+        self.hang_rate_limit_pitch_label.setText("Rate Limit Pitch")
+        self.hang_deadband_label.setText("Deadband Deg")
+        self.hang_trip_label.setText("Trip Deg")
         self.output_label.setText(self._t("label.output"))
         self.dump_s_label.setText(self._t("label.dump_s"))
         self.log_browse_button.setText(self._t("button.browse"))
@@ -2262,6 +2413,7 @@ class MainWindow(QMainWindow):
         self.dump_csv_button.setText(self._t("button.dump_csv"))
         self.debug_action_tabs.setTabText(0, self._t("tab.motor"))
         self.debug_action_tabs.setTabText(1, self._t("tab.rate"))
+        self.debug_action_tabs.setTabText(2, "Hang Attitude")
 
         self.stream_on_button.setText(self._t("button.stream_on"))
         self.stream_off_button.setText(self._t("button.stream_off"))
@@ -2470,6 +2622,7 @@ class MainWindow(QMainWindow):
             self.params_table.setItem(row, 0, QTableWidgetItem(param.name))
             self.params_table.setItem(row, 1, QTableWidgetItem(TYPE_NAMES.get(param.type_id, str(param.type_id))))
             self.params_table.setItem(row, 2, QTableWidgetItem(_format_value(param.name, param.value)))
+        self._sync_hang_param_spins()
         self._filter_params_table()
 
     def _filter_params_table(self) -> None:
@@ -2575,6 +2728,58 @@ class MainWindow(QMainWindow):
         index = self.rate_axis_combo.currentIndex()
         self._run_checked_command_action("rate_test_stop", CmdId.RATE_TEST, lambda: self._session.rate_test(index, 0.0))
 
+    def _sync_hang_param_spins(self) -> None:
+        if not getattr(self, "_params", None):
+            return
+
+        param_map = {item.name: item.value for item in self._params}
+        updates = {
+            "attitude_test_base_duty": self.hang_base_duty_spin,
+            "attitude_kp_roll": self.hang_kp_roll_spin,
+            "attitude_kp_pitch": self.hang_kp_pitch_spin,
+            "attitude_rate_limit_roll": self.hang_rate_limit_roll_spin,
+            "attitude_rate_limit_pitch": self.hang_rate_limit_pitch_spin,
+            "attitude_error_deadband_deg": self.hang_deadband_spin,
+            "attitude_trip_deg": self.hang_trip_spin,
+        }
+        for name, spin in updates.items():
+            if name not in param_map:
+                continue
+            spin.blockSignals(True)
+            spin.setValue(float(param_map[name]))
+            spin.blockSignals(False)
+
+    def _apply_hang_params(self) -> None:
+        updates = [
+            ("attitude_test_base_duty", self.hang_base_duty_spin.value()),
+            ("attitude_kp_roll", self.hang_kp_roll_spin.value()),
+            ("attitude_kp_pitch", self.hang_kp_pitch_spin.value()),
+            ("attitude_rate_limit_roll", self.hang_rate_limit_roll_spin.value()),
+            ("attitude_rate_limit_pitch", self.hang_rate_limit_pitch_spin.value()),
+            ("attitude_error_deadband_deg", self.hang_deadband_spin.value()),
+            ("attitude_trip_deg", self.hang_trip_spin.value()),
+        ]
+        for name, value in updates:
+            self._session.set_param(name, 4, value)
+        return None
+
+    def _capture_attitude_ref(self) -> None:
+        def action():
+            self._apply_hang_params()
+            return ensure_command_ok(CmdId.ATTITUDE_CAPTURE_REF, int(self._session.attitude_capture_ref()))
+
+        self._run_session_action("attitude_capture_ref", action)
+
+    def _start_attitude_test(self) -> None:
+        def action():
+            self._apply_hang_params()
+            return ensure_command_ok(CmdId.ATTITUDE_TEST_START, int(self._session.attitude_test_start()))
+
+        self._run_session_action("attitude_test_start", action)
+
+    def _stop_attitude_test(self) -> None:
+        self._run_checked_command_action("attitude_test_stop", CmdId.ATTITUDE_TEST_STOP, self._session.attitude_test_stop)
+
     def _browse_log_path(self) -> None:
         output, _ = QFileDialog.getSaveFileName(self, self._t("label.output"), self.log_path_edit.text(), "CSV Files (*.csv)")
         if output:
@@ -2652,6 +2857,9 @@ class MainWindow(QMainWindow):
             self.calib_level_button,
             self.rate_start_button,
             self.rate_stop_button,
+            self.hang_capture_button,
+            self.hang_start_button,
+            self.hang_stop_button,
             self.start_log_button,
             self.stop_log_button,
             self.dump_csv_button,
@@ -2813,7 +3021,7 @@ class MainWindow(QMainWindow):
             self._set_last_result(self._t("msg.dump_csv_done", rows=rows, path=path))
             self._append_log(self._t("msg.dump_csv_done", rows=rows, path=path))
             return
-        if label in {"connect_serial", "connect_udp", "disconnect", "arm", "disarm", "kill", "reboot", "save_params", "reset_params", "motor_test_start", "motor_test_stop", "calib_gyro", "calib_level", "rate_test_start", "rate_test_stop"}:
+        if label in {"connect_serial", "connect_udp", "disconnect", "arm", "disarm", "kill", "reboot", "save_params", "reset_params", "motor_test_start", "motor_test_stop", "calib_gyro", "calib_level", "rate_test_start", "rate_test_stop", "attitude_capture_ref", "attitude_test_start", "attitude_test_stop"}:
             summary = label.replace("_", " ")
             if label == "connect_serial":
                 summary = f"serial: {_device_info_text(result)}"
@@ -2845,6 +3053,12 @@ class MainWindow(QMainWindow):
                 summary = self._t("msg.command_ok", label=f"{self._t('group.rate')} {self._t('button.start')}")
             elif label == "rate_test_stop":
                 summary = self._t("msg.command_ok", label=f"{self._t('group.rate')} {self._t('button.stop')}")
+            elif label == "attitude_capture_ref":
+                summary = self._t("msg.command_ok", label=self.hang_capture_button.text())
+            elif label == "attitude_test_start":
+                summary = self._t("msg.command_ok", label=self.hang_start_button.text())
+            elif label == "attitude_test_stop":
+                summary = self._t("msg.command_ok", label=self.hang_stop_button.text())
             self._set_last_result(summary)
             self._append_log(summary)
             return

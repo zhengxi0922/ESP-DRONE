@@ -26,20 +26,31 @@
 
 ## 当前状态
 
-仓库现在已经具备可用的三轴 rate 闭环台架路径：
+仓库现在有两条“受限台架”控制路径：
 
-- 固件支持 `roll / pitch / yaw` 三轴 `rate-test`
-- 三轴 rate PID 参数已经真实接入控制链
-- CLI 支持 `rate-test`、`rate-status`、参数编辑、保存、导入、导出
-- PyQt5 GUI 支持 rate-test 控件、rate 调试图表、rate PID 编辑和共享会话命令处理
-- 当前软件验证已经覆盖 Python 测试和固件构建成功
+- 已可用的 `roll / pitch / yaw` 三轴 rate 闭环台架路径
+- 新增的圆棍 / 吊架专用姿态外环 bring-up 路径，面向自然平衡姿态为 `+Z 朝下` 的受限台架
+
+新的姿态外环 bring-up 明确受限于以下范围：
+
+- 固件新增 `CONTROL_MODE_ATTITUDE_HANG_TEST`
+- 进入前必须显式执行 `attitude-capture-ref`
+- 控制误差使用相对四元数 `q_rel = q_ref^-1 * q_now`，而不是拿全局 `roll=0 / pitch=0` 直接相减
+- 这一轮只做 `roll / pitch` 外环
+- 外环先做 P-only，再把结果喂给现有 rate 内环
+- 推力保持开环固定 `attitude_test_base_duty`
+
+这不是自由飞 stabilize，也不是 angle-ready 模式。
+
+`CONTROL_MODE_ATTITUDE_HANG_TEST` 仅用于受限台架，绝不能直接用于带桨自由飞。
 
 本阶段仍然不做：
 
-- angle 外环
-- autotune
+- 自由飞 stabilize / angle 调参
+- yaw heading hold
 - altitude hold 闭环
-- 自由飞行调优
+- auto takeoff
+- autotune
 
 ## 固件构建
 
@@ -77,8 +88,10 @@ pip install -e .[gui]
 
 ## 主要文档
 
+- [docs/hang_attitude_bringup_plan.zh-CN.md](./docs/hang_attitude_bringup_plan.zh-CN.md)
 - [docs/python_cli_usage.zh-CN.md](./docs/python_cli_usage.zh-CN.md)
 - [docs/python_gui_usage.zh-CN.md](./docs/python_gui_usage.zh-CN.md)
+- [docs/bringup_checklist.zh-CN.md](./docs/bringup_checklist.zh-CN.md)
+- [docs/python_gui_manual_checklist.zh-CN.md](./docs/python_gui_manual_checklist.zh-CN.md)
 - [docs/rate_bringup_results.zh-CN.md](./docs/rate_bringup_results.zh-CN.md)
 - [docs/README.zh-CN.md](./docs/README.zh-CN.md)
-

@@ -27,6 +27,7 @@ from esp_drone_cli.core.models import (
     ParamValue,
     TELEMETRY_STRUCT,
     TELEMETRY_STRUCT_V1,
+    TELEMETRY_STRUCT_V3,
     TelemetrySample,
 )
 from esp_drone_cli.core.protocol.framing import encode_serial_packet
@@ -58,6 +59,11 @@ def build_telemetry_payload() -> bytes:
         100845.0, 26.5, 1.25, -0.10,
         15000,
         1, 1, 0, 0,
+        2.5, -3.5,
+        -5.0, 7.0,
+        0.7, 0.1, -0.2, 0.3,
+        0.05,
+        1, 0, 0, 0,
     ]
     return TELEMETRY_STRUCT.pack(*values)
 
@@ -95,7 +101,7 @@ class MockTransport:
     def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
         self.sent.append((msg_type, payload))
         if msg_type == MsgType.HELLO_REQ:
-            hello = HELLO_RESP_STRUCT.pack(2, 1, 0, 0, 0x1F)
+            hello = HELLO_RESP_STRUCT.pack(3, 1, 0, 0, 0x3F)
             self.inject(Frame(MsgType.HELLO_RESP, flags, seq, hello))
             return
         if msg_type == MsgType.CMD_REQ:
@@ -188,11 +194,11 @@ class FakeSession:
         self._record("connect_serial", port, baudrate, timeout)
         self.is_connected = True
         self.device_info = type("DeviceInfoStub", (), {
-            "protocol_version": 2,
+            "protocol_version": 3,
             "imu_mode": 1,
             "arm_state": 0,
             "stream_enabled": 0,
-            "feature_bitmap": 0x1F,
+            "feature_bitmap": 0x3F,
         })()
         self._emit_connection()
         return "fake-device"
@@ -201,11 +207,11 @@ class FakeSession:
         self._record("connect_udp", host, port, timeout)
         self.is_connected = True
         self.device_info = type("DeviceInfoStub", (), {
-            "protocol_version": 2,
+            "protocol_version": 3,
             "imu_mode": 1,
             "arm_state": 0,
             "stream_enabled": 0,
-            "feature_bitmap": 0x1F,
+            "feature_bitmap": 0x3F,
         })()
         self._emit_connection()
         return "fake-device"
@@ -293,6 +299,18 @@ class FakeSession:
         self._record("rate_test", axis_index, value_dps)
         return 0
 
+    def attitude_capture_ref(self) -> int:
+        self._record("attitude_capture_ref")
+        return 0
+
+    def attitude_test_start(self) -> int:
+        self._record("attitude_test_start")
+        return 0
+
+    def attitude_test_stop(self) -> int:
+        self._record("attitude_test_stop")
+        return 0
+
     def start_csv_log(self, output_path: Path) -> None:
         self._record("start_csv_log", output_path)
         self.last_log_path = output_path
@@ -309,11 +327,11 @@ class FakeSession:
     def hello(self):
         self._record("hello")
         self.device_info = type("DeviceInfoStub", (), {
-            "protocol_version": 2,
+            "protocol_version": 3,
             "imu_mode": 1,
             "arm_state": 0,
             "stream_enabled": 0,
-            "feature_bitmap": 0x1F,
+            "feature_bitmap": 0x3F,
         })()
         return self.device_info
 
@@ -322,7 +340,8 @@ def test_device_session_mock_roundtrip(tmp_path: Path):
     session = DeviceSession()
     transport = MockTransport()
     info = session.connect_transport(transport)
-    assert info.protocol_version == 2
+    assert info.protocol_version == 3
+    assert TELEMETRY_STRUCT.size == TELEMETRY_STRUCT_V3.size
     assert session.arm() == 0
     assert session.disarm() == 0
     assert session.kill() == 0
@@ -368,6 +387,9 @@ def test_device_session_telemetry_subscription_receives_samples():
     assert received[0].gyro_x == 1.0
     assert received[0].control_mode == 2
     assert received[0].baro_altitude_m == pytest.approx(1.25)
+    assert received[0].attitude_err_roll_deg == pytest.approx(2.5)
+    assert received[0].attitude_rate_sp_pitch == pytest.approx(7.0)
+    assert received[0].attitude_ref_valid == 1
 
 
 def test_telemetry_sample_rate_debug_projection_uses_project_axis_truth():
@@ -466,9 +488,10 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert window.left_panel.verticalScrollBarPolicy() == Qt.ScrollBarAsNeeded
     assert window.connection_section.is_expanded() is True
     assert window.safety_section.is_expanded() is True
-    assert window.debug_action_tabs.count() == 2
+    assert window.debug_action_tabs.count() == 3
     assert window.debug_action_tabs.tabText(0) == window._t("tab.motor")
     assert window.debug_action_tabs.tabText(1) == window._t("tab.rate")
+    assert window.debug_action_tabs.tabText(2) == "Hang Attitude"
     assert window.debug_action_tabs.currentIndex() == 0
     assert window.params_table.rowCount() == 2
     session.calls.clear()
@@ -616,6 +639,11 @@ def test_cli_parser_compatibility_without_gui_dependency():
     baro_args = build_parser().parse_args(["--serial", "COM7", "watch-baro", "--timeout", "1"])
     assert baro_args.command == "watch-baro"
 
+    attitude_args = build_parser().parse_args(["--serial", "COM7", "attitude-test", "start", "--base-duty", "0.05"])
+    assert attitude_args.command == "attitude-test"
+    assert attitude_args.action == "start"
+    assert attitude_args.base_duty == pytest.approx(0.05)
+
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
     real_import = builtins.__import__
@@ -657,11 +685,11 @@ def test_cli_baro_command_uses_device_session(monkeypatch, capsys):
 
     session = FakeSession()
     session.device_info = type("DeviceInfoStub", (), {
-        "protocol_version": 2,
+        "protocol_version": 3,
         "imu_mode": 1,
         "arm_state": 0,
         "stream_enabled": 0,
-        "feature_bitmap": 0x1F,
+        "feature_bitmap": 0x3F,
     })()
     monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
 
@@ -684,11 +712,11 @@ def test_cli_rate_status_command_uses_device_session(monkeypatch, capsys):
 
     session = FakeSession()
     session.device_info = type("DeviceInfoStub", (), {
-        "protocol_version": 2,
+        "protocol_version": 3,
         "imu_mode": 1,
         "arm_state": 1,
         "stream_enabled": 0,
-        "feature_bitmap": 0x1F,
+        "feature_bitmap": 0x3F,
     })()
     monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
 

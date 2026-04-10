@@ -127,6 +127,7 @@ typedef enum {
     CONTROL_MODE_AXIS_TEST = 1,            /**< 开环轴向测试。 */
     CONTROL_MODE_RATE_TEST = 2,            /**< 速率环测试。 */
     CONTROL_MODE_HEIGHT_HOLD_RESERVED = 3, /**< 预留定高模式。 */
+    CONTROL_MODE_ATTITUDE_HANG_TEST = 4,   /**< 鍦嗘/鍚婃灦/鍙楅檺鍙版灦涓撶敤 attitude 澶栫幆 bring-up銆?*/
 } control_mode_t;
 
 /**
@@ -192,3 +193,13 @@ typedef struct {
     uint32_t max_loop_dt_us;     /**< 记录期内最大控制周期时长，单位为 us。 */
     uint32_t loop_overrun_count; /**< 连续超时计数。 */
 } loop_stats_t;
+
+typedef struct {
+    bool ref_valid;
+    quatf_t ref_q_body_to_world;
+    float err_roll_deg;
+    float err_pitch_deg;
+    float rate_sp_roll_dps;
+    float rate_sp_pitch_dps;
+    float base_duty_active;
+} attitude_hang_state_t;

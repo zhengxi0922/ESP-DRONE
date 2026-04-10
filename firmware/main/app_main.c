@@ -1,8 +1,4 @@
-/**
- * @file app_main.c
- * @brief 固件启动与主任务编排实现。
- */
-
+#include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -10,11 +6,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "nvs_flash.h"
 #include "esp_timer.h"
+#include "nvs_flash.h"
 
-#include "board_config.h"
+#include "attitude_bench.h"
 #include "barometer.h"
+#include "board_config.h"
 #include "controller.h"
 #include "console.h"
 #include "estimator.h"
@@ -34,8 +31,30 @@
 
 #define TASK_STACK_WORDS 4096
 
-/* 将 arm/failsafe/低电压/IMU 健康统一映射到 LED 状态机。
- * 业务模块只提交逻辑状态，LED GPIO 只允许由 led_status 模块驱动。 */
+static void flight_control_set_base_duty_active(float base_duty)
+{
+    attitude_hang_state_t state = runtime_state_get_attitude_hang_state();
+    state.base_duty_active = base_duty;
+    runtime_state_set_attitude_hang_state(state);
+}
+
+static void flight_control_stop_attitude_hang_test(float command_outputs[MOTOR_COUNT], const char *reason)
+{
+    runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+    runtime_state_set_axis_test_request((axis3f_t){0});
+    runtime_state_set_rate_setpoint_request((axis3f_t){0});
+    attitude_bench_reset_status();
+    flight_control_set_base_duty_active(0.0f);
+
+    if (command_outputs != NULL) {
+        memset(command_outputs, 0, sizeof(float) * MOTOR_COUNT);
+    }
+    motor_stop_all();
+    if (reason != NULL) {
+        console_send_event_text(reason);
+    }
+}
+
 static void flight_control_apply_led_state(const safety_status_t *safety_status,
                                            const imu_sample_t *sample,
                                            bool battery_initialized,
@@ -93,8 +112,6 @@ static void flight_control_task(void *arg)
     mixer_build_coeffs(mixer_coeffs);
 
     while (1) {
-        /* 控制任务固定 1 kHz 调度，但 estimator / rate loop 只在 fresh IMU sample 到来时更新。
-         * 这样既保证输出节拍稳定，也避免拿旧 IMU 数据重复做整套控制更新。 */
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1));
 
         const uint64_t now_us = (uint64_t)esp_timer_get_time();
@@ -153,6 +170,7 @@ static void flight_control_task(void *arg)
             controller_reset();
             memset(command_outputs, 0, sizeof(command_outputs));
             last_rate_update_us = 0;
+            attitude_bench_reset_status();
             last_arm_state = safety_status.arm_state;
             last_control_mode = control_mode;
         }
@@ -160,15 +178,23 @@ static void flight_control_task(void *arg)
         int test_motor = -1;
         float test_duty = 0.0f;
         runtime_state_get_motor_test(&test_motor, &test_duty);
-        /* 电机点动测试只允许在未解锁状态下执行，避免和闭环输出叠加。 */
         if (test_motor >= 0 && test_duty > 0.0f && safety_status.arm_state == ARM_STATE_DISARMED) {
+            flight_control_set_base_duty_active(0.0f);
             motor_set_test_output((uint8_t)test_motor, test_duty);
             continue;
         }
 
-        /* axis-test 是开环 mixer 方向验证路径，目标是验证文档中的轴向真值表，而不是闭环控制效果。 */
+        if (control_mode == CONTROL_MODE_ATTITUDE_HANG_TEST &&
+            (safety_status.arm_state != ARM_STATE_ARMED ||
+             safety_status.failsafe_reason != FAILSAFE_REASON_NONE)) {
+            flight_control_stop_attitude_hang_test(command_outputs,
+                                                   "attitude hang test stopped: arm state or failsafe");
+            continue;
+        }
+
         if (control_mode == CONTROL_MODE_AXIS_TEST && safety_status.arm_state == ARM_STATE_DISARMED) {
             const axis3f_t axis_request = runtime_state_get_axis_test_request();
+            flight_control_set_base_duty_active(params_get()->bringup_test_base_duty);
             mixer_mix(mixer_coeffs,
                       &(mixer_input_t){
                           .throttle = params_get()->bringup_test_base_duty,
@@ -179,9 +205,8 @@ static void flight_control_task(void *arg)
             continue;
         }
 
-        /* 当前阶段仅启用最小单轴 rate-loop：
-         * fresh sample -> estimator update -> rate PID -> mixer -> motor output。 */
         if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_RATE_TEST) {
+            flight_control_set_base_duty_active(params_get()->bringup_test_base_duty);
             if (fresh_sample && sample.has_gyro_acc) {
                 estimator_update_from_imu(&sample, &estimator_state);
                 const axis3f_t rate_setpoint = runtime_state_get_rate_setpoint_request();
@@ -208,6 +233,65 @@ static void flight_control_task(void *arg)
             continue;
         }
 
+        if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_ATTITUDE_HANG_TEST) {
+            const params_store_t *params = params_get();
+
+            if (sample.health != IMU_HEALTH_OK || !sample.has_gyro_acc || !sample.has_quaternion) {
+                flight_control_stop_attitude_hang_test(command_outputs,
+                                                       "attitude hang test stopped: imu not ready");
+                continue;
+            }
+            if (!runtime_state_get_attitude_hang_state().ref_valid) {
+                flight_control_stop_attitude_hang_test(command_outputs,
+                                                       "attitude hang test stopped: reference missing");
+                continue;
+            }
+
+            flight_control_set_base_duty_active(params->attitude_test_base_duty);
+            if (fresh_sample) {
+                axis3f_t rate_setpoint = {0};
+
+                estimator_update_from_imu(&sample, &estimator_state);
+                if (!attitude_bench_compute(&estimator_state, &rate_setpoint)) {
+                    flight_control_stop_attitude_hang_test(command_outputs,
+                                                           "attitude hang test stopped: estimator/ref invalid");
+                    continue;
+                }
+
+                const attitude_hang_state_t updated_state = runtime_state_get_attitude_hang_state();
+                if (fabsf(updated_state.err_roll_deg) > params->attitude_trip_deg ||
+                    fabsf(updated_state.err_pitch_deg) > params->attitude_trip_deg) {
+                    flight_control_stop_attitude_hang_test(command_outputs,
+                                                           "attitude hang test stopped: attitude trip");
+                    continue;
+                }
+
+                runtime_state_set_rate_setpoint_request(rate_setpoint);
+                if (last_rate_update_us != 0 && sample.timestamp_us > last_rate_update_us) {
+                    float controller_dt_s = (float)(sample.timestamp_us - last_rate_update_us) / 1000000.0f;
+                    if (controller_dt_s < 0.001f) {
+                        controller_dt_s = 0.001f;
+                    } else if (controller_dt_s > 0.050f) {
+                        controller_dt_s = 0.050f;
+                    }
+
+                    const rate_controller_status_t rate_status =
+                        controller_update_rate(&rate_setpoint, &estimator_state.rate_rpy_dps, controller_dt_s);
+                    mixer_mix(mixer_coeffs,
+                              &(mixer_input_t){
+                                  .throttle = params->attitude_test_base_duty,
+                                  .axis = rate_status.output,
+                              },
+                              command_outputs);
+                }
+                last_rate_update_us = sample.timestamp_us;
+            }
+
+            motor_set_armed_outputs(command_outputs, false);
+            continue;
+        }
+
+        flight_control_set_base_duty_active(0.0f);
         if (safety_status.arm_state == ARM_STATE_ARMED) {
             float zeros[MOTOR_COUNT] = {0};
             motor_set_armed_outputs(zeros, false);
@@ -287,7 +371,8 @@ static void service_task(void *arg)
         if ((now_us - last_periodic_log_us) >= 1000000u) {
             const imu_stats_t stats = imu_get_stats();
             char msg[120];
-            snprintf(msg, sizeof(msg),
+            snprintf(msg,
+                     sizeof(msg),
                      "imu seq=%lu good=%lu err=%lu age_us=%lu",
                      (unsigned long)stats.published_seq,
                      (unsigned long)stats.good_frames,
@@ -325,6 +410,7 @@ void app_main(void)
     runtime_state_set_control_mode(CONTROL_MODE_IDLE);
     runtime_state_set_axis_test_request((axis3f_t){0});
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
+    attitude_bench_clear_reference();
     if (!mixer_self_test()) {
         runtime_state_set_arm_state(ARM_STATE_FAULT_LOCK);
         runtime_state_set_failsafe_reason(FAILSAFE_REASON_NONE);
