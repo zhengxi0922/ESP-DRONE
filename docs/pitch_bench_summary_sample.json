@@ -1,0 +1,34 @@
+{
+  "axis_name": "pitch",
+  "run_id": "20260410-201954-kp0026",
+  "serial_hint": "COM4",
+  "started_local": "2026-04-10T20:19:54+08:00",
+  "orientation_note": "Current bench orientation is +Z down circular-rod constrained bench. This round is pitch rate-loop bring-up only; not hang-attitude outer loop and not free-flight tuning.",
+  "params": {
+    "rate_kp_pitch": 0.0026000000070780516,
+    "rate_ki_pitch": 0.0,
+    "rate_kd_pitch": 0.0,
+    "rate_integral_limit": 100.0,
+    "rate_output_limit": 0.20000000298023224,
+    "bringup_test_base_duty": 0.05000000074505806,
+    "motor_idle_duty": 0.019999999552965164,
+    "motor_max_duty": 0.949999988079071,
+    "telemetry_usb_hz": 150.0
+  },
+  "summary": {
+    "setpoint_path_ok": true,
+    "sign_ok": true,
+    "motor_split_ok": true,
+    "measurable_response": true,
+    "saturation_risk": false,
+    "return_to_zero_warning": false,
+    "return_to_zero_quality": "PASS",
+    "noise_or_jitter_risk": false,
+    "low_duty_motor_stability": "PASS_WITH_WARNING",
+    "safe_to_continue": true,
+    "kp_tuning_allowed": true,
+    "accept": true,
+    "axis_result": "PASS_WITH_WARNING",
+    "next_action_hint": "warn: the largest probe step pushes one motor group close to the low-duty floor; keep gains conservative"
+  }
+}
