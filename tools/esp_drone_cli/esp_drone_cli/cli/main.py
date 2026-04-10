@@ -47,16 +47,17 @@ def format_rate_status_line(sample: TelemetrySample, axis_name: str) -> str:
     motors = ", ".join(f"{value:.3f}" for value in snapshot["motor_outputs"])
     return (
         f"{axis_name} "
-        f"sp={snapshot['setpoint_dps']:.3f} "
-        f"fb={snapshot['feedback_dps']:.3f} "
-        f"{snapshot['source_field']}={snapshot['source_value']:.3f} "
-        f"p={snapshot['pid_p']:.4f} "
-        f"i={snapshot['pid_i']:.4f} "
-        f"d={snapshot['pid_d']:.4f} "
-        f"out={snapshot['pid_out']:.4f} "
-        f"motors=[{motors}] "
-        f"arm={snapshot['arm_state']} "
-        f"mode={snapshot['control_mode']} "
+        f"{snapshot['setpoint_field']}={snapshot['setpoint_dps']:.3f} "
+        f"{snapshot['feedback_field']}={snapshot['feedback_dps']:.3f} "
+        f"source_expr={snapshot['feedback_expr']} "
+        f"raw_{snapshot['source_field']}={snapshot['source_value']:.3f} "
+        f"{snapshot['pid_p_field']}={snapshot['pid_p']:.4f} "
+        f"{snapshot['pid_i_field']}={snapshot['pid_i']:.4f} "
+        f"{snapshot['pid_d_field']}={snapshot['pid_d']:.4f} "
+        f"{snapshot['pid_out_field']}={snapshot['pid_out']:.4f} "
+        f"motor1..motor4=[{motors}] "
+        f"arm_state={snapshot['arm_state']} "
+        f"control_mode={snapshot['control_mode']} "
         f"imu_age_us={snapshot['imu_age_us']} "
         f"loop_dt_us={snapshot['loop_dt_us']}"
     )
@@ -592,7 +593,9 @@ def cmd_axis_bench(session: DeviceSession, args) -> int:
             print(f"  {name}={value:.6f}")
     print(
         f"summary axis={axis_name} result={result.summary.axis_result} "
-        f"accept={result.summary.accept} safe_to_continue={result.summary.safe_to_continue}"
+        f"accept={result.summary.accept} "
+        f"safe_to_continue={result.summary.safe_to_continue} "
+        f"kp_tuning_allowed={result.summary.kp_tuning_allowed}"
     )
     print(
         f"checks setpoint_path_ok={result.summary.setpoint_path_ok} "

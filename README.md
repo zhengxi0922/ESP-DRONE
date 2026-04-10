@@ -26,20 +26,23 @@ Direction-sensitive logic must follow:
 
 ## Current Status
 
-The repository now contains a usable three-axis rate-loop bench path:
+The repository contains a usable three-axis rate-loop bench path:
 
 - firmware supports `rate-test` for `roll`, `pitch`, and `yaw`
 - per-axis rate PID parameters are live in the control chain
-- CLI supports `rate-test`, `rate-status`, parameter edit, save, export, and import
+- CLI supports `rate-test`, `rate-status`, `watch-rate`, parameter edit, save, export, import, and `axis-bench` / `rate-bench`
 - the PyQt5 GUI supports rate-test controls, rate-focused charts, rate PID editing, and shared-session command handling
-- software verification currently includes Python tests and firmware build success
+- software verification includes firmware build success and Python tests
 
-Still out of scope for this stage:
+For the current bring-up stage, roll tuning remains bench-only and rate-loop only:
 
-- angle outer loop
-- autotune
-- altitude-hold closed loop
-- free-flight tuning
+- no angle outer loop
+- no attitude hang test in this workflow
+- no free-flight tuning
+- no change to the existing `+roll`, `roll_rate = -gyro_y`, or motor-map conventions
+
+The current documented live roll session was run on a constrained circular-rod bench with natural `+Z down` orientation.
+That orientation does not change the roll rate-loop sign convention because this workflow evaluates only `rate_setpoint_roll`, mapped roll feedback, PID output, and motor split.
 
 ## Build Firmware
 
@@ -77,8 +80,10 @@ pip install -e .[gui]
 
 ## Main Docs
 
+- [docs/roll_rate_bench_workflow.md](./docs/roll_rate_bench_workflow.md)
+- [docs/roll_bench_summary_sample.md](./docs/roll_bench_summary_sample.md)
 - [docs/python_cli_usage.md](./docs/python_cli_usage.md)
+- [docs/bringup_checklist.md](./docs/bringup_checklist.md)
 - [docs/python_gui_usage.md](./docs/python_gui_usage.md)
 - [docs/rate_bringup_results.md](./docs/rate_bringup_results.md)
 - [docs/README.md](./docs/README.md)
-

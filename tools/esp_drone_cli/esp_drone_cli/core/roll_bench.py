@@ -108,6 +108,7 @@ class RollBenchSummary:
     noise_or_jitter_risk: bool
     low_duty_motor_stability: str
     safe_to_continue: bool
+    kp_tuning_allowed: bool
     accept: bool
     axis_result: str
     next_action_hint: str
@@ -370,8 +371,9 @@ def analyze_axis_bench_round(
             low_duty_motor_stability = "PASS_WITH_WARNING"
 
     safe_to_continue = setpoint_path_ok and sign_ok and motor_split_ok and not saturation_risk
+    kp_tuning_allowed = safe_to_continue
     accept = (
-        safe_to_continue
+        kp_tuning_allowed
         and measurable_response
         and return_to_zero_quality != "FAIL"
         and low_duty_motor_stability != "FAIL"
@@ -428,6 +430,7 @@ def analyze_axis_bench_round(
         noise_or_jitter_risk=noise_or_jitter_risk,
         low_duty_motor_stability=low_duty_motor_stability,
         safe_to_continue=safe_to_continue,
+        kp_tuning_allowed=kp_tuning_allowed,
         accept=accept,
         axis_result=axis_result,
         next_action_hint=next_action_hint,
@@ -473,6 +476,7 @@ def _render_markdown(result: RollBenchRoundResult) -> str:
             f"- noise_or_jitter_risk: `{result.summary.noise_or_jitter_risk}`",
             f"- low_duty_motor_stability: `{result.summary.low_duty_motor_stability}`",
             f"- safe_to_continue: `{result.summary.safe_to_continue}`",
+            f"- kp_tuning_allowed: `{result.summary.kp_tuning_allowed}`",
             f"- accept: `{result.summary.accept}`",
             f"- axis_result: `{result.summary.axis_result}`",
             f"- next_action_hint: {result.summary.next_action_hint}",

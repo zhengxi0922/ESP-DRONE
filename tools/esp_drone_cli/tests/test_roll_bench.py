@@ -253,6 +253,7 @@ def test_analyze_roll_bench_round_flags_saturation_and_sign_failure():
     assert summary.sign_ok is False
     assert summary.saturation_risk is True
     assert summary.safe_to_continue is False
+    assert summary.kp_tuning_allowed is False
 
 
 def test_analyze_axis_bench_round_accepts_pitch_mapping_and_split():
@@ -363,6 +364,7 @@ def test_run_roll_bench_round_auto_arms_before_first_rate_test(tmp_path):
     first_rate_test_index = next(i for i, call in enumerate(session.calls) if call.startswith("rate_test"))
     assert session.calls.index("arm") < first_rate_test_index
     assert result.summary.safe_to_continue is True
+    assert result.summary.kp_tuning_allowed is True
 
 
 def test_run_roll_bench_round_setup_failure_does_not_kill(tmp_path):

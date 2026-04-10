@@ -26,20 +26,23 @@
 
 ## 当前状态
 
-仓库现在已经具备可用的三轴 rate 闭环台架路径：
+仓库已经具备可用的三轴 rate-loop 台架路径：
 
-- 固件支持 `roll / pitch / yaw` 三轴 `rate-test`
-- 三轴 rate PID 参数已经真实接入控制链
-- CLI 支持 `rate-test`、`rate-status`、参数编辑、保存、导入、导出
+- 固件支持 `roll`、`pitch`、`yaw` 三轴 `rate-test`
+- 三轴 rate PID 参数已真实接入控制链
+- CLI 支持 `rate-test`、`rate-status`、`watch-rate`、参数编辑、保存、导入导出，以及 `axis-bench` / `rate-bench`
 - PyQt5 GUI 支持 rate-test 控件、rate 调试图表、rate PID 编辑和共享会话命令处理
-- 当前软件验证已经覆盖 Python 测试和固件构建成功
+- 软件验证包括固件构建成功和 Python tests
 
-本阶段仍然不做：
+当前阶段的 roll 调试仍然只限于 bench-only 的 rate-loop：
 
-- angle 外环
-- autotune
-- altitude hold 闭环
-- 自由飞行调优
+- 不做 angle outer loop
+- 这条 workflow 不做 attitude hang test
+- 不做自由飞调参
+- 不改现有 `+roll`、`roll_rate = -gyro_y` 和电机映射约定
+
+当前文档记录的 live roll 会话是在圆棍受限台架上完成的，机体自然姿态为 `+Z 朝下`。
+这个前提不会改变 roll rate-loop 的符号验收，因为这一步只看 `rate_setpoint_roll`、映射后的 roll 反馈、PID 输出和电机分配，不看 angle 外环。
 
 ## 固件构建
 
@@ -77,8 +80,10 @@ pip install -e .[gui]
 
 ## 主要文档
 
+- [docs/roll_rate_bench_workflow.zh-CN.md](./docs/roll_rate_bench_workflow.zh-CN.md)
+- [docs/roll_bench_summary_sample.md](./docs/roll_bench_summary_sample.md)
 - [docs/python_cli_usage.zh-CN.md](./docs/python_cli_usage.zh-CN.md)
+- [docs/bringup_checklist.zh-CN.md](./docs/bringup_checklist.zh-CN.md)
 - [docs/python_gui_usage.zh-CN.md](./docs/python_gui_usage.zh-CN.md)
 - [docs/rate_bringup_results.zh-CN.md](./docs/rate_bringup_results.zh-CN.md)
 - [docs/README.zh-CN.md](./docs/README.zh-CN.md)
-

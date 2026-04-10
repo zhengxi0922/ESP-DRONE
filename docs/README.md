@@ -16,6 +16,8 @@ This directory contains the repository's locked conventions, bring-up notes, and
 
 - [ESP-IDF Environment](./esp_idf_env.md)
 - [Bring-Up Checklist](./bringup_checklist.md)
+- [Roll Rate Bench Workflow](./roll_rate_bench_workflow.md)
+- [Roll Bench Summary Sample](./roll_bench_summary_sample.md)
 - [Rate Bring-Up Results](./rate_bringup_results.md)
 - [RAW Mode Attitude Plan](./raw_mode_attitude_plan.md)
 - [Barometer Framework](./barometer_framework.md)
@@ -30,4 +32,3 @@ This directory contains the repository's locked conventions, bring-up notes, and
 - [Python Tool GUI + CLI Refactor Plan](./python_tool_gui_refactor_plan.md)
 - [CLI Live Test Matrix](./cli_live_test_matrix.md)
 - [CLI Live Test Results](./cli_live_test_results.md)
-

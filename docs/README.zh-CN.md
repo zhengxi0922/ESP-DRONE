@@ -16,6 +16,8 @@
 
 - [ESP-IDF 环境](./esp_idf_env.zh-CN.md)
 - [Bring-up 清单](./bringup_checklist.zh-CN.md)
+- [Roll Rate 台架 Workflow](./roll_rate_bench_workflow.zh-CN.md)
+- [Roll Bench Summary 样例](./roll_bench_summary_sample.md)
 - [速率环 Bring-Up 结果](./rate_bringup_results.zh-CN.md)
 - [RAW 模式姿态方案](./raw_mode_attitude_plan.zh-CN.md)
 - [气压计框架](./barometer_framework.zh-CN.md)
@@ -30,4 +32,3 @@
 - [Python 工具 GUI + CLI 重构计划](./python_tool_gui_refactor_plan.zh-CN.md)
 - [CLI 联机测试矩阵](./cli_live_test_matrix.zh-CN.md)
 - [CLI 联机测试结果](./cli_live_test_results.zh-CN.md)
-
