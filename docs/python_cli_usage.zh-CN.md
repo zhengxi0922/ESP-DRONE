@@ -17,13 +17,14 @@
 
 项目没有维护第二套主机协议栈。
 
-## 范围警告
+## 范围边界
 
-新的 `attitude-test` 路径只用于圆棍、吊架或其他受限台架。
+CLI 现在覆盖两条受限台架 workflow：
 
-它不是自由飞 stabilize。
-它不是自由飞 angle 模式。
-不能直接用于带桨自由飞。
+- `roll / pitch / yaw` 的 rate-loop 台架调试
+- 受限圆棍 / 吊架的 bench-only 姿态外环 bring-up
+
+它们都不代表任何带桨自由飞 stabilize / angle 模式已经 ready。
 
 ## 安装
 
@@ -66,13 +67,15 @@ python -m esp_drone_cli --serial COM7 stream off
 python -m esp_drone_cli --serial COM7 log --timeout 3 --telemetry
 ```
 
-三轴 rate 闭环台架命令：
+roll 单轴台架命令：
 
 ```powershell
 python -m esp_drone_cli --serial COM7 rate-test roll 20
-python -m esp_drone_cli --serial COM7 rate-test pitch 20
-python -m esp_drone_cli --serial COM7 rate-test yaw 20
+python -m esp_drone_cli --serial COM7 rate-test roll -20
 python -m esp_drone_cli --serial COM7 rate-test roll 0
+python -m esp_drone_cli --serial COM7 rate-status roll --timeout 5
+python -m esp_drone_cli --serial COM7 watch-rate all --timeout 5 --interval 0.2
+python -m esp_drone_cli --serial COM7 axis-bench roll --auto-arm --small-step 10 --large-step 15
 ```
 
 圆棍姿态外环 bench-only 命令：
@@ -82,91 +85,33 @@ python -m esp_drone_cli --serial COM7 attitude-capture-ref
 python -m esp_drone_cli --serial COM7 arm
 python -m esp_drone_cli --serial COM7 attitude-test start --base-duty 0.05
 python -m esp_drone_cli --serial COM7 attitude-status --timeout 5
-python -m esp_drone_cli --serial COM7 watch-attitude roll --timeout 5 --interval 0.2
-python -m esp_drone_cli --serial COM7 watch-attitude pitch --timeout 5 --interval 0.2
 python -m esp_drone_cli --serial COM7 watch-attitude all --timeout 5 --interval 0.2
 python -m esp_drone_cli --serial COM7 attitude-test stop
 python -m esp_drone_cli --serial COM7 disarm
 ```
 
-以下情况会明确拒绝 `attitude-test start`：
+## Rate-Status 输出
 
-- 机体未 arm
-- `attitude_ref_valid` 为 false
-- IMU 健康度、新鲜度或四元数可用性不满足
+`rate-status roll` 会直接打印 roll 台架需要的明确字段：
 
-拒绝会直接报错，不会 silent ignore。
-
-## 遥测观察
-
-按轴观察 rate 遥测：
-
-```powershell
-python -m esp_drone_cli --serial COM7 rate-status roll --timeout 5
-python -m esp_drone_cli --serial COM7 rate-status pitch --timeout 5
-python -m esp_drone_cli --serial COM7 rate-status yaw --timeout 5
-python -m esp_drone_cli --serial COM7 watch-rate all --timeout 5 --interval 0.2
-```
-
-观察圆棍姿态外环遥测：
-
-```powershell
-python -m esp_drone_cli --serial COM7 attitude-status --timeout 5
-python -m esp_drone_cli --serial COM7 watch-attitude all --timeout 5 --interval 0.2
-```
-
-姿态外环状态输出包含：
-
-- `attitude_ref_valid`
-- `attitude_err_roll_deg`
-- `attitude_err_pitch_deg`
-- `attitude_rate_sp_roll`
-- `attitude_rate_sp_pitch`
+- `rate_setpoint_roll`
+- `roll_rate`
+- `source_expr=-gyro_y`
+- `raw_gyro_y`
+- `rate_pid_p_roll`
+- `rate_pid_i_roll`
+- `rate_pid_d_roll`
 - `pid_out_roll`
-- `pid_out_pitch`
-- `base_duty_active`
 - `motor1..motor4`
+- `arm_state`
 - `control_mode`
-- 参考四元数 `attitude_ref_qw/qx/qy/qz`
+- `imu_age_us`
+- `loop_dt_us`
 
-建议按下面这条链路检查符号：
+这一轮 rate-only 观察链路是：
 
 ```text
-手动扰动 -> 姿态误差 -> 外环 rate setpoint -> rate PID 输出 -> 电机混控
-```
-
-## 台架自动化
-
-单轴台架自动化：
-
-```powershell
-python -m esp_drone_cli --serial COM7 axis-bench roll --auto-arm --small-step 10 --large-step 15
-python -m esp_drone_cli --serial COM7 axis-bench pitch --auto-arm --kp 0.0028 --small-step 10 --large-step 15
-python -m esp_drone_cli --serial COM7 rate-bench yaw --auto-arm --kp 0.0026 --small-step 10 --large-step 15 --save-params
-```
-
-`axis-bench` 和 `rate-bench` 是同一个共享命令。它们会复用 GUI / session 层同一套逻辑，并保存：
-
-- telemetry CSV
-- JSON summary
-- Markdown summary
-
-汇总结果会包含：
-
-- `setpoint_path_ok`
-- `sign_ok`
-- `motor_split_ok`
-- `measurable_response`
-- `saturation_risk`
-- `return_to_zero_quality`
-- `noise_or_jitter_risk`
-- `low_duty_motor_stability`
-- `axis_result`，取值为 `PASS`、`PASS_WITH_WARNING` 或 `FAIL`
-
-导出 CSV：
-
-```powershell
-python -m esp_drone_cli --serial COM7 dump-csv telemetry.csv --duration 5
+命令 roll 角速度 -> 映射后的 roll 反馈 -> PID p/i/d -> pid_out_roll -> motor1..motor4
 ```
 
 ## 轴含义
@@ -177,40 +122,95 @@ python -m esp_drone_cli --serial COM7 dump-csv telemetry.csv --duration 5
 - `roll_rate = -gyro_y`
 - `yaw_rate = -gyro_z`
 
-正向 mixer 约定固定为：
+正向电机分配约定固定为：
 
 - `+roll` -> `M1/M4` 增，`M2/M3` 减
+- `-roll` -> `M2/M3` 增，`M1/M4` 减
 - `+pitch` -> `M3/M4` 增，`M1/M2` 减
 - `+yaw` -> `M1/M3` 增，`M2/M4` 减
 
-对于圆棍姿态外环，这一轮必须满足的纠正方向是：
+圆棍姿态外环阶段要求的纠正方向是：
 
 - 扰成“右侧下沉”即正 `roll` -> 控制器必须给负 roll 修正 -> `M2/M3` 增，`M1/M4` 减
 - 扰成“机头抬起”即正 `pitch` -> 控制器必须给负 pitch 修正 -> `M1/M2` 增，`M3/M4` 减
 
-## 参数调试
+## Roll 台架 Workflow
 
-参数读写、保存、导入导出流程继续兼容固件参数存储：
+在受限台架上按这个顺序做：
+
+1. 上电并通过 USB CDC 连接。
+2. 执行 `stream on`。
+3. 手动晃动机体，确认符号链：
+   `roll_rate = -gyro_y`。
+4. 运行 `rate-test roll +30` 和 `rate-test roll -30`。
+5. 观察 `rate-status roll` 和 `watch-rate all`。
+6. 运行 `axis-bench roll` 或 `rate-bench roll`，生成 telemetry CSV、JSON summary 和 Markdown summary。
+7. 只有在 `sign_ok` 和 `motor_split_ok` 都为 true 时，才允许小步修改 `rate_kp_roll`。
+8. 每次修改后都重复同样的 roll workflow。
+
+相关文档：
+
+- [roll_rate_bench_workflow.zh-CN.md](./roll_rate_bench_workflow.zh-CN.md)
+- [roll_bench_summary_sample.md](./roll_bench_summary_sample.md)
+
+## 台架自动化
+
+`axis-bench` 和 `rate-bench` 是同一个共享命令。它们会复用 GUI / session 层同一套逻辑，并保存：
+
+- telemetry CSV
+- JSON summary
+- Markdown summary
+
+summary 会输出：
+
+- `setpoint_path_ok`
+- `sign_ok`
+- `motor_split_ok`
+- `measurable_response`
+- `saturation_risk`
+- `return_to_zero_quality`
+- `noise_or_jitter_risk`
+- `low_duty_motor_stability`
+- `safe_to_continue`
+- `kp_tuning_allowed`
+- `axis_result`
+
+`kp_tuning_allowed` 是故意做成严格门限的：
+
+- 如果 `sign_ok` 为 false，先查轴映射或 rate feedback，不准继续调 `kp`
+- 如果 `motor_split_ok` 为 false，先查 roll 电机分配，不准继续调 `kp`
+- 只有 `kp_tuning_allowed=true` 时，才允许继续微调 `rate_kp_roll`
+
+导出 CSV：
+
+```powershell
+python -m esp_drone_cli --serial COM7 dump-csv telemetry.csv --duration 5
+```
+
+## 参数调试流程
+
+参数读写、保存、导入导出继续兼容固件参数存储：
 
 ```powershell
 python -m esp_drone_cli --serial COM7 get rate_kp_roll
-python -m esp_drone_cli --serial COM7 set rate_kp_roll float 0.0035
-python -m esp_drone_cli --serial COM7 set attitude_kp_roll float 2.0
-python -m esp_drone_cli --serial COM7 set attitude_test_base_duty float 0.05
+python -m esp_drone_cli --serial COM7 set rate_kp_roll float 0.0026
+python -m esp_drone_cli --serial COM7 get rate_ki_roll
+python -m esp_drone_cli --serial COM7 get rate_kd_roll
 python -m esp_drone_cli --serial COM7 save
 python -m esp_drone_cli --serial COM7 export params.json
 python -m esp_drone_cli --serial COM7 import params.json --save
 ```
 
-重点 rate 参数：
+roll 台架阶段相关参数：
 
-- `rate_kp_roll`、`rate_ki_roll`、`rate_kd_roll`
-- `rate_kp_pitch`、`rate_ki_pitch`、`rate_kd_pitch`
-- `rate_kp_yaw`、`rate_ki_yaw`、`rate_kd_yaw`
+- `rate_kp_roll`
+- `rate_ki_roll`
+- `rate_kd_roll`
 - `rate_integral_limit`
 - `rate_output_limit`
+- `bringup_test_base_duty`
 
-重点圆棍姿态外环参数：
+圆棍姿态外环相关参数：
 
 - `attitude_kp_roll`
 - `attitude_kp_pitch`
@@ -219,38 +219,50 @@ python -m esp_drone_cli --serial COM7 import params.json --save
 - `attitude_error_deadband_deg`
 - `attitude_trip_deg`
 - `attitude_test_base_duty`
-- 只读运行态 `attitude_ref_valid`
+- `attitude_ref_valid`
+
+当前文档记录的 live roll 推荐值是：
+
+- `rate_kp_roll = 0.0026`
+- `rate_ki_roll = 0.0`
+- `rate_kd_roll = 0.0`
 
 如果设备拒绝写入，CLI 会明确报告失败原因。
 
-## 推荐台架流程
+## Roll Kp 判据
 
-用于 rate 环台架时：
+按下面这组规则解读 roll 台架结果：
 
-1. 拆桨，或把机体完全约束。
-2. 通过 USB CDC 连接。
-3. 先开流并确认手持运动符号。
-4. 只有在台架安全条件满足时才 arm。
-5. 每次只跑一根轴，用 `rate-test`。
-6. 用 `rate-status` 观察当前轴。
-7. 一次只改一个 PID 项。
-8. 只有确认新值可接受后再执行 `save`。
+- 可接受：
+  - 正负 roll 指令方向都正确
+  - 电机分配方向正确
+  - 有可测响应
+  - 回零干净
+  - 没有明显低 duty 不稳定
+- `kp` 偏低：
+  - `measurable_response` 弱
+  - setpoint 已经有了，但 `pid_out_roll` 和实际响应都太小
+  - 回零慢
+- `kp` 偏高：
+  - `saturation_risk` 上升
+  - `return_to_zero_quality` 变差
+  - `noise_or_jitter_risk` 上升
+  - 开始出现振荡、打架或过冲
+- 一旦出现异常：
+  - 立即停 test
+  - 不要继续加大 `rate_kp_roll`
 
-用于圆棍 / 吊架姿态外环台架时：
+## 圆棍姿态外环备注
 
-1. 确保机体固定在圆棍或吊架上，并确认自然平衡姿态就是准备 capture 的参考姿态。
-2. 开流并先确认 IMU 新鲜度正常。
-3. 让机体回到自然悬挂姿态，执行 `attitude-capture-ref`。
-4. 只有在台架受限且安全时才 arm。
-5. 使用保守的 `attitude_kp_*`、`attitude_rate_limit_*` 和 `attitude_test_base_duty` 起步。
-6. 执行 `attitude-test start`。
-7. 用 `watch-attitude` 在小扰动下确认误差符号、rate setpoint、PID 输出和电机分配链路正确。
-8. 只要符号错误、触发 trip 或 IMU 不新鲜，就立即 `attitude-test stop` 或 `kill`。
-9. 测试结束后 `disarm`。
+圆棍姿态外环路径仍然只限受限台架：
+
+- 不能直接用于带桨自由飞
+- 那一阶段 yaw 不进入姿态外环
+- `attitude-test start` 前必须先 capture ref
 
 ## 错误处理
 
-设备端命令拒绝现在都会明确显示在 CLI 输出里，常见情况包括：
+设备端命令拒绝都会明确显示在 CLI 输出里，常见情况包括：
 
 - 参数非法
 - 需要先 arm

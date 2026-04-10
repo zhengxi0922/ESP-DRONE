@@ -31,26 +31,26 @@ The repository now contains two constrained-rig control paths:
 - a usable three-axis rate-loop bench path for `roll / pitch / yaw`
 - a bench-only hang-attitude outer-loop bring-up path for a circular-rod or hanging rig with a natural `+Z down` equilibrium
 
-The new hang-attitude path is intentionally limited:
+The hang-attitude path is intentionally limited:
 
 - firmware adds `CONTROL_MODE_ATTITUDE_HANG_TEST`
 - reference attitude must be captured explicitly with `attitude-capture-ref`
 - control uses relative quaternion error `q_rel = q_ref^-1 * q_now`, not global Euler subtraction against `roll=0 / pitch=0`
-- only `roll / pitch` go through the outer loop in this stage
+- only `roll / pitch` go through the outer loop in that stage
 - outer loop is P-only and feeds the existing rate inner loop
 - thrust stays open-loop through `attitude_test_base_duty`
 
-This is not a free-flight stabilize mode and not an angle-flight-ready mode.
+Current roll tuning remains bench-only and rate-loop only:
 
-Never use `CONTROL_MODE_ATTITUDE_HANG_TEST` on a prop-on free-flight vehicle.
+- no angle outer loop
+- no attitude outer loop in the roll workflow
+- no free-flight tuning
+- no change to the fixed `+roll`, `roll_rate = -gyro_y`, or motor-map conventions
 
-Still out of scope for this stage:
+The documented live roll session was run on a constrained circular-rod bench with natural `+Z down`.
+That orientation does not change the roll rate-loop sign convention because the workflow evaluates only `rate_setpoint_roll`, mapped roll feedback, PID output, and motor split.
 
-- free-flight stabilize or angle tuning
-- yaw heading hold
-- altitude-hold closed loop
-- auto takeoff
-- autotune
+This repository still does not declare any free-flight stabilize or angle mode ready for prop-on use.
 
 ## Build Firmware
 
@@ -89,6 +89,8 @@ pip install -e .[gui]
 ## Main Docs
 
 - [docs/hang_attitude_bringup_plan.md](./docs/hang_attitude_bringup_plan.md)
+- [docs/roll_rate_bench_workflow.md](./docs/roll_rate_bench_workflow.md)
+- [docs/roll_bench_summary_sample.md](./docs/roll_bench_summary_sample.md)
 - [docs/python_cli_usage.md](./docs/python_cli_usage.md)
 - [docs/python_gui_usage.md](./docs/python_gui_usage.md)
 - [docs/bringup_checklist.md](./docs/bringup_checklist.md)

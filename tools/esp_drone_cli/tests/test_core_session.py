@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from esp_drone_cli.core import DeviceSession
+from esp_drone_cli.cli.main import format_rate_status_line
 from esp_drone_cli.core.models import (
     HELLO_RESP_STRUCT,
     ParamSnapshot,
@@ -400,16 +401,38 @@ def test_telemetry_sample_rate_debug_projection_uses_project_axis_truth():
 
     assert roll["source_field"] == "gyro_y"
     assert roll["source_value"] == pytest.approx(2.0)
+    assert roll["feedback_field"] == "roll_rate"
+    assert roll["feedback_expr"] == "-gyro_y"
+    assert roll["setpoint_field"] == "rate_setpoint_roll"
     assert roll["feedback_dps"] == pytest.approx(-2.0)
     assert roll["setpoint_dps"] == pytest.approx(10.0)
 
     assert pitch["source_field"] == "gyro_x"
+    assert pitch["feedback_expr"] == "gyro_x"
     assert pitch["feedback_dps"] == pytest.approx(1.0)
     assert pitch["setpoint_dps"] == pytest.approx(11.0)
 
     assert yaw["source_field"] == "gyro_z"
+    assert yaw["feedback_expr"] == "-gyro_z"
     assert yaw["feedback_dps"] == pytest.approx(-3.0)
     assert yaw["setpoint_dps"] == pytest.approx(12.0)
+
+
+def test_format_rate_status_line_uses_explicit_roll_field_names():
+    sample = TelemetrySample.from_payload(build_telemetry_payload())
+    line = format_rate_status_line(sample, "roll")
+
+    assert "rate_setpoint_roll=10.000" in line
+    assert "roll_rate=-2.000" in line
+    assert "source_expr=-gyro_y" in line
+    assert "raw_gyro_y=2.000" in line
+    assert "rate_pid_p_roll=0.5000" in line
+    assert "rate_pid_i_roll=0.1000" in line
+    assert "rate_pid_d_roll=0.0100" in line
+    assert "pid_out_roll=0.9000" in line
+    assert "motor1..motor4=[" in line
+    assert "arm_state=0" in line
+    assert "control_mode=2" in line
 
 
 def test_telemetry_sample_v1_payload_keeps_baro_defaults():
@@ -729,9 +752,10 @@ def test_cli_rate_status_command_uses_device_session(monkeypatch, capsys):
     monkeypatch.setattr(cli_main.time, "sleep", fake_sleep)
     assert cli_main.main(["--serial", "COM7", "rate-status", "roll", "--timeout", "0.05", "--interval", "0.01"]) == 0
     output = capsys.readouterr().out
-    assert "roll sp=10.000" in output
-    assert "fb=-2.000" in output
-    assert "gyro_y=2.000" in output
+    assert "roll rate_setpoint_roll=10.000" in output
+    assert "roll_rate=-2.000" in output
+    assert "source_expr=-gyro_y" in output
+    assert "raw_gyro_y=2.000" in output
 
 
 def test_cli_rate_test_returns_firmware_status_on_error(monkeypatch, capsys):

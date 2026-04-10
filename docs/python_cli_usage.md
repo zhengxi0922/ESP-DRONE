@@ -17,13 +17,14 @@ It uses the same `esp_drone_cli.core.device_session.DeviceSession` as the GUI, s
 
 The project does not maintain a second host protocol stack.
 
-## Scope Warning
+## Scope Boundary
 
-The new `attitude-test` path is bench-only and is intended only for a circular-rod, hanging, or otherwise constrained rig.
+The CLI now covers two constrained bench workflows:
 
-It is not a free-flight stabilize mode.
-It is not a free-flight angle mode.
-Do not use it on a prop-on free-flight vehicle.
+- rate-loop bench work for `roll / pitch / yaw`
+- bench-only hang-attitude bring-up for a constrained rig
+
+It does not declare any free-flight stabilize or angle mode ready for prop-on use.
 
 ## Install
 
@@ -66,13 +67,15 @@ python -m esp_drone_cli --serial COM7 stream off
 python -m esp_drone_cli --serial COM7 log --timeout 3 --telemetry
 ```
 
-Rate closed-loop bench commands:
+Single-axis roll bench commands:
 
 ```powershell
 python -m esp_drone_cli --serial COM7 rate-test roll 20
-python -m esp_drone_cli --serial COM7 rate-test pitch 20
-python -m esp_drone_cli --serial COM7 rate-test yaw 20
+python -m esp_drone_cli --serial COM7 rate-test roll -20
 python -m esp_drone_cli --serial COM7 rate-test roll 0
+python -m esp_drone_cli --serial COM7 rate-status roll --timeout 5
+python -m esp_drone_cli --serial COM7 watch-rate all --timeout 5 --interval 0.2
+python -m esp_drone_cli --serial COM7 axis-bench roll --auto-arm --small-step 10 --large-step 15
 ```
 
 Bench-only hang-attitude commands:
@@ -82,68 +85,75 @@ python -m esp_drone_cli --serial COM7 attitude-capture-ref
 python -m esp_drone_cli --serial COM7 arm
 python -m esp_drone_cli --serial COM7 attitude-test start --base-duty 0.05
 python -m esp_drone_cli --serial COM7 attitude-status --timeout 5
-python -m esp_drone_cli --serial COM7 watch-attitude roll --timeout 5 --interval 0.2
-python -m esp_drone_cli --serial COM7 watch-attitude pitch --timeout 5 --interval 0.2
 python -m esp_drone_cli --serial COM7 watch-attitude all --timeout 5 --interval 0.2
 python -m esp_drone_cli --serial COM7 attitude-test stop
 python -m esp_drone_cli --serial COM7 disarm
 ```
 
-`attitude-test start` is rejected if:
+## Rate-Status Output
 
-- the airframe is not armed
-- `attitude_ref_valid` is false
-- IMU health, freshness, or quaternion readiness is not acceptable
+`rate-status roll` prints explicit roll bench fields:
 
-The rejection is reported explicitly instead of silently ignored.
-
-## Telemetry Watch
-
-Rate-focused telemetry watch:
-
-```powershell
-python -m esp_drone_cli --serial COM7 rate-status roll --timeout 5
-python -m esp_drone_cli --serial COM7 rate-status pitch --timeout 5
-python -m esp_drone_cli --serial COM7 rate-status yaw --timeout 5
-python -m esp_drone_cli --serial COM7 watch-rate all --timeout 5 --interval 0.2
-```
-
-Hang-attitude telemetry watch:
-
-```powershell
-python -m esp_drone_cli --serial COM7 attitude-status --timeout 5
-python -m esp_drone_cli --serial COM7 watch-attitude all --timeout 5 --interval 0.2
-```
-
-The hang-attitude status view prints:
-
-- `attitude_ref_valid`
-- `attitude_err_roll_deg`
-- `attitude_err_pitch_deg`
-- `attitude_rate_sp_roll`
-- `attitude_rate_sp_pitch`
+- `rate_setpoint_roll`
+- `roll_rate`
+- `source_expr=-gyro_y`
+- `raw_gyro_y`
+- `rate_pid_p_roll`
+- `rate_pid_i_roll`
+- `rate_pid_d_roll`
 - `pid_out_roll`
-- `pid_out_pitch`
-- `base_duty_active`
 - `motor1..motor4`
+- `arm_state`
 - `control_mode`
-- reference quaternion `attitude_ref_qw/qx/qy/qz`
+- `imu_age_us`
+- `loop_dt_us`
 
-Use that chain to verify:
+This is the intended rate-only chain:
 
 ```text
-manual disturbance -> attitude error -> outer-loop rate setpoint -> rate PID output -> motor mix
+commanded roll rate -> mapped roll feedback -> PID p/i/d -> pid_out_roll -> motor1..motor4
 ```
+
+## Axis Meaning
+
+Project rate mapping is fixed:
+
+- `pitch_rate = gyro_x`
+- `roll_rate = -gyro_y`
+- `yaw_rate = -gyro_z`
+
+Positive motor expectations are fixed:
+
+- `+roll` -> `M1/M4` up, `M2/M3` down
+- `-roll` -> `M2/M3` up, `M1/M4` down
+- `+pitch` -> `M3/M4` up, `M1/M2` down
+- `+yaw` -> `M1/M3` up, `M2/M4` down
+
+For the bench-only hang-attitude outer loop, the required corrective sign checks are:
+
+- disturb to `right side down` (`+roll`) -> controller must command `-roll` correction -> `M2/M3` increase, `M1/M4` decrease
+- disturb to `nose up` (`+pitch`) -> controller must command `-pitch` correction -> `M1/M2` increase, `M3/M4` decrease
+
+## Roll Bench Workflow
+
+Use this order on the constrained bench:
+
+1. Power on and connect over USB CDC.
+2. Run `stream on`.
+3. Move the frame by hand and verify the sign chain:
+   `roll_rate = -gyro_y`.
+4. Run `rate-test roll +30` and `rate-test roll -30`.
+5. Observe `rate-status roll` and `watch-rate all`.
+6. Run `axis-bench roll` or `rate-bench roll` to generate telemetry CSV, JSON summary, and Markdown summary.
+7. Only if `sign_ok` and `motor_split_ok` are both true, consider a small `rate_kp_roll` change.
+8. Re-run the same roll workflow after each change.
+
+The dedicated workflow is documented in:
+
+- [roll_rate_bench_workflow.md](./roll_rate_bench_workflow.md)
+- [roll_bench_summary_sample.md](./roll_bench_summary_sample.md)
 
 ## Bench Automation
-
-Single-axis bench automation:
-
-```powershell
-python -m esp_drone_cli --serial COM7 axis-bench roll --auto-arm --small-step 10 --large-step 15
-python -m esp_drone_cli --serial COM7 axis-bench pitch --auto-arm --kp 0.0028 --small-step 10 --large-step 15
-python -m esp_drone_cli --serial COM7 rate-bench yaw --auto-arm --kp 0.0026 --small-step 10 --large-step 15 --save-params
-```
 
 `axis-bench` and `rate-bench` are the same shared command. They use the same core logic as the GUI/session layer and save:
 
@@ -161,7 +171,15 @@ The bench summary reports:
 - `return_to_zero_quality`
 - `noise_or_jitter_risk`
 - `low_duty_motor_stability`
-- `axis_result` as `PASS`, `PASS_WITH_WARNING`, or `FAIL`
+- `safe_to_continue`
+- `kp_tuning_allowed`
+- `axis_result`
+
+`kp_tuning_allowed` is intentionally strict:
+
+- if `sign_ok` is false, stop and inspect axis mapping or rate feedback first
+- if `motor_split_ok` is false, stop and inspect roll motor split first
+- only when `kp_tuning_allowed` is true may you continue with `rate_kp_roll` tuning
 
 CSV capture:
 
@@ -169,46 +187,28 @@ CSV capture:
 python -m esp_drone_cli --serial COM7 dump-csv telemetry.csv --duration 5
 ```
 
-## Axis Meaning
+## Parameter Tuning Flow
 
-Project rate mapping is fixed:
-
-- `pitch_rate = gyro_x`
-- `roll_rate = -gyro_y`
-- `yaw_rate = -gyro_z`
-
-Positive mixer expectations are fixed:
-
-- `+roll` -> `M1/M4` up, `M2/M3` down
-- `+pitch` -> `M3/M4` up, `M1/M2` down
-- `+yaw` -> `M1/M3` up, `M2/M4` down
-
-For the bench-only hang-attitude outer loop, the required corrective sign checks are:
-
-- disturb to `right side down` (`+roll`) -> controller must command `-roll` correction -> `M2/M3` increase, `M1/M4` decrease
-- disturb to `nose up` (`+pitch`) -> controller must command `-pitch` correction -> `M1/M2` increase, `M3/M4` decrease
-
-## Parameter Tuning
-
-The parameter path remains shared and compatible with firmware storage:
+Parameter reads, writes, save, export, and import remain shared with firmware storage:
 
 ```powershell
 python -m esp_drone_cli --serial COM7 get rate_kp_roll
-python -m esp_drone_cli --serial COM7 set rate_kp_roll float 0.0035
-python -m esp_drone_cli --serial COM7 set attitude_kp_roll float 2.0
-python -m esp_drone_cli --serial COM7 set attitude_test_base_duty float 0.05
+python -m esp_drone_cli --serial COM7 set rate_kp_roll float 0.0026
+python -m esp_drone_cli --serial COM7 get rate_ki_roll
+python -m esp_drone_cli --serial COM7 get rate_kd_roll
 python -m esp_drone_cli --serial COM7 save
 python -m esp_drone_cli --serial COM7 export params.json
 python -m esp_drone_cli --serial COM7 import params.json --save
 ```
 
-Relevant rate parameters:
+Relevant rate parameters for the roll bench stage:
 
-- `rate_kp_roll`, `rate_ki_roll`, `rate_kd_roll`
-- `rate_kp_pitch`, `rate_ki_pitch`, `rate_kd_pitch`
-- `rate_kp_yaw`, `rate_ki_yaw`, `rate_kd_yaw`
+- `rate_kp_roll`
+- `rate_ki_roll`
+- `rate_kd_roll`
 - `rate_integral_limit`
 - `rate_output_limit`
+- `bringup_test_base_duty`
 
 Relevant hang-attitude parameters:
 
@@ -219,34 +219,46 @@ Relevant hang-attitude parameters:
 - `attitude_error_deadband_deg`
 - `attitude_trip_deg`
 - `attitude_test_base_duty`
-- `attitude_ref_valid` as a runtime read-only flag
+- `attitude_ref_valid`
+
+For the documented live roll session:
+
+- `rate_kp_roll = 0.0026`
+- `rate_ki_roll = 0.0`
+- `rate_kd_roll = 0.0`
 
 If the device rejects a write, the CLI reports the failure explicitly.
 
-## Recommended Bench Workflow
+## Roll Kp Criteria
 
-For rate-loop bench work:
+Treat the roll-bench results like this:
 
-1. Remove props or fully restrain the frame.
-2. Connect over USB CDC.
-3. Start telemetry and verify hand-motion signs first.
-4. Arm only when the bench condition is safe.
-5. Run one axis at a time with `rate-test`.
-6. Watch the active axis with `rate-status`.
-7. Change only one PID term at a time.
-8. Save parameters only after the new values are accepted.
+- acceptable:
+  - positive and negative roll commands keep the correct sign
+  - motor split stays correct
+  - measurable response exists
+  - return-to-zero stays clean
+  - no obvious low-duty instability
+- `kp` too low:
+  - `measurable_response` is weak
+  - setpoint is present, but `pid_out_roll` and actual response stay too small
+  - return to zero feels slow
+- `kp` too high:
+  - `saturation_risk` rises
+  - `return_to_zero_quality` degrades
+  - `noise_or_jitter_risk` rises
+  - you see fighting, oscillation, or overshoot
+- if anything abnormal appears:
+  - stop the test
+  - do not continue increasing `rate_kp_roll`
 
-For hang-attitude bench work on the constrained rig:
+## Hang-Attitude Notes
 
-1. Keep the airframe on the circular rod or hanging fixture and verify that the natural equilibrium is the intended captured reference.
-2. Start telemetry and confirm IMU freshness before capture.
-3. Run `attitude-capture-ref` while the frame is in its natural hanging pose.
-4. Arm only after the rig is confirmed restrained and safe.
-5. Start with conservative `attitude_kp_*`, `attitude_rate_limit_*`, and `attitude_test_base_duty`.
-6. Run `attitude-test start`.
-7. Use `watch-attitude` to verify error sign, rate-setpoint sign, PID output, and motor split while applying small manual disturbances.
-8. Stop immediately with `attitude-test stop` or `kill` if the sign chain is wrong, a trip occurs, or the IMU is not fresh.
-9. Disarm after the test.
+The hang-attitude path remains constrained-rig only:
+
+- do not use it on a prop-on free-flight vehicle
+- yaw is not in the attitude outer loop for that stage
+- reference capture is required before `attitude-test start`
 
 ## Error Handling
 

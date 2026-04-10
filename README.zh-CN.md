@@ -26,31 +26,31 @@
 
 ## 当前状态
 
-仓库现在有两条“受限台架”控制路径：
+仓库现在包含两条“受限台架”控制路径：
 
-- 已可用的 `roll / pitch / yaw` 三轴 rate 闭环台架路径
-- 新增的圆棍 / 吊架专用姿态外环 bring-up 路径，面向自然平衡姿态为 `+Z 朝下` 的受限台架
+- 已可用的 `roll / pitch / yaw` 三轴 rate-loop 台架路径
+- 面向圆棍 / 吊架的 bench-only 姿态外环 bring-up 路径，适用于自然平衡姿态为 `+Z 朝下` 的受限台架
 
-新的姿态外环 bring-up 明确受限于以下范围：
+姿态外环路径明确受限：
 
 - 固件新增 `CONTROL_MODE_ATTITUDE_HANG_TEST`
-- 进入前必须显式执行 `attitude-capture-ref`
-- 控制误差使用相对四元数 `q_rel = q_ref^-1 * q_now`，而不是拿全局 `roll=0 / pitch=0` 直接相减
-- 这一轮只做 `roll / pitch` 外环
-- 外环先做 P-only，再把结果喂给现有 rate 内环
-- 推力保持开环固定 `attitude_test_base_duty`
+- 必须先显式执行 `attitude-capture-ref`
+- 控制误差使用相对四元数 `q_rel = q_ref^-1 * q_now`
+- 那一阶段只有 `roll / pitch` 进入姿态外环
+- 外环先做 P-only，再送入现有 rate 内环
+- 推力保持开环 `attitude_test_base_duty`
 
-这不是自由飞 stabilize，也不是 angle-ready 模式。
+当前 roll 调试仍然只限于 bench-only 的 rate-loop：
 
-`CONTROL_MODE_ATTITUDE_HANG_TEST` 仅用于受限台架，绝不能直接用于带桨自由飞。
+- 不做 angle outer loop
+- roll workflow 不进入姿态外环
+- 不做自由飞调参
+- 不改现有 `+roll`、`roll_rate = -gyro_y` 和电机映射约定
 
-本阶段仍然不做：
+当前文档记录的 live roll 会话是在圆棍受限台架上完成的，机体自然姿态为 `+Z 朝下`。
+这个前提不会改变 roll rate-loop 的符号验收，因为该 workflow 只看 `rate_setpoint_roll`、映射后的 roll 反馈、PID 输出和电机分配。
 
-- 自由飞 stabilize / angle 调参
-- yaw heading hold
-- altitude hold 闭环
-- auto takeoff
-- autotune
+本仓库仍然不代表任何带桨自由飞 stabilize / angle 模式已经 ready。
 
 ## 固件构建
 
@@ -89,6 +89,8 @@ pip install -e .[gui]
 ## 主要文档
 
 - [docs/hang_attitude_bringup_plan.zh-CN.md](./docs/hang_attitude_bringup_plan.zh-CN.md)
+- [docs/roll_rate_bench_workflow.zh-CN.md](./docs/roll_rate_bench_workflow.zh-CN.md)
+- [docs/roll_bench_summary_sample.md](./docs/roll_bench_summary_sample.md)
 - [docs/python_cli_usage.zh-CN.md](./docs/python_cli_usage.zh-CN.md)
 - [docs/python_gui_usage.zh-CN.md](./docs/python_gui_usage.zh-CN.md)
 - [docs/bringup_checklist.zh-CN.md](./docs/bringup_checklist.zh-CN.md)

@@ -158,11 +158,19 @@ class TelemetrySample:
         if axis_name not in RATE_AXIS_SOURCES:
             raise ValueError(f"unsupported axis {axis_name}")
 
-        source_field, source_value = self.axis_rate_source(axis_name)
+        source_field, sign = RATE_AXIS_SOURCES[axis_name]
+        source_value = float(getattr(self, source_field))
         return {
             "axis": axis_name,
             "source_field": source_field,
             "source_value": source_value,
+            "feedback_field": f"{axis_name}_rate",
+            "feedback_expr": f"{'-' if sign < 0.0 else ''}{source_field}",
+            "setpoint_field": f"rate_setpoint_{axis_name}",
+            "pid_p_field": f"rate_pid_p_{axis_name}",
+            "pid_i_field": f"rate_pid_i_{axis_name}",
+            "pid_d_field": f"rate_pid_d_{axis_name}",
+            "pid_out_field": f"pid_out_{axis_name}",
             "feedback_dps": self.axis_rate_feedback_dps(axis_name),
             "setpoint_dps": float(getattr(self, f"rate_setpoint_{axis_name}")),
             "pid_p": float(getattr(self, f"rate_pid_p_{axis_name}")),
