@@ -1,11 +1,11 @@
 {
   "axis_name": "pitch",
-  "run_id": "20260410-201954-kp0026",
+  "run_id": "20260410-205538-kp0024-after-manual",
   "serial_hint": "COM4",
-  "started_local": "2026-04-10T20:19:54+08:00",
-  "orientation_note": "Current bench orientation is +Z down circular-rod constrained bench. This round is pitch rate-loop bring-up only; not hang-attitude outer loop and not free-flight tuning.",
+  "started_local": "2026-04-10T20:55:38+08:00",
+  "orientation_note": "Current bench orientation is +Z down circular-rod constrained bench. This round is pitch rate-loop bring-up only; not hang-attitude outer loop and not free-flight tuning. Manual pitch disturbance check was confirmed by the user before this bench round.",
   "params": {
-    "rate_kp_pitch": 0.0026000000070780516,
+    "rate_kp_pitch": 0.002400000113993883,
     "rate_ki_pitch": 0.0,
     "rate_kd_pitch": 0.0,
     "rate_integral_limit": 100.0,

@@ -35,6 +35,7 @@ Do not change any of these:
    `python -m esp_drone_cli --serial COMx stream on`
 3. Move the frame by hand and verify the sign chain:
    `pitch_rate = gyro_x`
+   Do not mark the bench final until the operator confirms this physical sign check on the constrained bench.
 4. Run direct pitch commands:
    `python -m esp_drone_cli --serial COMx rate-test pitch 20`
    `python -m esp_drone_cli --serial COMx rate-test pitch -20`
@@ -106,30 +107,31 @@ If anything abnormal appears:
 
 Observed on the `2026-04-10` constrained-bench live session on `COM4`:
 
+- the operator manually disturbed the frame around the pitch axis and confirmed the physical `pitch_rate = gyro_x` sign chain before final acceptance
 - `rate-status pitch` reported `source_expr=gyro_x`
 - `+pitch` command produced positive `pid_out_pitch` and the expected `M3/M4` up, `M1/M2` down split
 - `-pitch` command produced negative `pid_out_pitch` and the expected `M1/M2` up, `M3/M4` down split
 
 ## Live Session Result
 
-Live constrained-bench comparison on `2026-04-10`:
+Live constrained-bench comparison on `2026-04-10` after manual pitch disturbance confirmation:
 
 | Candidate | sign_ok | motor_split_ok | measurable_response | saturation_risk | return_to_zero_quality | noise_or_jitter_risk | low_duty_motor_stability | Decision |
 |---|---|---|---|---|---|---|---|---|
-| `rate_kp_pitch = 0.0028` | `True` | `True` | `True` | `False` | `PASS` | `True` | `PASS_WITH_WARNING` | reject |
-| `rate_kp_pitch = 0.0026` | `True` | `True` | `True` | `False` | `PASS` | `False` | `PASS_WITH_WARNING` | keep |
+| `rate_kp_pitch = 0.0026` | `True` | `True` | `True` | `False` | `PASS` | `True` | `PASS_WITH_WARNING` | reject |
+| `rate_kp_pitch = 0.0024` | `True` | `True` | `True` | `False` | `PASS` | `False` | `PASS_WITH_WARNING` | keep |
 
 Recommended pitch parameters for this constrained bench session:
 
-- `rate_kp_pitch = 0.0026`
+- `rate_kp_pitch = 0.0024`
 - `rate_ki_pitch = 0.0`
 - `rate_kd_pitch = 0.0`
 
 Reason:
 
-- both the baseline `0.0028` and the candidate `0.0026` passed sign, split, measurable response, and return-to-zero checks
-- the baseline `0.0028` raised `noise_or_jitter_risk = True`
-- the candidate `0.0026` kept `measurable_response = True` while clearing the jitter flag
+- after the user-confirmed manual disturbance check, both `0.0026` and `0.0024` passed sign, split, measurable response, and return-to-zero checks
+- the `0.0026` bench round raised `noise_or_jitter_risk = True`
+- the `0.0024` bench round kept `measurable_response = True` while clearing the jitter flag
 - both rounds still showed `low_duty_motor_stability = PASS_WITH_WARNING`, so the lower Kp is the safer choice on this bench
 
 These values were written back to flash and saved after the comparison.
