@@ -56,6 +56,7 @@ class SerialTransport:
         if settle_delay_s > 0:
             time.sleep(settle_delay_s)
         self._serial.reset_input_buffer()
+        self._serial.reset_output_buffer()
 
     def send(self, data: bytes) -> None:
         """发送原始串口字节流。

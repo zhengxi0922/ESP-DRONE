@@ -233,7 +233,13 @@ class DeviceSession:
             except queue.Empty:
                 break
 
-    def connect_transport(self, transport: Transport, hello_timeout: float = 1.0) -> DeviceInfo:
+    def connect_transport(
+        self,
+        transport: Transport,
+        hello_timeout: float = 1.0,
+        *,
+        notify_failure: bool = True,
+    ) -> DeviceInfo:
         """接入一个已构造的传输对象并完成握手。
 
         Args:
@@ -256,10 +262,16 @@ class DeviceSession:
         self._reader_thread.start()
         try:
             info = self.hello(timeout=hello_timeout)
-        except Exception:
-            self.disconnect()
+        except Exception as exc:
+            self._last_error = str(exc)
+            self._teardown_transport(
+                safe_stop_stream=False,
+                notify=notify_failure,
+                error=self._last_error,
+            )
             raise
         self._connected = True
+        self._last_error = None
         self._notify_connection(connected=True)
         return info
 
@@ -268,7 +280,7 @@ class DeviceSession:
         port: str,
         baudrate: int = 115200,
         timeout: float = 0.2,
-        hello_timeout: float = 3.0,
+        hello_timeout: float = 4.0,
     ) -> DeviceInfo:
         """通过串口建立连接。
 
@@ -285,10 +297,29 @@ class DeviceSession:
             Exception: 串口打开、握手或协议收发失败时透传底层异常。
         """
 
-        return self.connect_transport(
-            SerialTransport(port=port, baudrate=baudrate, timeout=timeout),
-            hello_timeout=hello_timeout,
-        )
+        last_timeout: TimeoutError | None = None
+        for attempt in range(2):
+            try:
+                transport = SerialTransport(port=port, baudrate=baudrate, timeout=timeout)
+            except Exception as exc:
+                self._last_error = str(exc)
+                self._notify_connection(connected=False, error=self._last_error)
+                raise
+
+            try:
+                return self.connect_transport(
+                    transport,
+                    hello_timeout=hello_timeout,
+                    notify_failure=attempt == 1,
+                )
+            except TimeoutError as exc:
+                last_timeout = exc
+                if attempt == 0:
+                    continue
+                raise
+
+        assert last_timeout is not None
+        raise last_timeout
 
     def connect_udp(self, host: str, port: int = 2391, timeout: float = 1.0) -> DeviceInfo:
         """通过 UDP 建立连接。
@@ -307,16 +338,14 @@ class DeviceSession:
 
         return self.connect_transport(UdpTransport(host=host, port=port, timeout=timeout))
 
-    def disconnect(self, safe_stop_stream: bool = True) -> None:
-        """断开当前连接并释放后台资源。
-
-        Args:
-            safe_stop_stream: 为 `True` 时会在已连接状态下尽力发送一次停流命令，
-                以避免设备继续高速推送遥测。
-
-        Note:
-            本方法会吞掉关闭过程中的清理异常，适合在 CLI/GUI 退出路径中调用。
-        """
+    def _teardown_transport(
+        self,
+        *,
+        safe_stop_stream: bool,
+        notify: bool,
+        error: str | None,
+    ) -> None:
+        """Close transport resources while optionally preserving a connection error."""
 
         if self._transport is None:
             return
@@ -332,15 +361,37 @@ class DeviceSession:
             self._transport.close()
         except Exception:
             pass
-        if self._reader_thread is not None:
+        if self._reader_thread is not None and threading.current_thread() is not self._reader_thread:
             self._reader_thread.join(timeout=1.0)
         if self._csv_logger is not None:
             self._csv_logger.close()
             self._csv_logger = None
         self._transport = None
+        self._reader_thread = None
         self._connected = False
         self._device_info = None
-        self._notify_connection(connected=False, error=None)
+        if error is not None:
+            self._last_error = error
+        if notify:
+            self._notify_connection(connected=False, error=error)
+
+    def disconnect(self, safe_stop_stream: bool = True) -> None:
+        """断开当前连接并释放后台资源。
+
+        Args:
+            safe_stop_stream: 为 `True` 时会在已连接状态下尽力发送一次停流命令，
+                以避免设备继续高速推送遥测。
+
+        Note:
+            本方法会吞掉关闭过程中的清理异常，适合在 CLI/GUI 退出路径中调用。
+        """
+
+        self._last_error = None
+        self._teardown_transport(
+            safe_stop_stream=safe_stop_stream,
+            notify=True,
+            error=None,
+        )
 
     def close(self) -> None:
         """`disconnect()` 的别名，便于统一释放接口。"""

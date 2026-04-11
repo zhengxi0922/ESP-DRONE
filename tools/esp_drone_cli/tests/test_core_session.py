@@ -148,6 +148,14 @@ class MockTransport:
         self.closed = True
 
 
+class TimeoutHelloTransport(MockTransport):
+    def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
+        self.sent.append((msg_type, payload))
+        if msg_type == MsgType.HELLO_REQ:
+            return
+        super().send_message(msg_type, payload, flags=flags, seq=seq)
+
+
 class FakeSession:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple, dict]] = []
@@ -374,6 +382,72 @@ def test_device_session_mock_roundtrip(tmp_path: Path):
     assert applied[0].name == "alpha"
     session.disconnect()
     assert transport.closed
+
+
+def test_connect_transport_failure_preserves_error_and_callback():
+    session = DeviceSession()
+    events: list[dict[str, object]] = []
+    session.subscribe_connection_state(events.append)
+    transport = TimeoutHelloTransport()
+
+    with pytest.raises(TimeoutError):
+        session.connect_transport(transport, hello_timeout=0.05)
+
+    assert transport.closed
+    assert session.last_error is not None
+    assert "timed out waiting" in session.last_error
+    assert events
+    assert events[-1]["connected"] is False
+    assert events[-1]["error"] == session.last_error
+
+
+def test_connect_serial_retries_one_hello_timeout_without_reporting_first_failure(monkeypatch):
+    from esp_drone_cli.core import device_session as device_session_module
+
+    first = TimeoutHelloTransport()
+    second = MockTransport()
+    transports = [first, second]
+
+    def fake_serial_transport(*_args, **_kwargs):
+        return transports.pop(0)
+
+    monkeypatch.setattr(device_session_module, "SerialTransport", fake_serial_transport)
+    session = device_session_module.DeviceSession()
+    events: list[dict[str, object]] = []
+    session.subscribe_connection_state(events.append)
+
+    info = session.connect_serial("COM7", hello_timeout=0.05)
+
+    assert info.protocol_version == 3
+    assert first.closed
+    assert session.last_error is None
+    assert [event["connected"] for event in events] == [True]
+    session.disconnect()
+
+
+def test_connect_serial_reports_real_error_after_retry_exhaustion(monkeypatch):
+    from esp_drone_cli.core import device_session as device_session_module
+
+    original_transports = [TimeoutHelloTransport(), TimeoutHelloTransport()]
+    transports = list(original_transports)
+
+    def fake_serial_transport(*_args, **_kwargs):
+        return transports.pop(0)
+
+    monkeypatch.setattr(device_session_module, "SerialTransport", fake_serial_transport)
+    session = device_session_module.DeviceSession()
+    events: list[dict[str, object]] = []
+    session.subscribe_connection_state(events.append)
+
+    with pytest.raises(TimeoutError):
+        session.connect_serial("COM7", hello_timeout=0.05)
+
+    assert all(transport.closed for transport in original_transports)
+    assert session.last_error is not None
+    assert "timed out waiting" in session.last_error
+    assert events
+    assert events[-1]["connected"] is False
+    assert events[-1]["error"] == session.last_error
 
 
 def test_hello_resp_v2_decodes_build_identity_and_capabilities():
@@ -696,6 +770,56 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
 
 
 @pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
+def test_gui_connect_failure_shows_error_and_restores_inputs(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+
+    from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
+
+    class FailingSession(FakeSession):
+        def connect_serial(self, port: str, baudrate: int = 115200, timeout: float = 0.2):
+            self._record("connect_serial", port, baudrate, timeout)
+            raise TimeoutError("HELLO timeout")
+
+    class SyncBridge(QtSessionBridge):
+        def run_async(self, label: str, callback) -> None:
+            try:
+                result = callback()
+                self.command_finished.emit(label, result)
+            except Exception as exc:
+                if label in {"connect_serial", "connect_udp"}:
+                    self.error_raised.emit(f"Connect failed: {exc}")
+                else:
+                    self.error_raised.emit(f"{label}: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    session = FailingSession()
+    settings = QSettings(str(tmp_path / "gui-fail.ini"), QSettings.IniFormat)
+    window = MainWindow(
+        session=session,
+        bridge_cls=SyncBridge,
+        serial_port_provider=lambda: ["COM404"],
+        settings=settings,
+    )
+
+    window.serial_port_combo.setCurrentText("COM404")
+    window.connect_button.click()
+    app.processEvents()
+
+    assert ("connect_serial", ("COM404", 115200, 0.2), {}) in session.calls
+    assert window.connection_status_chip.text() == window._t("status.disconnected")
+    assert window.connect_button.isEnabled()
+    assert window.serial_port_combo.currentText() == "COM404"
+    assert "Connect failed: HELLO timeout" in window.connection_error_detail.text()
+    assert "Connect failed: HELLO timeout" in window.event_log_edit.toPlainText()
+
+    window.close()
+    app.processEvents()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
 def test_gui_close_disconnects_session(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PyQt5.QtCore import QSettings
@@ -949,6 +1073,9 @@ def test_serial_transport_keeps_default_control_lines(monkeypatch):
         def reset_input_buffer(self) -> None:
             return None
 
+        def reset_output_buffer(self) -> None:
+            return None
+
     monkeypatch.setattr(serial_link.serial, "Serial", FakeSerial)
     monkeypatch.setattr(serial_link.time, "sleep", lambda _seconds: None)
 
@@ -968,6 +1095,9 @@ def test_serial_transport_recv_frame_skips_invalid_packets(monkeypatch):
             self.data = bytearray()
 
         def reset_input_buffer(self) -> None:
+            return None
+
+        def reset_output_buffer(self) -> None:
             return None
 
         def read(self, _size: int) -> bytes:

@@ -727,6 +727,8 @@ TRANSLATIONS = {
 
 EXTRA_TRANSLATIONS = {
     "zh": {
+        "status.connecting": "连接中...",
+        "msg.connect_failed": "Connect failed: {error}",
         "chart.baro": "气压计",
         "chart.y_baro": "气压 / 高度 / 温度",
         "chart.rate_roll": "Rate Roll",
@@ -764,6 +766,8 @@ EXTRA_TRANSLATIONS = {
         "control.height_hold_reserved": "定高保留",
     },
     "en": {
+        "status.connecting": "Connecting...",
+        "msg.connect_failed": "Connect failed: {error}",
         "chart.baro": "Barometer",
         "chart.y_baro": "baro / altitude / temp",
         "chart.rate_roll": "Rate Roll",
@@ -1068,7 +1072,10 @@ class QtSessionBridge(QObject):
                 result = callback()
                 self.command_finished.emit(label, result)
             except Exception as exc:  # pragma: no cover - depends on runtime/device state
-                self.error_raised.emit(f"{label}: {exc}")
+                if label in {"connect_serial", "connect_udp"}:
+                    self.error_raised.emit(f"Connect failed: {exc}")
+                else:
+                    self.error_raised.emit(f"{label}: {exc}")
 
         threading.Thread(target=worker, daemon=True, name=f"esp-drone-gui-{label}").start()
 
@@ -1402,6 +1409,8 @@ class MainWindow(QMainWindow):
         self._stream_enabled = False
         self._last_result = "-"
         self._closing = False
+        self._connecting = False
+        self._last_connect_error_message: str | None = None
         self._language = "zh"
         self._current_chart_group = "gyro"
         self._chart_curves: dict[str, object] = {}
@@ -2315,6 +2324,38 @@ class MainWindow(QMainWindow):
         stamp = time.strftime("%H:%M:%S")
         self.event_log_edit.appendPlainText(f"[{stamp}] {text}")
 
+    def _connect_failed_text(self, error: object) -> str:
+        message = str(error)
+        if message.startswith("Connect failed:"):
+            return message
+        return self._t("msg.connect_failed", error=message)
+
+    def _set_connecting_state(self, detail: str) -> None:
+        self._connecting = True
+        self._last_connect_error_message = None
+        _set_badge(self.connection_status_chip, self._t("status.connecting"), "active")
+        self.connection_info_label.setText(detail)
+        self.connection_error_detail.setText(self._t("status.no_conn_error"))
+        self.last_error_label.setText(self._t("status.no_error"))
+        self._set_last_result(self._t("status.connecting"))
+        self._append_log(f"{self._t('status.connecting')}: {detail}")
+        self._refresh_enabled_state()
+
+    def _show_connect_failure(self, error: object) -> None:
+        message = self._connect_failed_text(error)
+        self._connecting = False
+        self._stream_enabled = False
+        _set_badge(self.connection_status_chip, self._t("status.disconnected"), "warn")
+        self.connection_info_label.setText(self._t("status.no_session"))
+        self.connection_error_detail.setText(message)
+        self.last_error_label.setText(message)
+        self._set_last_result(message)
+        if self._last_connect_error_message != message:
+            self._append_log(message)
+            self._last_connect_error_message = message
+        self._update_stream_chip()
+        self._refresh_enabled_state()
+
     def _save_event_log(self) -> None:
         output, _ = QFileDialog.getSaveFileName(
             self,
@@ -2584,6 +2625,7 @@ class MainWindow(QMainWindow):
                 self._on_error(self._t("msg.connect_no_port"))
                 return
             baudrate = int(self.baudrate_spin.value())
+            self._set_connecting_state(f"serial {port} @ {baudrate}")
             self._run_session_action(
                 "connect_serial",
                 lambda: self._session.connect_serial(port, baudrate=baudrate, timeout=0.2),
@@ -2595,6 +2637,7 @@ class MainWindow(QMainWindow):
             self._on_error(self._t("msg.connect_no_host"))
             return
         port = int(self.udp_port_spin.value())
+        self._set_connecting_state(f"udp {host}:{port}")
         self._run_session_action(
             "connect_udp",
             lambda: self._session.connect_udp(host, port=port, timeout=1.0),
@@ -2834,7 +2877,8 @@ class MainWindow(QMainWindow):
 
     def _refresh_enabled_state(self) -> None:
         connected = bool(getattr(self._session, "is_connected", False))
-        self.connect_button.setEnabled(not connected)
+        connecting = bool(self._connecting and not connected)
+        self.connect_button.setEnabled(not connected and not connecting)
         self.disconnect_button.setEnabled(connected)
 
         for button in (
@@ -2866,8 +2910,8 @@ class MainWindow(QMainWindow):
         ):
             button.setEnabled(connected)
 
-        self.link_type_combo.setEnabled(not connected)
-        self.transport_stack.setEnabled(not connected)
+        self.link_type_combo.setEnabled(not connected and not connecting)
+        self.transport_stack.setEnabled(not connected and not connecting)
 
     def _apply_status_to_row(self, row: int, role: str) -> None:
         foreground, background = ROW_STYLE.get(role, ROW_STYLE["neutral"])
@@ -2882,6 +2926,8 @@ class MainWindow(QMainWindow):
         error = payload.get("error")
         info = payload.get("device_info")
         if connected:
+            self._connecting = False
+            self._last_connect_error_message = None
             _set_badge(self.connection_status_chip, self._t("status.connected"), "ok")
             self.connection_info_label.setText(_device_info_text(info))
             self.connection_error_detail.setText(self._t("status.no_conn_error"))
@@ -2891,15 +2937,14 @@ class MainWindow(QMainWindow):
             self._append_log(self._t("msg.connected", info=_device_info_text(info)))
             self._run_session_action("list_params", lambda: self._session.list_params(timeout=3.0))
         else:
+            if error:
+                self._show_connect_failure(error)
+                return
+            self._connecting = False
             _set_badge(self.connection_status_chip, self._t("status.disconnected"), "neutral" if not error else "warn")
             self.connection_info_label.setText(self._t("status.no_session"))
             self._stream_enabled = False
-            if error:
-                message = str(error)
-                self.connection_error_detail.setText(message)
-                self.last_error_label.setText(message)
-                self._append_log(message)
-            elif not self._closing:
+            if not self._closing:
                 self.connection_error_detail.setText(self._t("status.no_conn_error"))
                 self.last_error_label.setText(self._t("status.no_error"))
                 self._append_log(self._t("msg.disconnected"))
@@ -2953,6 +2998,9 @@ class MainWindow(QMainWindow):
         self._append_log(message)
 
     def _on_error(self, message: str) -> None:
+        if self._connecting or message.startswith("Connect failed:") or message.startswith("connect_serial:") or message.startswith("connect_udp:"):
+            self._show_connect_failure(message)
+            return
         self.last_error_label.setText(message)
         self._set_last_result(message)
         self._append_log(message)
