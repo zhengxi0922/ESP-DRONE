@@ -1,10 +1,10 @@
 # Roll Bench Round
 
 - axis: `roll`
-- run_id: `20260410-191326-baseline`
-- started_local: `2026-04-10T19:13:26+08:00`
+- run_id: `20260411-191740-kp0026-after-manual-stream-paused`
+- started_local: `2026-04-11T19:17:40+08:00`
 - serial_hint: `COM4`
-- orientation: +Z down circular-rod constrained bench; rate-only roll bring-up
+- orientation: Current bench orientation is +Z down circular-rod constrained bench. This round is roll rate-loop bring-up only; not hang-attitude outer loop and not free-flight tuning. Manual roll disturbance check was confirmed by the user before this bench round.
 
 ## Params
 
@@ -39,12 +39,12 @@
 
 | step | cmd_dps | samples | sp_mean | fb_mean | pid_out_mean | split_mean | sat_ratio | sign_ok | response | zero_ok |
 |---|---:|---:|---:|---:|---:|---:|---:|---|---|---|
-| pre_zero | 0.0 | 51 | 0.00 | -0.12 | 0.0000 | 0.0000 | 0.00 | None | None | None |
-| pos_small | 10.0 | 87 | 10.00 | 1.66 | 0.0216 | 0.0419 | 0.00 | True | True | None |
-| zero_after_pos_small | 0.0 | 50 | 0.00 | -0.10 | 0.0000 | 0.0000 | 0.00 | None | None | True |
-| neg_small | -10.0 | 83 | -10.00 | 0.49 | -0.0273 | -0.0525 | 0.00 | True | True | None |
-| zero_after_neg_small | 0.0 | 51 | 0.00 | -0.24 | 0.0000 | 0.0000 | 0.00 | None | None | True |
-| pos_large | 15.0 | 83 | 15.00 | 1.18 | 0.0357 | 0.0637 | 0.00 | True | True | None |
-| zero_after_pos_large | 0.0 | 51 | 0.00 | 0.42 | 0.0000 | 0.0000 | 0.00 | None | None | True |
-| neg_large | -15.0 | 78 | -15.00 | 0.21 | -0.0397 | -0.0718 | 0.00 | True | True | None |
-| post_zero | 0.0 | 50 | 0.00 | -0.23 | 0.0000 | 0.0000 | 0.00 | None | None | True |
+| pre_zero | 0.0 | 50 | 0.00 | -0.15 | 0.0000 | 0.0000 | 0.00 | None | None | None |
+| pos_small | 10.0 | 83 | 10.00 | -1.05 | 0.0287 | 0.0543 | 0.00 | True | True | None |
+| zero_after_pos_small | 0.0 | 50 | 0.00 | -0.03 | 0.0000 | 0.0000 | 0.00 | None | None | True |
+| neg_small | -10.0 | 84 | -10.00 | 0.16 | -0.0265 | -0.0518 | 0.00 | True | True | None |
+| zero_after_neg_small | 0.0 | 49 | 0.00 | -0.14 | 0.0000 | 0.0000 | 0.00 | None | None | True |
+| pos_large | 15.0 | 81 | 15.00 | 1.48 | 0.0352 | 0.0633 | 0.00 | True | True | None |
+| zero_after_pos_large | 0.0 | 50 | 0.00 | -0.78 | 0.0000 | 0.0000 | 0.00 | None | None | True |
+| neg_large | -15.0 | 81 | -15.00 | -0.50 | -0.0379 | -0.0683 | 0.00 | True | True | None |
+| post_zero | 0.0 | 51 | 0.00 | -0.34 | 0.0000 | 0.0000 | 0.00 | None | None | True |

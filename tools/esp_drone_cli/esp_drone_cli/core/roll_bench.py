@@ -519,6 +519,72 @@ def _format_state_detail(sample: TelemetrySample | None) -> str:
     )
 
 
+def _send_rate_test_checked(
+    session: DeviceSession,
+    axis_index: int,
+    value_dps: float,
+    *,
+    retries: int = 2,
+) -> None:
+    """Send a rate-test command, tolerating delayed/lost command responses."""
+
+    last_timeout: TimeoutError | None = None
+    for attempt in range(retries + 1):
+        paused_stream = False
+        try:
+            if hasattr(session, "command"):
+                try:
+                    session.stop_stream(timeout=3.0)
+                    paused_stream = True
+                except Exception:
+                    paused_stream = False
+                status = session.command(CmdId.RATE_TEST, arg_u8=axis_index, arg_f32=value_dps, timeout=3.0)
+            else:
+                status = session.rate_test(axis_index, value_dps)
+            ensure_command_ok(CmdId.RATE_TEST, status)
+            return
+        except TimeoutError as exc:
+            last_timeout = exc
+            if attempt >= retries:
+                raise
+            time.sleep(0.05)
+        finally:
+            if paused_stream:
+                try:
+                    session.start_stream(timeout=3.0)
+                except Exception:
+                    pass
+    if last_timeout is not None:
+        raise last_timeout
+
+
+def _send_simple_command_checked(
+    session: DeviceSession,
+    cmd_id: int,
+    fallback_send,
+    *,
+    retries: int = 2,
+) -> None:
+    """Send a no-argument command with a longer bench timeout."""
+
+    last_timeout: TimeoutError | None = None
+    for attempt in range(retries + 1):
+        try:
+            if hasattr(session, "command"):
+                status = session.command(cmd_id, timeout=3.0)
+            else:
+                status = fallback_send()
+            ensure_command_ok(cmd_id, status)
+            return
+        except TimeoutError as exc:
+            last_timeout = exc
+            if attempt >= retries:
+                raise
+            time.sleep(0.05)
+    if last_timeout is not None:
+        raise last_timeout
+
+
 def apply_axis_bench_params(session: DeviceSession, updates: dict[str, float]) -> dict[str, float]:
     """Apply live axis-bench parameter updates."""
 
@@ -642,7 +708,7 @@ def run_axis_bench_round(
             )
 
         if auto_arm:
-            ensure_command_ok(CmdId.ARM, session.arm())
+            _send_simple_command_checked(session, CmdId.ARM, session.arm)
             _wait_for_arm_state(session, ARM_STATE_ARMED, timeout_s=2.0)
             armed_by_helper = True
         elif sample.arm_state != ARM_STATE_ARMED:
@@ -651,13 +717,13 @@ def run_axis_bench_round(
                 "Use --auto-arm or arm the device manually."
             )
 
-        ensure_command_ok(CmdId.RATE_TEST, session.rate_test(axis_index, 0.0))
+        _send_rate_test_checked(session, axis_index, 0.0)
         time.sleep(0.2)
 
         for step in step_plan:
             step_start = time.monotonic()
             current_command["value"] = step.command_dps
-            ensure_command_ok(CmdId.RATE_TEST, session.rate_test(axis_index, step.command_dps))
+            _send_rate_test_checked(session, axis_index, step.command_dps)
             if abs(step.command_dps) > 0.01:
                 should_kill_on_abort = True
             latest_count = len(captured_samples)
@@ -682,10 +748,10 @@ def run_axis_bench_round(
             step_windows.append((step, window_samples))
 
         current_command["value"] = 0.0
-        ensure_command_ok(CmdId.RATE_TEST, session.rate_test(axis_index, 0.0))
+        _send_rate_test_checked(session, axis_index, 0.0)
         time.sleep(0.25)
         if armed_by_helper:
-            ensure_command_ok(CmdId.DISARM, session.disarm())
+            _send_simple_command_checked(session, CmdId.DISARM, session.disarm)
             armed_by_helper = False
 
         metrics, summary = analyze_axis_bench_round(step_windows, params, axis_name=axis_name)

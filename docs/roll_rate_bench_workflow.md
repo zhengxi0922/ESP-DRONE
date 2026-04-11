@@ -32,6 +32,7 @@ Do not change any of these:
    `python -m esp_drone_cli --serial COMx stream on`
 3. Move the frame by hand and verify the sign chain:
    `roll_rate = -gyro_y`
+   Do not mark the roll bench final until the operator explicitly confirms this physical sign check on the constrained bench.
 4. Run direct roll commands:
    `rate-test roll 30`, `rate-test roll -30`, then `rate-test roll 0`
 5. Observe:
@@ -42,6 +43,9 @@ Do not change any of these:
 7. Inspect the saved CSV, JSON summary, and Markdown summary.
 8. Only if `sign_ok` and `motor_split_ok` are both true, try a small `rate_kp_roll` change.
 9. Re-run the same roll workflow after each change.
+
+If the operator confirmation for the manual disturbance step is still missing, the roll result remains provisional and must not be treated as physical acceptance.
+On live serial links, the CLI bench helper may briefly pause telemetry streaming while switching rate-test steps so command responses are not lost under telemetry load. This does not change the acceptance criteria.
 
 ## Summary Gating
 
@@ -91,14 +95,22 @@ If anything abnormal appears:
 1. stop the test
 2. do not continue increasing `rate_kp_roll`
 
+## Live Sign Check
+
+Observed on the `2026-04-11` constrained-bench live session on `COM4`:
+
+- the operator manually disturbed the frame around the roll axis and confirmed the physical `roll_rate = -gyro_y` sign chain before final acceptance
+- `rate-status roll` reported `source_expr=-gyro_y`
+- `+roll` command produced positive `pid_out_roll` and the expected `M1/M4` up, `M2/M3` down split
+- `-roll` command produced negative `pid_out_roll` and the expected `M2/M3` up, `M1/M4` down split
+
 ## Live Session Result
 
-Live constrained-bench comparison on `2026-04-10`:
+Manual-confirmed constrained-bench rerun on `2026-04-11`:
 
 | Candidate | sign_ok | motor_split_ok | measurable_response | saturation_risk | return_to_zero_quality | noise_or_jitter_risk | low_duty_motor_stability | Decision |
 |---|---|---|---|---|---|---|---|---|
 | `rate_kp_roll = 0.0026` | `True` | `True` | `True` | `False` | `PASS` | `False` | `PASS_WITH_WARNING` | keep |
-| `rate_kp_roll = 0.0028` | `True` | `True` | `True` | `False` | `PASS` | `True` | `PASS_WITH_WARNING` | reject |
 
 Recommended roll parameters for this bench:
 
@@ -108,8 +120,8 @@ Recommended roll parameters for this bench:
 
 Reason:
 
-- baseline `0.0026` already passes sign, split, response, and return-to-zero checks
-- `0.0028` did not improve the decision outcome and raised jitter risk
+- manual-confirmed `0.0026` passes sign, split, response, and return-to-zero checks
+- `noise_or_jitter_risk = False` on the completed `2026-04-11` rerun
 - the largest probe step already approaches the low-duty floor, so a conservative Kp is preferable
 
 These values were written back to flash after the comparison.
