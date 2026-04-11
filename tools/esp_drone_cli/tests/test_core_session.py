@@ -1035,6 +1035,23 @@ def test_gui_entry_reports_missing_pyqt5_without_affecting_cli(monkeypatch):
     assert build_parser().prog == "esp-drone-cli"
 
 
+@pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
+def test_gui_entry_direct_file_import_loads_runner(monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    repo_root = Path(__file__).resolve().parents[3]
+    entry_path = repo_root / "tools" / "esp_drone_cli" / "esp_drone_cli" / "gui_main.py"
+    spec = importlib.util.spec_from_file_location("esp_drone_gui_direct_entry", entry_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    run_gui = module._load_run_gui()
+
+    assert run_gui.__name__ == "run_gui"
+    assert run_gui.__module__ == "esp_drone_cli.gui.main_window"
+
+
 def test_compatibility_shims_resolve_to_core_owners():
     from esp_drone_cli.client import DeviceSession as ShimDeviceSession
     from esp_drone_cli.client import EspDroneClient

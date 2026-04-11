@@ -4,6 +4,25 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
+
+
+def _load_run_gui():
+    """Import the GUI runner for package and direct-file execution."""
+
+    if __package__:
+        from .gui.main_window import run_gui
+
+        return run_gui
+
+    package_root = Path(__file__).resolve().parents[1]
+    package_root_text = str(package_root)
+    if package_root_text not in sys.path:
+        sys.path.insert(0, package_root_text)
+
+    from esp_drone_cli.gui.main_window import run_gui
+
+    return run_gui
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -24,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
 
     os.environ.setdefault("PYQTGRAPH_QT_LIB", "PyQt5")
     try:
-        from .gui.main_window import run_gui
+        run_gui = _load_run_gui()
     except ModuleNotFoundError as exc:
         missing_name = exc.name or str(exc)
         if "PyQt5" in missing_name or "pyqtgraph" in missing_name:
