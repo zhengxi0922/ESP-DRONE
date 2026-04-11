@@ -9,6 +9,7 @@ from pathlib import Path
 CMD_REQ_STRUCT = struct.Struct("<BBHf")
 CMD_RESP_STRUCT = struct.Struct("<BBH")
 HELLO_RESP_STRUCT = struct.Struct("<BBBBI")
+HELLO_RESP_STRUCT_V2 = struct.Struct("<BBBBI16s24s")
 TELEMETRY_STRUCT_V1 = struct.Struct("<Q" + "f" * 36 + "III8B")
 TELEMETRY_STRUCT_V2 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B")
 TELEMETRY_STRUCT_V3 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B" + "f" * 9 + "4B")
@@ -48,6 +49,27 @@ ATTITUDE_AXIS_FIELDS = {
     "pitch": ("attitude_err_pitch_deg", "attitude_rate_sp_pitch", "pid_out_pitch"),
 }
 
+FEATURE_PARAMS = 1 << 0
+FEATURE_STREAMING = 1 << 1
+FEATURE_MOTOR_AXIS_TEST = 1 << 2
+FEATURE_RATE_TEST = 1 << 3
+FEATURE_BARO_TELEMETRY = 1 << 4
+FEATURE_ATTITUDE_HANG_BENCH = 1 << 5
+MIN_ATTITUDE_HANG_PROTOCOL_VERSION = 3
+
+FEATURE_NAMES = {
+    FEATURE_PARAMS: "params",
+    FEATURE_STREAMING: "streaming",
+    FEATURE_MOTOR_AXIS_TEST: "motor_axis_test",
+    FEATURE_RATE_TEST: "rate_test",
+    FEATURE_BARO_TELEMETRY: "baro_telemetry",
+    FEATURE_ATTITUDE_HANG_BENCH: "attitude_hang_bench",
+}
+
+
+class CapabilityError(RuntimeError):
+    pass
+
 
 @dataclass(slots=True)
 class ParamValue:
@@ -63,6 +85,28 @@ class DeviceInfo:
     arm_state: int
     stream_enabled: int
     feature_bitmap: int
+    build_git_hash: str | None = None
+    build_time_utc: str | None = None
+
+    def supports_feature(self, feature_bit: int) -> bool:
+        return (self.feature_bitmap & feature_bit) == feature_bit
+
+    def feature_names(self) -> list[str]:
+        return [name for bit, name in FEATURE_NAMES.items() if self.supports_feature(bit)]
+
+    def require_attitude_hang_bench(self) -> None:
+        if self.protocol_version >= MIN_ATTITUDE_HANG_PROTOCOL_VERSION and self.supports_feature(FEATURE_ATTITUDE_HANG_BENCH):
+            return
+        raise CapabilityError(
+            "device firmware does not advertise bench-only hang-attitude support "
+            f"(need protocol_version>={MIN_ATTITUDE_HANG_PROTOCOL_VERSION} and "
+            f"feature attitude_hang_bench/0x{FEATURE_ATTITUDE_HANG_BENCH:02x}; "
+            f"got protocol_version={self.protocol_version}, "
+            f"feature_bitmap=0x{self.feature_bitmap:08x}, "
+            f"build_git_hash={self.build_git_hash or 'unknown'}, "
+            f"build_time_utc={self.build_time_utc or 'unknown'}). "
+            "Rebuild and flash the current main firmware before running hang-attitude commands."
+        )
 
 
 @dataclass(slots=True)
@@ -346,8 +390,32 @@ def decode_param_value(payload: bytes) -> ParamValue:
 
 
 def decode_device_info(payload: bytes) -> DeviceInfo:
-    protocol_version, imu_mode, arm_state, stream_enabled, feature_bitmap = HELLO_RESP_STRUCT.unpack(payload)
-    return DeviceInfo(protocol_version, imu_mode, arm_state, stream_enabled, feature_bitmap)
+    if len(payload) == HELLO_RESP_STRUCT.size:
+        protocol_version, imu_mode, arm_state, stream_enabled, feature_bitmap = HELLO_RESP_STRUCT.unpack(payload)
+        return DeviceInfo(protocol_version, imu_mode, arm_state, stream_enabled, feature_bitmap)
+    if len(payload) == HELLO_RESP_STRUCT_V2.size:
+        (
+            protocol_version,
+            imu_mode,
+            arm_state,
+            stream_enabled,
+            feature_bitmap,
+            build_git_hash,
+            build_time_utc,
+        ) = HELLO_RESP_STRUCT_V2.unpack(payload)
+        return DeviceInfo(
+            protocol_version,
+            imu_mode,
+            arm_state,
+            stream_enabled,
+            feature_bitmap,
+            build_git_hash.split(b"\x00", 1)[0].decode("ascii", errors="replace") or None,
+            build_time_utc.split(b"\x00", 1)[0].decode("ascii", errors="replace") or None,
+        )
+    raise ValueError(
+        f"unsupported HELLO_RESP payload length {len(payload)}, "
+        f"expected {HELLO_RESP_STRUCT.size} or {HELLO_RESP_STRUCT_V2.size}"
+    )
 
 
 def decode_event_text(payload: bytes) -> str:

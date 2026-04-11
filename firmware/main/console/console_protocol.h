@@ -4,7 +4,23 @@
 
 #define CONSOLE_FRAME_MAGIC 0xA5u
 #define CONSOLE_FRAME_VERSION 0x01u
-#define CONSOLE_PROTOCOL_VERSION 0x03u
+#define CONSOLE_PROTOCOL_VERSION 0x04u
+#define CONSOLE_BUILD_GIT_HASH_LEN 16u
+#define CONSOLE_BUILD_TIME_LEN 24u
+
+#define CONSOLE_FEATURE_PARAMS (1u << 0)
+#define CONSOLE_FEATURE_STREAMING (1u << 1)
+#define CONSOLE_FEATURE_MOTOR_AXIS_TEST (1u << 2)
+#define CONSOLE_FEATURE_RATE_TEST (1u << 3)
+#define CONSOLE_FEATURE_BARO_TELEMETRY (1u << 4)
+#define CONSOLE_FEATURE_ATTITUDE_HANG_BENCH (1u << 5)
+#define CONSOLE_FEATURE_BITMAP_CURRENT \
+    (CONSOLE_FEATURE_PARAMS | \
+     CONSOLE_FEATURE_STREAMING | \
+     CONSOLE_FEATURE_MOTOR_AXIS_TEST | \
+     CONSOLE_FEATURE_RATE_TEST | \
+     CONSOLE_FEATURE_BARO_TELEMETRY | \
+     CONSOLE_FEATURE_ATTITUDE_HANG_BENCH)
 
 typedef enum {
     MSG_HELLO_REQ = 0x01,
@@ -80,6 +96,8 @@ typedef struct __attribute__((packed)) {
     uint8_t arm_state;
     uint8_t stream_enabled;
     uint32_t feature_bitmap;
+    char build_git_hash[CONSOLE_BUILD_GIT_HASH_LEN];
+    char build_time_utc[CONSOLE_BUILD_TIME_LEN];
 } console_hello_resp_t;
 
 typedef struct __attribute__((packed)) {

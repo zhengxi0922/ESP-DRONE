@@ -440,6 +440,12 @@ class DeviceSession:
             _, status, _ = CMD_RESP_STRUCT.unpack(frame.payload)
             return status
 
+    def require_attitude_hang_bench(self) -> None:
+        """Fail before sending hang-attitude commands to firmware without the advertised capability."""
+
+        info = self._device_info or self.hello()
+        info.require_attitude_hang_bench()
+
     def arm(self) -> int:
         """请求设备解锁。"""
 
@@ -505,16 +511,19 @@ class DeviceSession:
     def attitude_capture_ref(self) -> int:
         """Capture the current natural hanging attitude as the bench reference."""
 
+        self.require_attitude_hang_bench()
         return self.command(CmdId.ATTITUDE_CAPTURE_REF)
 
     def attitude_test_start(self) -> int:
         """Start the bench-only hang-attitude outer loop."""
 
+        self.require_attitude_hang_bench()
         return self.command(CmdId.ATTITUDE_TEST_START)
 
     def attitude_test_stop(self) -> int:
         """Stop the bench-only hang-attitude outer loop."""
 
+        self.require_attitude_hang_bench()
         return self.command(CmdId.ATTITUDE_TEST_STOP)
 
     def calib_gyro(self) -> int:
@@ -723,6 +732,9 @@ class DeviceSession:
                 "protocol_version": info.protocol_version,
                 "imu_mode": info.imu_mode,
                 "feature_bitmap": info.feature_bitmap,
+                "feature_names": info.feature_names(),
+                "build_git_hash": info.build_git_hash,
+                "build_time_utc": info.build_time_utc,
             },
             params=[{"name": p.name, "type_id": p.type_id, "value": p.value} for p in params],
         )

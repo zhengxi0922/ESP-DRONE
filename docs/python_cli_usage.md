@@ -62,6 +62,7 @@ Connection and stream:
 
 ```powershell
 python -m esp_drone_cli --serial COM7 connect
+python -m esp_drone_cli --serial COM7 capabilities
 python -m esp_drone_cli --serial COM7 stream on
 python -m esp_drone_cli --serial COM7 stream off
 python -m esp_drone_cli --serial COM7 log --timeout 3 --telemetry
@@ -81,6 +82,7 @@ python -m esp_drone_cli --serial COM7 axis-bench roll --auto-arm --small-step 10
 Bench-only hang-attitude commands:
 
 ```powershell
+python -m esp_drone_cli --serial COM7 capabilities
 python -m esp_drone_cli --serial COM7 attitude-capture-ref
 python -m esp_drone_cli --serial COM7 arm
 python -m esp_drone_cli --serial COM7 attitude-test start --base-duty 0.05
@@ -259,6 +261,9 @@ The hang-attitude path remains constrained-rig only:
 - do not use it on a prop-on free-flight vehicle
 - yaw is not in the attitude outer loop for that stage
 - reference capture is required before `attitude-test start`
+- `capabilities` must report `attitude_hang_bench=True` before running hang-attitude commands
+- old firmware that reports a lower protocol version or lacks the hang-attitude feature bit is rejected by the host before `attitude-capture-ref`, `attitude-test`, `attitude-status`, or `watch-attitude`
+- `connect` and `capabilities` expose firmware build identity when the device supports the extended `HELLO_RESP`
 
 ## Error Handling
 
@@ -270,5 +275,6 @@ Device command rejections surface as clear CLI errors, including cases such as:
 - IMU not ready
 - reference not captured
 - unsupported command
+- firmware does not advertise a required capability
 
 The process exit code follows the firmware status code for rejected commands, which makes bench scripts easier to diagnose.

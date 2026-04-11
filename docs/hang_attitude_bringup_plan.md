@@ -86,6 +86,7 @@ manual disturbance -> attitude error -> outer-loop rate setpoint -> rate PID out
 Minimum command set:
 
 ```powershell
+python -m esp_drone_cli --serial COM7 capabilities
 python -m esp_drone_cli --serial COM7 attitude-capture-ref
 python -m esp_drone_cli --serial COM7 arm
 python -m esp_drone_cli --serial COM7 attitude-test start --base-duty 0.05
@@ -94,6 +95,13 @@ python -m esp_drone_cli --serial COM7 watch-attitude all --timeout 10 --interval
 python -m esp_drone_cli --serial COM7 attitude-test stop
 python -m esp_drone_cli --serial COM7 disarm
 ```
+
+Capability gate:
+
+- `capabilities` must show `attitude_hang_bench=True` before any hang-attitude bring-up
+- current firmware advertises the build git hash and build time in the `HELLO_RESP` device info
+- if the feature is missing, the host CLI rejects `attitude-capture-ref`, `attitude-test`, `attitude-status`, and `watch-attitude` before sending hang-attitude opcodes or writing attitude parameters
+- a missing feature means the device firmware is older than the host workflow or was built without the bench-only hang-attitude path; rebuild and flash current `main` first
 
 Rejection behavior is explicit:
 

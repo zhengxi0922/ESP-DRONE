@@ -23,13 +23,19 @@ import pytest
 from esp_drone_cli.core import DeviceSession
 from esp_drone_cli.cli.main import format_rate_status_line
 from esp_drone_cli.core.models import (
+    CMD_REQ_STRUCT,
+    CapabilityError,
+    DeviceInfo,
+    FEATURE_ATTITUDE_HANG_BENCH,
     HELLO_RESP_STRUCT,
+    HELLO_RESP_STRUCT_V2,
     ParamSnapshot,
     ParamValue,
     TELEMETRY_STRUCT,
     TELEMETRY_STRUCT_V1,
     TELEMETRY_STRUCT_V3,
     TelemetrySample,
+    decode_device_info,
 )
 from esp_drone_cli.core.protocol.framing import encode_serial_packet
 from esp_drone_cli.core.protocol.messages import CmdId, Frame, MsgType
@@ -370,6 +376,67 @@ def test_device_session_mock_roundtrip(tmp_path: Path):
     assert transport.closed
 
 
+def test_hello_resp_v2_decodes_build_identity_and_capabilities():
+    payload = HELLO_RESP_STRUCT_V2.pack(
+        4,
+        1,
+        0,
+        0,
+        0x3F,
+        b"dfcc7a779368\x00\x00\x00\x00",
+        b"2026-04-11T12:00:00Z\x00\x00\x00\x00",
+    )
+
+    info = decode_device_info(payload)
+
+    assert info.protocol_version == 4
+    assert info.feature_bitmap == 0x3F
+    assert info.build_git_hash == "dfcc7a779368"
+    assert info.build_time_utc == "2026-04-11T12:00:00Z"
+    assert info.supports_feature(FEATURE_ATTITUDE_HANG_BENCH)
+    assert "attitude_hang_bench" in info.feature_names()
+
+
+def test_attitude_capture_ref_encodes_expected_opcode():
+    session = DeviceSession()
+    transport = MockTransport()
+    session.connect_transport(transport)
+    transport.sent.clear()
+
+    assert session.attitude_capture_ref() == 0
+
+    cmd_frames = [payload for msg_type, payload in transport.sent if msg_type == MsgType.CMD_REQ]
+    assert cmd_frames
+    cmd_id, arg_u8, _reserved, arg_f32 = CMD_REQ_STRUCT.unpack(cmd_frames[-1])
+    assert cmd_id == CmdId.ATTITUDE_CAPTURE_REF
+    assert arg_u8 == 0
+    assert arg_f32 == pytest.approx(0.0)
+    session.disconnect()
+
+
+def test_attitude_capture_ref_rejects_old_firmware_before_opcode():
+    class OldFirmwareTransport(MockTransport):
+        def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
+            self.sent.append((msg_type, payload))
+            if msg_type == MsgType.HELLO_REQ:
+                hello = HELLO_RESP_STRUCT.pack(2, 1, 0, 0, 0x1F)
+                self.inject(Frame(MsgType.HELLO_RESP, flags, seq, hello))
+                return
+            if msg_type == MsgType.CMD_REQ:
+                raise AssertionError("old firmware capability gate should reject before CMD_REQ")
+            super().send_message(msg_type, payload, flags=flags, seq=seq)
+
+    session = DeviceSession()
+    transport = OldFirmwareTransport()
+    session.connect_transport(transport)
+
+    with pytest.raises(CapabilityError, match="does not advertise bench-only hang-attitude support"):
+        session.attitude_capture_ref()
+
+    assert [msg_type for msg_type, _payload in transport.sent].count(MsgType.CMD_REQ) == 0
+    session.disconnect()
+
+
 def test_device_session_telemetry_subscription_receives_samples():
     session = DeviceSession()
     transport = MockTransport()
@@ -667,6 +734,9 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert attitude_args.action == "start"
     assert attitude_args.base_duty == pytest.approx(0.05)
 
+    capability_args = build_parser().parse_args(["--serial", "COM7", "capabilities"])
+    assert capability_args.command == "capabilities"
+
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
     real_import = builtins.__import__
@@ -768,6 +838,38 @@ def test_cli_rate_test_returns_firmware_status_on_error(monkeypatch, capsys):
     assert cli_main.main(["--serial", "COM7", "rate-test", "yaw", "30"]) == 4
     error_text = capsys.readouterr().err
     assert "rate-test failed: device must be armed first" in error_text
+
+
+def test_cli_attitude_start_old_firmware_fails_before_param_write(monkeypatch, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    session.device_info = DeviceInfo(
+        protocol_version=2,
+        imu_mode=1,
+        arm_state=0,
+        stream_enabled=0,
+        feature_bitmap=0x1F,
+    )
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+
+    assert cli_main.main(["--serial", "COM7", "attitude-test", "start", "--base-duty", "0.05"]) == 1
+    error_text = capsys.readouterr().err
+    assert "does not advertise bench-only hang-attitude support" in error_text
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "set_param" not in call_names
+    assert "attitude_test_start" not in call_names
+
+
+def test_firmware_dispatch_registers_attitude_capture_ref():
+    repo_root = Path(__file__).resolve().parents[3]
+    protocol = (repo_root / "firmware" / "main" / "console" / "console_protocol.h").read_text(encoding="utf-8")
+    dispatch = (repo_root / "firmware" / "main" / "console" / "console.c").read_text(encoding="utf-8")
+
+    assert "CMD_ATTITUDE_CAPTURE_REF = 10" in protocol
+    assert "case CMD_ATTITUDE_CAPTURE_REF:" in dispatch
+    assert "attitude_bench_capture_reference(&sample)" in dispatch
+    assert "CONSOLE_FEATURE_ATTITUDE_HANG_BENCH" in protocol
 
 
 def test_set_param_detects_device_rejection():

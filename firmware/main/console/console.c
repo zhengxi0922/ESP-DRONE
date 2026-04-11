@@ -33,6 +33,14 @@
 #define CONSOLE_AXIS_TEST_ABS_MAX 0.25f
 #define CONSOLE_RATE_TEST_ABS_MAX_DPS 200.0f
 
+#ifndef ESP_DRONE_BUILD_GIT_HASH
+#define ESP_DRONE_BUILD_GIT_HASH "unknown"
+#endif
+
+#ifndef ESP_DRONE_BUILD_TIME_UTC
+#define ESP_DRONE_BUILD_TIME_UTC "unknown"
+#endif
+
 static SemaphoreHandle_t s_console_tx_mutex;
 static uint8_t s_rx_buf[CONSOLE_RX_BUF_SIZE];
 static size_t s_rx_len;
@@ -523,13 +531,15 @@ static void console_handle_message(uint8_t msg_type, const uint8_t *payload, siz
 {
     switch ((console_msg_type_t)msg_type) {
     case MSG_HELLO_REQ: {
-        const console_hello_resp_t resp = {
+        console_hello_resp_t resp = {
             .protocol_version = CONSOLE_PROTOCOL_VERSION,
             .imu_mode = (uint8_t)params_get()->imu_mode,
             .arm_state = (uint8_t)runtime_state_get_arm_state(),
             .stream_enabled = runtime_state_get_stream_enabled() ? 1u : 0u,
-            .feature_bitmap = 0x0000003Fu,
+            .feature_bitmap = CONSOLE_FEATURE_BITMAP_CURRENT,
         };
+        snprintf(resp.build_git_hash, sizeof(resp.build_git_hash), "%s", ESP_DRONE_BUILD_GIT_HASH);
+        snprintf(resp.build_time_utc, sizeof(resp.build_time_utc), "%s", ESP_DRONE_BUILD_TIME_UTC);
         console_send_frame(MSG_HELLO_RESP, &resp, sizeof(resp));
         break;
     }

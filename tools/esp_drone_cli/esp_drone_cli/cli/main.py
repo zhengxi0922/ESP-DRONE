@@ -9,6 +9,11 @@ import time
 from pathlib import Path
 
 from esp_drone_cli.core import DeviceSession, TelemetrySample
+from esp_drone_cli.core.models import (
+    FEATURE_ATTITUDE_HANG_BENCH,
+    FEATURE_NAMES,
+    MIN_ATTITUDE_HANG_PROTOCOL_VERSION,
+)
 from esp_drone_cli.core.roll_bench import (
     apply_axis_bench_params,
     run_axis_bench_round,
@@ -172,6 +177,48 @@ def cmd_connect(session: DeviceSession, _args) -> int:
 
     print(session.device_info or session.hello())
     return 0
+
+
+def cmd_capabilities(session: DeviceSession, _args) -> int:
+    """Print firmware build identity and advertised feature bits."""
+
+    info = session.device_info or session.hello()
+    print(f"protocol_version={info.protocol_version}")
+    print(f"feature_bitmap=0x{info.feature_bitmap:08x}")
+    print(f"build_git_hash={info.build_git_hash or 'unknown'}")
+    print(f"build_time_utc={info.build_time_utc or 'unknown'}")
+    for bit, name in FEATURE_NAMES.items():
+        print(f"{name}={info.supports_feature(bit)}")
+    try:
+        info.require_attitude_hang_bench()
+        print("attitude_hang_ready=True")
+    except Exception as exc:
+        print(f"attitude_hang_ready=False ({exc})")
+        return 1
+    return 0
+
+
+def require_attitude_hang_capability(session: DeviceSession) -> None:
+    """Reject bench-only hang-attitude commands before touching params or sending opcodes."""
+
+    if hasattr(session, "require_attitude_hang_bench"):
+        session.require_attitude_hang_bench()
+        return
+    info = session.device_info or session.hello()
+    if hasattr(info, "require_attitude_hang_bench"):
+        info.require_attitude_hang_bench()
+        return
+    protocol_version = int(getattr(info, "protocol_version", 0))
+    feature_bitmap = int(getattr(info, "feature_bitmap", 0))
+    if protocol_version >= MIN_ATTITUDE_HANG_PROTOCOL_VERSION and (feature_bitmap & FEATURE_ATTITUDE_HANG_BENCH):
+        return
+    raise RuntimeError(
+        "device firmware does not advertise bench-only hang-attitude support "
+        f"(need protocol_version>={MIN_ATTITUDE_HANG_PROTOCOL_VERSION} and "
+        f"feature attitude_hang_bench/0x{FEATURE_ATTITUDE_HANG_BENCH:02x}; "
+        f"got protocol_version={protocol_version}, feature_bitmap=0x{feature_bitmap:08x}). "
+        "Rebuild and flash the current main firmware before running hang-attitude commands."
+    )
 
 
 def cmd_arm(session: DeviceSession, _args) -> int:
@@ -451,6 +498,7 @@ def cmd_rate_status(session: DeviceSession, args) -> int:
 def cmd_attitude_capture_ref(session: DeviceSession, _args) -> int:
     """Capture the natural hanging reference for the bench-only attitude test."""
 
+    require_attitude_hang_capability(session)
     ensure_command_ok(CmdId.ATTITUDE_CAPTURE_REF, session.attitude_capture_ref())
     return 0
 
@@ -458,6 +506,7 @@ def cmd_attitude_capture_ref(session: DeviceSession, _args) -> int:
 def cmd_attitude_test(session: DeviceSession, args) -> int:
     """Start or stop the bench-only hang-attitude outer loop."""
 
+    require_attitude_hang_capability(session)
     if args.action == "start":
         if args.base_duty is not None:
             session.set_param("attitude_test_base_duty", 4, args.base_duty)
@@ -471,6 +520,7 @@ def cmd_attitude_test(session: DeviceSession, args) -> int:
 def cmd_attitude_status(session: DeviceSession, args) -> int:
     """Print one hang-attitude bench status snapshot."""
 
+    require_attitude_hang_capability(session)
     sample = wait_for_one_sample(session, timeout=args.timeout)
     print(format_attitude_status_line_all(sample))
     return 0
@@ -479,6 +529,7 @@ def cmd_attitude_status(session: DeviceSession, args) -> int:
 def cmd_watch_attitude(session: DeviceSession, args) -> int:
     """Watch hang-attitude bench telemetry for roll, pitch, or both axes."""
 
+    require_attitude_hang_capability(session)
     samples: deque[TelemetrySample] = deque(maxlen=1)
 
     def on_telemetry(sample: TelemetrySample) -> None:
@@ -753,6 +804,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("connect")
+    sub.add_parser("capabilities", aliases=["device-info"])
     sub.add_parser("arm")
     sub.add_parser("disarm")
     sub.add_parser("kill")
@@ -925,6 +977,8 @@ def main(argv: list[str] | None = None) -> int:
         session = connect_session_from_args(args)
         dispatch = {
             "connect": cmd_connect,
+            "capabilities": cmd_capabilities,
+            "device-info": cmd_capabilities,
             "arm": cmd_arm,
             "disarm": cmd_disarm,
             "kill": cmd_kill,

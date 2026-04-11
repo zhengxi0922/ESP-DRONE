@@ -36,3 +36,21 @@ idf_component_register(
         esp_driver_ledc
         esp_vfs_console
 )
+
+execute_process(
+    COMMAND git rev-parse --short=12 HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..
+    OUTPUT_VARIABLE ESP_DRONE_BUILD_GIT_HASH
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT ESP_DRONE_BUILD_GIT_HASH)
+    set(ESP_DRONE_BUILD_GIT_HASH "unknown")
+endif()
+
+string(TIMESTAMP ESP_DRONE_BUILD_TIME_UTC "%Y-%m-%dT%H:%M:%SZ" UTC)
+
+target_compile_definitions(${COMPONENT_LIB} PRIVATE
+    ESP_DRONE_BUILD_GIT_HASH="${ESP_DRONE_BUILD_GIT_HASH}"
+    ESP_DRONE_BUILD_TIME_UTC="${ESP_DRONE_BUILD_TIME_UTC}"
+)
