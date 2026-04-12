@@ -36,6 +36,7 @@ static params_store_t s_params;
 #define PARAMS_RATE_KP_YAW_DEFAULT 0.0026f
 #define PARAMS_RATE_KI_YAW_DEFAULT 0.0f
 #define PARAMS_RATE_KD_YAW_DEFAULT 0.0f
+#define PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_REMAP 4u
 
 /* 参数系统采用“单 blob + schema_version + CRC32”保存策略。
  * 运行时所有参数写入都必须先过 params_try_set() 的合法性校验。 */
@@ -135,6 +136,14 @@ static void params_apply_rate_pid_defaults(params_store_t *store)
     store->rate_kd_yaw = PARAMS_RATE_KD_YAW_DEFAULT;
 }
 
+static void params_apply_motor_output_map_defaults(params_store_t *store)
+{
+    store->motor_output_map[0] = 3;
+    store->motor_output_map[1] = 0;
+    store->motor_output_map[2] = 1;
+    store->motor_output_map[3] = 2;
+}
+
 static void params_apply_defaults(params_store_t *store)
 {
     memset(store, 0, sizeof(*store));
@@ -177,10 +186,7 @@ static void params_apply_defaults(params_store_t *store)
     store->imu_map_z = BODY_AXIS_POS_Z;
     store->imu_mag_enable = false;
 
-    store->motor_output_map[0] = 0;
-    store->motor_output_map[1] = 1;
-    store->motor_output_map[2] = 2;
-    store->motor_output_map[3] = 3;
+    params_apply_motor_output_map_defaults(store);
     store->motor_spin_is_cw[0] = false;
     store->motor_spin_is_cw[1] = true;
     store->motor_spin_is_cw[2] = false;
@@ -435,8 +441,10 @@ static bool params_try_load_from_nvs(params_store_t *store)
         return false;
     }
 
+    const bool current_schema = blob.header.schema_version == PARAMS_SCHEMA_VERSION;
+    const bool pre_motor_remap_schema = blob.header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_REMAP;
     if (blob.header.magic != PARAMS_BLOB_MAGIC ||
-        blob.header.schema_version != PARAMS_SCHEMA_VERSION ||
+        (!current_schema && !pre_motor_remap_schema) ||
         blob.header.payload_len != sizeof(blob.payload)) {
         return false;
     }
@@ -447,6 +455,9 @@ static bool params_try_load_from_nvs(params_store_t *store)
     }
     params_store_t payload = blob.payload;
     params_apply_rate_pid_defaults(&payload);
+    if (pre_motor_remap_schema) {
+        params_apply_motor_output_map_defaults(&payload);
+    }
 
     if (!params_validate_store(&payload)) {
         return false;

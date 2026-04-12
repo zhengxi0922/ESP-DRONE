@@ -39,7 +39,7 @@
  *
  * @note 参数布局发生不兼容变化时应递增。
  */
-#define PARAMS_SCHEMA_VERSION 4u
+#define PARAMS_SCHEMA_VERSION 5u
 
 /**
  * @brief 参数值类型编号。
