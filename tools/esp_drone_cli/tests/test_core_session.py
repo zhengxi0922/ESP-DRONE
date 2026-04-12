@@ -774,7 +774,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert window.debug_action_tabs.count() == 4
     assert window.debug_action_tabs.tabText(0) == window._t("tab.motor")
     assert window.debug_action_tabs.tabText(1) == window._t("tab.rate")
-    assert window.debug_action_tabs.tabText(2) == "Hang Attitude"
+    assert window.debug_action_tabs.tabText(2) == window._t("tab.hang_attitude")
     assert window.debug_action_tabs.tabText(3) == window._t("tab.udp_control")
     assert window.debug_action_tabs.currentIndex() == 0
     assert window.params_table.rowCount() == 6
@@ -902,6 +902,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert "udp_land" in call_names
     assert "udp_manual_setpoint" in call_names
     assert ("set_param", ("udp_manual_max_pwm", 4, 0.11), {}) in session.calls
+    assert ("set_param", ("udp_manual_timeout_ms", 2, 1000), {}) in session.calls
     assert "start_csv_log" in call_names
     assert "stop_csv_log" in call_names
     assert "dump_csv" in call_names
@@ -991,7 +992,7 @@ def test_gui_udp_empty_host_fails_without_worker(monkeypatch, tmp_path: Path):
     assert not any(name == "connect_udp" for name, _args, _kwargs in session.calls)
     assert window.connection_status_chip.text() == window._t("status.disconnected")
     assert window.connect_button.isEnabled()
-    assert "UDP Host is required" in window.connection_error_detail.text()
+    assert window._t("msg.udp_host_required") in window.connection_error_detail.text()
 
     window.close()
     app.processEvents()
@@ -1031,8 +1032,8 @@ def test_gui_connect_watchdog_restores_ui_when_worker_never_returns(monkeypatch,
     assert window.connection_status_chip.text() == window._t("status.disconnected")
     assert window.connect_button.isEnabled()
     assert window.serial_port_combo.currentText() == "COM55"
-    assert "Connect failed: connection attempt timed out in GUI" in window.connection_error_detail.text()
-    assert "Connect failed: connection attempt timed out in GUI" in window.event_log_edit.toPlainText()
+    assert window._t("msg.connect_failed", error="connection attempt timed out in GUI") in window.connection_error_detail.text()
+    assert window._t("msg.connect_failed", error="connection attempt timed out in GUI") in window.event_log_edit.toPlainText()
 
     window.close()
     app.processEvents()

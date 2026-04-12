@@ -201,6 +201,23 @@ class DeviceSession:
                 return frame
         raise TimeoutError(f"timed out waiting for {msg_types}")
 
+    def _recv_command_response(self, cmd_id: int, timeout: float = 1.0) -> int:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            remaining = max(0.01, deadline - time.monotonic())
+            try:
+                frame = self._response_queue.get(timeout=remaining)
+            except queue.Empty:
+                continue
+            if frame.msg_type != MsgType.CMD_RESP:
+                continue
+            if len(frame.payload) != CMD_RESP_STRUCT.size:
+                raise ValueError("CMD_RESP payload has unexpected length")
+            response_cmd_id, status, _ = CMD_RESP_STRUCT.unpack(frame.payload)
+            if response_cmd_id == cmd_id:
+                return status
+        raise TimeoutError(f"timed out waiting for command response {cmd_id}")
+
     def _reader_loop(self) -> None:
         assert self._transport is not None
         while not self._stop_event.is_set():
@@ -500,9 +517,7 @@ class DeviceSession:
         with self._command_lock:
             payload = CMD_REQ_STRUCT.pack(cmd_id, arg_u8 & 0xFF, 0, float(arg_f32))
             self._send_message(MsgType.CMD_REQ, payload)
-            frame = self._recv_until(MsgType.CMD_RESP, timeout=timeout)
-            _, status, _ = CMD_RESP_STRUCT.unpack(frame.payload)
-            return status
+            return self._recv_command_response(cmd_id, timeout=timeout)
 
     def require_attitude_hang_bench(self) -> None:
         """Fail before sending hang-attitude commands to firmware without the advertised capability."""
@@ -597,7 +612,7 @@ class DeviceSession:
         return self.command(CmdId.ATTITUDE_TEST_STOP)
 
     def udp_manual_enable(self) -> int:
-        """Enter experimental open-loop UDP manual mode."""
+        """Enter experimental UDP manual mode."""
 
         self.require_udp_manual_control()
         return self.command(CmdId.UDP_MANUAL_ENABLE)
@@ -615,13 +630,13 @@ class DeviceSession:
         return self.command(CmdId.UDP_MANUAL_STOP)
 
     def udp_takeoff(self) -> int:
-        """Request an open-loop experimental UDP takeoff ramp."""
+        """Request an experimental UDP takeoff base-duty ramp with rate PID on roll/pitch/yaw."""
 
         self.require_udp_manual_control()
         return self.command(CmdId.UDP_TAKEOFF)
 
     def udp_land(self) -> int:
-        """Request an open-loop experimental UDP landing ramp."""
+        """Request an experimental UDP landing base-duty ramp."""
 
         self.require_udp_manual_control()
         return self.command(CmdId.UDP_LAND)
@@ -636,7 +651,8 @@ class DeviceSession:
     ) -> int:
         """Send one experimental UDP manual setpoint frame.
 
-        Values are normalized duty/mixer inputs. Firmware remains authoritative for clamping.
+        Throttle is a normalized base-duty target; pitch/roll/yaw are normalized
+        rate-setpoint requests. Firmware remains authoritative for clamping.
         """
 
         self.require_udp_manual_control()
@@ -645,11 +661,7 @@ class DeviceSession:
             raise ValueError("udp manual setpoint values must be finite")
         with self._command_lock:
             self._send_message(MsgType.UDP_MANUAL_SETPOINT, UDP_MANUAL_SETPOINT_STRUCT.pack(*values))
-            frame = self._recv_until(MsgType.CMD_RESP, timeout=timeout)
-            cmd_id, status, _ = CMD_RESP_STRUCT.unpack(frame.payload)
-            if cmd_id != CmdId.UDP_MANUAL_SETPOINT:
-                raise RuntimeError(f"unexpected command response id {cmd_id}")
-            return status
+            return self._recv_command_response(CmdId.UDP_MANUAL_SETPOINT, timeout=timeout)
 
     def calib_gyro(self) -> int:
         """请求执行陀螺仪校准。"""

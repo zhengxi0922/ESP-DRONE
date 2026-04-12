@@ -595,7 +595,7 @@ def cmd_watch_attitude(session: DeviceSession, args) -> int:
 
 
 def cmd_udp_manual(session: DeviceSession, args) -> int:
-    """Run experimental open-loop UDP manual-control commands."""
+    """Run experimental UDP manual-control commands."""
 
     require_udp_manual_capability(session)
     action = args.action
@@ -962,8 +962,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     udp_manual_p = sub.add_parser(
         "udp-manual",
-        help="experimental open-loop UDP manual control; not free-flight ready",
-        description="Experimental UDP manual control for restrained testing only. This is open-loop/semi-open-loop and is not a mature takeoff/land/free-flight mode.",
+        help="experimental UDP manual control; not free-flight ready",
+        description="Experimental UDP manual control for restrained testing only. Throttle is the base duty target; roll/pitch/yaw use the rate PID before mixing. This is not a mature takeoff/land/free-flight mode.",
     )
     udp_manual_sub = udp_manual_p.add_subparsers(dest="action", required=True)
     udp_manual_sub.add_parser("enable")

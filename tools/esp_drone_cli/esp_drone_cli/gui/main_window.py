@@ -64,6 +64,8 @@ from esp_drone_cli.core.protocol.messages import CmdId, ensure_command_ok
 
 APP_ORG = "ESP-DRONE"
 APP_NAME = "ESP-DRONE GUI"
+UDP_MANUAL_WATCHDOG_MS = 1000
+UDP_MANUAL_SETPOINT_TIMEOUT_S = 0.2
 
 TRANSLATIONS = {
     "zh": {
@@ -735,35 +737,35 @@ TRANSLATIONS = {
 EXTRA_TRANSLATIONS = {
     "zh": {
         "status.connecting": "连接中...",
-        "msg.connect_failed": "Connect failed: {error}",
+        "msg.connect_failed": "连接失败：{error}",
         "chart.baro": "气压计",
         "chart.y_baro": "气压 / 高度 / 温度",
-        "chart.rate_roll": "Rate Roll",
-        "chart.rate_pitch": "Rate Pitch",
-        "chart.rate_yaw": "Rate Yaw",
-        "chart.hang_roll": "Hang Attitude Roll",
-        "chart.hang_pitch": "Hang Attitude Pitch",
-        "chart.y_rate_mix": "deg/s / duty",
-        "chart.y_attitude_mix": "deg / deg/s / duty",
+        "chart.rate_roll": "横滚速率",
+        "chart.rate_pitch": "俯仰速率",
+        "chart.rate_yaw": "偏航速率",
+        "chart.hang_roll": "姿态台架横滚",
+        "chart.hang_pitch": "姿态台架俯仰",
+        "chart.y_rate_mix": "角速度 / 占空比",
+        "chart.y_attitude_mix": "角度 / 角速度 / 占空比",
         "field.baro_pressure_pa": "气压 (Pa)",
         "field.baro_temperature_c": "温度 (C)",
         "field.baro_altitude_m": "气压高度 (m)",
         "field.baro_vspeed_mps": "垂直速度 (m/s)",
         "field.baro_valid": "气压数据有效",
         "field.baro_health": "气压计健康",
-        "field.baro_update_age_us": "Baro 样本龄",
-        "field.rate_pid_p_roll": "Roll PID P",
-        "field.rate_pid_p_pitch": "Pitch PID P",
-        "field.rate_pid_p_yaw": "Yaw PID P",
-        "field.rate_pid_i_roll": "Roll PID I",
-        "field.rate_pid_i_pitch": "Pitch PID I",
-        "field.rate_pid_i_yaw": "Yaw PID I",
-        "field.rate_pid_d_roll": "Roll PID D",
-        "field.rate_pid_d_pitch": "Pitch PID D",
-        "field.rate_pid_d_yaw": "Yaw PID D",
-        "field.pid_out_roll": "Roll PID 输出",
-        "field.pid_out_pitch": "Pitch PID 输出",
-        "field.pid_out_yaw": "Yaw PID 输出",
+        "field.baro_update_age_us": "气压计样本龄",
+        "field.rate_pid_p_roll": "横滚 PID P",
+        "field.rate_pid_p_pitch": "俯仰 PID P",
+        "field.rate_pid_p_yaw": "偏航 PID P",
+        "field.rate_pid_i_roll": "横滚 PID I",
+        "field.rate_pid_i_pitch": "俯仰 PID I",
+        "field.rate_pid_i_yaw": "偏航 PID I",
+        "field.rate_pid_d_roll": "横滚 PID D",
+        "field.rate_pid_d_pitch": "俯仰 PID D",
+        "field.rate_pid_d_yaw": "偏航 PID D",
+        "field.pid_out_roll": "横滚 PID 输出",
+        "field.pid_out_pitch": "俯仰 PID 输出",
+        "field.pid_out_yaw": "偏航 PID 输出",
         "baro.init": "初始化",
         "baro.ok": "正常",
         "baro.stale": "陈旧",
@@ -771,38 +773,51 @@ EXTRA_TRANSLATIONS = {
         "baro.valid": "有效",
         "baro.invalid_data": "无效",
         "control.height_hold_reserved": "定高保留",
-        "control.udp_manual": "UDP_MANUAL",
-        "tab.udp_control": "UDP Control",
-        "udp.warn": "Experimental UDP manual control. Open-loop / semi-open-loop only. Respect Max PWM and keep prop safety in mind. Not free-flight ready.",
-        "udp.max_pwm": "Max PWM (%)",
-        "udp.throttle": "Throttle (%)",
-        "udp.axis_step": "Axis Step (%)",
-        "udp.pitch": "Pitch (%)",
-        "udp.roll": "Roll (%)",
-        "udp.yaw": "Yaw (%)",
-        "udp.enable": "Enable UDP Manual",
-        "udp.disable": "Disable",
-        "udp.stop": "Stop / Zero",
-        "udp.takeoff": "Takeoff",
-        "udp.land": "Land",
-        "udp.forward": "Forward",
-        "udp.backward": "Backward",
-        "udp.up": "Up",
-        "udp.down": "Down",
-        "udp.yaw_left": "Yaw Left",
-        "udp.yaw_right": "Yaw Right",
-        "udp.send": "Send Setpoint",
-        "udp.status_watchdog": "Watchdog",
-        "udp.status_mode": "Mode",
-        "udp.status_armed": "Armed",
-        "udp.status_battery": "Battery",
-        "udp.enabled": "udp manual enabled",
-        "udp.disabled": "udp manual disabled",
-        "udp.stopped": "udp manual stop sent",
-        "udp.setpoint_sent": "udp setpoint sent throttle={throttle:.3f} pitch={pitch:.3f} roll={roll:.3f} yaw={yaw:.3f}",
-        "udp.transport_hint": "Connect your PC to the ESP-DRONE SoftAP first. Default AP IP is 192.168.4.1. Default UDP port is 2391.",
-        "udp.ap_info": "Default SoftAP SSID: ESP-DRONE | Password: 12345678",
-        "msg.udp_host_required": "UDP Host is required.",
+        "control.udp_manual": "UDP 手动",
+        "tab.hang_attitude": "姿态台架",
+        "tab.udp_control": "UDP 控制",
+        "hang.note": "仅限台架约束测试。带桨自由飞行时不要使用。",
+        "hang.capture_ref": "捕获参考",
+        "hang.start": "启动姿态测试",
+        "hang.stop": "停止姿态测试",
+        "hang.base_duty": "基础占空比",
+        "hang.kp_roll": "横滚 Kp",
+        "hang.kp_pitch": "俯仰 Kp",
+        "hang.rate_limit_roll": "横滚速率限幅",
+        "hang.rate_limit_pitch": "俯仰速率限幅",
+        "hang.deadband_deg": "死区角度",
+        "hang.trip_deg": "保护角度",
+        "udp.warn": "实验性 UDP 手动控制：油门是基础占空比目标，横滚/俯仰/偏航经 rate PID 闭环后进入混控。请限制最大 PWM 并处理好桨叶安全；尚不适合自由飞行。",
+        "udp.max_pwm": "最大 PWM (%)",
+        "udp.throttle": "基础油门 (%)",
+        "udp.axis_step": "速率指令步进 (%)",
+        "udp.pitch": "俯仰速率 (%)",
+        "udp.roll": "横滚速率 (%)",
+        "udp.yaw": "偏航速率 (%)",
+        "udp.enable": "启用 UDP 手动",
+        "udp.disable": "禁用",
+        "udp.stop": "停止 / 清零",
+        "udp.takeoff": "起飞",
+        "udp.land": "降落",
+        "udp.forward": "前进",
+        "udp.backward": "后退",
+        "udp.up": "加油门",
+        "udp.down": "减油门",
+        "udp.yaw_left": "左偏航",
+        "udp.yaw_right": "右偏航",
+        "udp.send": "发送设定",
+        "udp.status_watchdog": "看门狗",
+        "udp.status_mode": "模式",
+        "udp.status_armed": "解锁状态",
+        "udp.status_battery": "电池",
+        "udp.enabled": "UDP 手动已启用",
+        "udp.disabled": "UDP 手动已禁用",
+        "udp.stopped": "UDP 手动停止命令已发送",
+        "udp.setpoint_sent": "UDP 设定已发送：基础油门={throttle:.3f} 俯仰={pitch:.3f} 横滚={roll:.3f} 偏航={yaw:.3f}",
+        "udp.watchdog_age": "距上一帧设定 {age_ms:.0f} ms",
+        "udp.transport_hint": "请先将电脑连接到 ESP-DRONE SoftAP。默认 AP IP 为 192.168.4.1，默认 UDP 端口为 2391。",
+        "udp.ap_info": "默认 SoftAP SSID：ESP-DRONE | 密码：12345678",
+        "msg.udp_host_required": "需要填写 UDP 主机。",
     },
     "en": {
         "status.connecting": "Connecting...",
@@ -851,8 +866,20 @@ EXTRA_TRANSLATIONS = {
         "control.height_hold_reserved": "HEIGHT_HOLD_RESERVED",
         "control.attitude_hang_test": "ATTITUDE_HANG_TEST",
         "control.udp_manual": "UDP_MANUAL",
+        "tab.hang_attitude": "Hang Attitude",
         "tab.udp_control": "UDP Control",
-        "udp.warn": "Experimental UDP manual control. Open-loop / semi-open-loop only. Respect Max PWM and keep prop safety in mind. Not free-flight ready.",
+        "hang.note": "Bench-only constrained rig. Never use with prop-on free flight.",
+        "hang.capture_ref": "Capture Ref",
+        "hang.start": "Attitude Test Start",
+        "hang.stop": "Attitude Test Stop",
+        "hang.base_duty": "Base Duty",
+        "hang.kp_roll": "Kp Roll",
+        "hang.kp_pitch": "Kp Pitch",
+        "hang.rate_limit_roll": "Rate Limit Roll",
+        "hang.rate_limit_pitch": "Rate Limit Pitch",
+        "hang.deadband_deg": "Deadband Deg",
+        "hang.trip_deg": "Trip Deg",
+        "udp.warn": "Experimental UDP manual control. Throttle is the base duty target; roll/pitch/yaw use rate PID. Respect Max PWM and keep prop safety in mind. Not free-flight ready.",
         "udp.max_pwm": "Max PWM (%)",
         "udp.throttle": "Throttle (%)",
         "udp.axis_step": "Axis Step (%)",
@@ -878,7 +905,8 @@ EXTRA_TRANSLATIONS = {
         "udp.enabled": "udp manual enabled",
         "udp.disabled": "udp manual disabled",
         "udp.stopped": "udp manual stop sent",
-        "udp.setpoint_sent": "udp setpoint sent throttle={throttle:.3f} pitch={pitch:.3f} roll={roll:.3f} yaw={yaw:.3f}",
+        "udp.setpoint_sent": "udp setpoint sent base={throttle:.3f} pitch={pitch:.3f} roll={roll:.3f} yaw={yaw:.3f}",
+        "udp.watchdog_age": "{age_ms:.0f} ms since setpoint",
         "udp.transport_hint": "Connect your PC to the ESP-DRONE SoftAP first. Default AP IP is 192.168.4.1. Default UDP port is 2391.",
         "udp.ap_info": "Default SoftAP SSID: ESP-DRONE | Password: 12345678",
         "msg.udp_host_required": "UDP Host is required.",
@@ -1366,6 +1394,48 @@ class MainWindow(QMainWindow):
         "rate_kd_yaw": "Yaw rate-loop derivative gain. Usually smaller than roll/pitch for bench bring-up.",
         "rate_integral_limit": "Per-axis rate-loop integral clamp in deg/s·s equivalent state units.",
         "rate_output_limit": "Per-axis PID output clamp sent into the mixer around bring-up_test_base_duty.",
+        "udp_manual_max_pwm": "Max UDP manual base duty clamp, normalized 0..1.",
+        "udp_takeoff_pwm": "UDP takeoff base-duty ramp target, normalized 0..1.",
+        "udp_land_min_pwm": "UDP landing and watchdog base-duty floor before auto-disarm.",
+        "udp_manual_timeout_ms": "UDP manual setpoint watchdog timeout in milliseconds.",
+        "udp_manual_axis_limit": "UDP manual roll/pitch/yaw normalized command clamp before mapping to rate setpoints.",
+    }
+
+    PARAM_HELP_ZH = {
+        "telemetry_usb_hz": "USB CDC 遥测目标频率，单位 Hz；最终范围以设备端校验为准。",
+        "telemetry_udp_hz": "UDP 遥测目标频率，单位 Hz；最终范围以设备端校验为准。",
+        "wifi_ap_enable": "开机启用 ESP32 SoftAP；Wi-Fi 失败时 USB CDC 仍可使用。",
+        "wifi_ap_channel": "ESP32 SoftAP 信道，合法范围 1..13，默认 6。",
+        "wifi_udp_port": "二进制 CLI/GUI UDP 协议监听端口，默认 2391。",
+        "imu_mode": "0 = RAW，1 = DIRECT；当前台架验证主要围绕 DIRECT 模式。",
+        "imu_return_rate_code": "ATK-MS901M 回传频率代码；0x00 为 250Hz，0x01 为 200Hz。",
+        "motor_idle_duty": "有刷电机解锁后的怠速下限，归一化 0..1。",
+        "motor_max_duty": "有刷电机输出上限，归一化 0..1。",
+        "bringup_test_base_duty": "轴向/速率台架测试使用的基础占空比；约束机体上应保持较低。",
+        "attitude_kp_roll": "仅限台架的姿态外环横滚 P 增益；不要当作自由飞行角度增益使用。",
+        "attitude_kp_pitch": "仅限台架的姿态外环俯仰 P 增益；不要当作自由飞行角度增益使用。",
+        "attitude_rate_limit_roll": "姿态台架外环输出的横滚速率设定限幅，单位 deg/s。",
+        "attitude_rate_limit_pitch": "姿态台架外环输出的俯仰速率设定限幅，单位 deg/s。",
+        "attitude_error_deadband_deg": "捕获姿态参考附近的小角度死区，单位度。",
+        "attitude_trip_deg": "约束台架上横滚/俯仰姿态误差的保护触发阈值。",
+        "attitude_test_base_duty": "姿态台架模式使用的基础占空比；约束机体上应保守设置。",
+        "attitude_ref_valid": "运行时标志；姿态参考捕获成功后为 True，不保存到 flash。",
+        "rate_kp_roll": "横滚速率环比例增益；建议用 +0.0005 这类小步进开始。",
+        "rate_ki_roll": "横滚速率环积分增益；台架上 P 稳定前保持为 0。",
+        "rate_kd_roll": "横滚速率环微分增益；确认 P 方向和符号后再加入。",
+        "rate_kp_pitch": "俯仰速率环比例增益；建议用 +0.0005 这类小步进开始。",
+        "rate_ki_pitch": "俯仰速率环积分增益；台架上 P 稳定前保持为 0。",
+        "rate_kd_pitch": "俯仰速率环微分增益；确认 P 方向和符号后再加入。",
+        "rate_kp_yaw": "偏航速率环比例增益；偏航控制余量较弱，应保守设置。",
+        "rate_ki_yaw": "偏航速率环积分增益；确认偏航符号和阻尼前保持为 0。",
+        "rate_kd_yaw": "偏航速率环微分增益；台架调试时通常小于横滚/俯仰。",
+        "rate_integral_limit": "每轴速率环积分状态限幅，等效单位为 deg/s*s。",
+        "rate_output_limit": "每轴 PID 输出限幅，输出进入 mixer 并叠加在基础占空比附近。",
+        "udp_manual_max_pwm": "UDP 手动模式基础占空比最大限幅，归一化 0..1。",
+        "udp_takeoff_pwm": "UDP 起飞基础占空比斜坡目标，归一化 0..1。",
+        "udp_land_min_pwm": "UDP 降落和看门狗降油门时的安全基础占空比下限。",
+        "udp_manual_timeout_ms": "UDP 手动 setpoint 看门狗超时时间，单位毫秒。",
+        "udp_manual_axis_limit": "UDP 手动横滚/俯仰/偏航归一化指令限幅，之后会映射为速率设定。",
     }
 
     CHART_GROUPS = {
@@ -2197,48 +2267,48 @@ class MainWindow(QMainWindow):
         hang_layout.setVerticalSpacing(6)
         hang_layout.setColumnStretch(1, 1)
         hang_layout.setRowStretch(10, 1)
-        self.hang_note_label = QLabel("Bench-only constrained rig. Never use with prop-on free flight.")
+        self.hang_note_label = QLabel()
         self.hang_note_label.setWordWrap(True)
-        self.hang_capture_button = QPushButton("Capture Ref")
-        self.hang_start_button = QPushButton("Attitude Test Start")
-        self.hang_stop_button = QPushButton("Attitude Test Stop")
-        self.hang_base_duty_label = QLabel("Base Duty")
+        self.hang_capture_button = QPushButton()
+        self.hang_start_button = QPushButton()
+        self.hang_stop_button = QPushButton()
+        self.hang_base_duty_label = QLabel()
         self.hang_base_duty_spin = QDoubleSpinBox()
         self.hang_base_duty_spin.setRange(0.0, 1.0)
         self.hang_base_duty_spin.setDecimals(3)
         self.hang_base_duty_spin.setSingleStep(0.01)
         self.hang_base_duty_spin.setValue(0.05)
-        self.hang_kp_roll_label = QLabel("Kp Roll")
+        self.hang_kp_roll_label = QLabel()
         self.hang_kp_roll_spin = QDoubleSpinBox()
         self.hang_kp_roll_spin.setRange(0.0, 10.0)
         self.hang_kp_roll_spin.setDecimals(2)
         self.hang_kp_roll_spin.setSingleStep(0.1)
         self.hang_kp_roll_spin.setValue(2.0)
-        self.hang_kp_pitch_label = QLabel("Kp Pitch")
+        self.hang_kp_pitch_label = QLabel()
         self.hang_kp_pitch_spin = QDoubleSpinBox()
         self.hang_kp_pitch_spin.setRange(0.0, 10.0)
         self.hang_kp_pitch_spin.setDecimals(2)
         self.hang_kp_pitch_spin.setSingleStep(0.1)
         self.hang_kp_pitch_spin.setValue(2.0)
-        self.hang_rate_limit_roll_label = QLabel("Rate Limit Roll")
+        self.hang_rate_limit_roll_label = QLabel()
         self.hang_rate_limit_roll_spin = QDoubleSpinBox()
         self.hang_rate_limit_roll_spin.setRange(0.0, 180.0)
         self.hang_rate_limit_roll_spin.setDecimals(1)
         self.hang_rate_limit_roll_spin.setSingleStep(1.0)
         self.hang_rate_limit_roll_spin.setValue(25.0)
-        self.hang_rate_limit_pitch_label = QLabel("Rate Limit Pitch")
+        self.hang_rate_limit_pitch_label = QLabel()
         self.hang_rate_limit_pitch_spin = QDoubleSpinBox()
         self.hang_rate_limit_pitch_spin.setRange(0.0, 180.0)
         self.hang_rate_limit_pitch_spin.setDecimals(1)
         self.hang_rate_limit_pitch_spin.setSingleStep(1.0)
         self.hang_rate_limit_pitch_spin.setValue(25.0)
-        self.hang_deadband_label = QLabel("Deadband Deg")
+        self.hang_deadband_label = QLabel()
         self.hang_deadband_spin = QDoubleSpinBox()
         self.hang_deadband_spin.setRange(0.0, 10.0)
         self.hang_deadband_spin.setDecimals(1)
         self.hang_deadband_spin.setSingleStep(0.1)
         self.hang_deadband_spin.setValue(1.0)
-        self.hang_trip_label = QLabel("Trip Deg")
+        self.hang_trip_label = QLabel()
         self.hang_trip_spin = QDoubleSpinBox()
         self.hang_trip_spin.setRange(1.0, 90.0)
         self.hang_trip_spin.setDecimals(1)
@@ -2360,8 +2430,8 @@ class MainWindow(QMainWindow):
 
         self.debug_action_tabs.addTab(motor_box, "")
         self.debug_action_tabs.addTab(rate_box, "")
-        self.debug_action_tabs.addTab(hang_box, "Hang Attitude")
-        self.debug_action_tabs.addTab(udp_box, "UDP Control")
+        self.debug_action_tabs.addTab(hang_box, "")
+        self.debug_action_tabs.addTab(udp_box, "")
         layout.addWidget(self.debug_action_tabs)
 
         return group
@@ -2694,17 +2764,17 @@ class MainWindow(QMainWindow):
         self.rate_dps_label.setText(self._t("label.rate_dps"))
         self.rate_start_button.setText(self._t("button.start"))
         self.rate_stop_button.setText(self._t("button.stop"))
-        self.hang_note_label.setText("Bench-only constrained rig. Never use with prop-on free flight.")
-        self.hang_capture_button.setText("Capture Ref")
-        self.hang_start_button.setText("Attitude Test Start")
-        self.hang_stop_button.setText("Attitude Test Stop")
-        self.hang_base_duty_label.setText("Base Duty")
-        self.hang_kp_roll_label.setText("Kp Roll")
-        self.hang_kp_pitch_label.setText("Kp Pitch")
-        self.hang_rate_limit_roll_label.setText("Rate Limit Roll")
-        self.hang_rate_limit_pitch_label.setText("Rate Limit Pitch")
-        self.hang_deadband_label.setText("Deadband Deg")
-        self.hang_trip_label.setText("Trip Deg")
+        self.hang_note_label.setText(self._t("hang.note"))
+        self.hang_capture_button.setText(self._t("hang.capture_ref"))
+        self.hang_start_button.setText(self._t("hang.start"))
+        self.hang_stop_button.setText(self._t("hang.stop"))
+        self.hang_base_duty_label.setText(self._t("hang.base_duty"))
+        self.hang_kp_roll_label.setText(self._t("hang.kp_roll"))
+        self.hang_kp_pitch_label.setText(self._t("hang.kp_pitch"))
+        self.hang_rate_limit_roll_label.setText(self._t("hang.rate_limit_roll"))
+        self.hang_rate_limit_pitch_label.setText(self._t("hang.rate_limit_pitch"))
+        self.hang_deadband_label.setText(self._t("hang.deadband_deg"))
+        self.hang_trip_label.setText(self._t("hang.trip_deg"))
         self.udp_warning_label.setText(self._t("udp.warn"))
         self.udp_enable_button.setText(self._t("udp.enable"))
         self.udp_disable_button.setText(self._t("udp.disable"))
@@ -2736,7 +2806,7 @@ class MainWindow(QMainWindow):
         self.dump_csv_button.setText(self._t("button.dump_csv"))
         self.debug_action_tabs.setTabText(0, self._t("tab.motor"))
         self.debug_action_tabs.setTabText(1, self._t("tab.rate"))
-        self.debug_action_tabs.setTabText(2, "Hang Attitude")
+        self.debug_action_tabs.setTabText(2, self._t("tab.hang_attitude"))
         self.debug_action_tabs.setTabText(3, self._t("tab.udp_control"))
 
         self.stream_on_button.setText(self._t("button.stream_on"))
@@ -2799,6 +2869,9 @@ class MainWindow(QMainWindow):
         self.param_new_value_edit.setPlaceholderText(self._t("placeholder.new_value"))
         self.param_desc_title_label.setText(self._t("label.description"))
         self.param_help_text.setPlaceholderText(self._t("placeholder.desc"))
+        if self._selected_param is not None:
+            self.param_help_text.setPlainText(self._param_help(self._selected_param.name))
+            self._update_param_hint()
         self.set_param_button.setText(self._t("button.set_selected"))
 
         self.last_result_title_label.setText(self._t("label.last_result"))
@@ -2982,8 +3055,13 @@ class MainWindow(QMainWindow):
         self.param_type_label.setText(TYPE_NAMES.get(self._selected_param.type_id, str(self._selected_param.type_id)))
         self.param_current_value_label.setText(_format_value(self._selected_param.name, self._selected_param.value))
         self.param_new_value_edit.setText(str(self._selected_param.value))
-        self.param_help_text.setPlainText(self.PARAM_HELP.get(self._selected_param.name, self._t("param.help.default")))
+        self.param_help_text.setPlainText(self._param_help(self._selected_param.name))
         self._update_param_hint()
+
+    def _param_help(self, name: str) -> str:
+        if self._language == "zh":
+            return self.PARAM_HELP_ZH.get(name, self._t("param.help.default"))
+        return self.PARAM_HELP.get(name, self._t("param.help.default"))
 
     def _local_param_hint(self, param: ParamValue | None, value_text: str) -> str:
         if param is None:
@@ -3011,7 +3089,7 @@ class MainWindow(QMainWindow):
                 return "本地看起来是合法遥测频率。" if self._language == "zh" else "Telemetry rate looks locally valid."
         except ValueError:
             return "本地无法解析该值。" if self._language == "zh" else "Could not parse the value locally."
-        return self.PARAM_HELP.get(name, self._t("param.help.default"))
+        return self._param_help(name)
 
     def _update_param_hint(self) -> None:
         self.param_hint_label.setText(self._local_param_hint(self._selected_param, self.param_new_value_edit.text().strip()))
@@ -3138,13 +3216,14 @@ class MainWindow(QMainWindow):
         yaw = float(self.udp_yaw_spin.value()) / 100.0
         return throttle, pitch, roll, yaw
 
-    def _apply_udp_max_pwm_param(self) -> None:
+    def _apply_udp_manual_params(self) -> None:
         self._session.set_param("udp_manual_max_pwm", 4, float(self.udp_max_pwm_spin.value()) / 100.0)
+        self._session.set_param("udp_manual_timeout_ms", 2, UDP_MANUAL_WATCHDOG_MS)
 
     def _enable_udp_manual(self) -> None:
         def action():
             self._session.require_udp_manual_control()
-            self._apply_udp_max_pwm_param()
+            self._apply_udp_manual_params()
             return ensure_command_ok(CmdId.UDP_MANUAL_ENABLE, int(self._session.udp_manual_enable()))
 
         self._run_session_action("udp_manual_enable", action)
@@ -3174,7 +3253,7 @@ class MainWindow(QMainWindow):
 
         def action():
             self._session.require_udp_manual_control()
-            self._apply_udp_max_pwm_param()
+            self._apply_udp_manual_params()
             return ensure_command_ok(CmdId.UDP_TAKEOFF, int(self._session.udp_takeoff()))
 
         self._run_session_action("udp_takeoff", action)
@@ -3182,6 +3261,8 @@ class MainWindow(QMainWindow):
     def _land_udp_manual(self) -> None:
         self.udp_throttle_spin.setValue(0.0)
         self._zero_udp_axes(send=False)
+        self._udp_manual_enabled = False
+        self._udp_control_timer.stop()
 
         def action():
             return ensure_command_ok(CmdId.UDP_LAND, int(self._session.udp_land()))
@@ -3222,7 +3303,15 @@ class MainWindow(QMainWindow):
         def action():
             return ensure_command_ok(
                 CmdId.UDP_MANUAL_SETPOINT,
-                int(self._session.udp_manual_setpoint(throttle=throttle, pitch=pitch, roll=roll, yaw=yaw)),
+                int(
+                    self._session.udp_manual_setpoint(
+                        throttle=throttle,
+                        pitch=pitch,
+                        roll=roll,
+                        yaw=yaw,
+                        timeout=UDP_MANUAL_SETPOINT_TIMEOUT_S,
+                    )
+                ),
             )
 
         self._udp_manual_send_inflight = True
@@ -3237,7 +3326,7 @@ class MainWindow(QMainWindow):
             self.udp_watchdog_status_label.setText("-")
             return
         age_ms = (time.monotonic() - self._udp_manual_last_send_monotonic) * 1000.0
-        self.udp_watchdog_status_label.setText(f"{age_ms:.0f} ms since setpoint")
+        self.udp_watchdog_status_label.setText(self._t("udp.watchdog_age", age_ms=age_ms))
 
     def _browse_log_path(self) -> None:
         output, _ = QFileDialog.getSaveFileName(self, self._t("label.output"), self.log_path_edit.text(), "CSV Files (*.csv)")
@@ -3532,8 +3621,18 @@ class MainWindow(QMainWindow):
             self._set_last_result(self._t("udp.stopped"))
             self._append_log(self._t("udp.stopped"))
             return
-        if label in {"udp_takeoff", "udp_land"}:
-            summary = self._t("msg.command_ok", label=label.replace("_", " "))
+        if label == "udp_takeoff":
+            self._udp_manual_enabled = True
+            self._udp_control_timer.start()
+            summary = self._t("msg.command_ok", label=self._t("udp.takeoff"))
+            self._set_last_result(summary)
+            self._append_log(summary)
+            self._send_udp_manual_once()
+            return
+        if label == "udp_land":
+            self._udp_manual_enabled = False
+            self._udp_control_timer.stop()
+            summary = self._t("msg.command_ok", label=self._t("udp.land"))
             self._set_last_result(summary)
             self._append_log(summary)
             return

@@ -33,6 +33,7 @@
 #define SERVICE_TASK_PRIO 10
 
 #define TASK_STACK_WORDS 4096
+#define UDP_MANUAL_FULL_AXIS_RATE_DPS 45.0f
 
 static void flight_control_set_base_duty_active(float base_duty)
 {
@@ -83,6 +84,21 @@ static void flight_control_apply_led_state(const safety_status_t *safety_status,
     } else {
         led_status_set_state(LED_STATE_DISARMED_READY);
     }
+}
+
+static axis3f_t flight_control_udp_manual_rate_setpoint(axis3f_t axis_command)
+{
+    const float axis_limit = params_get()->udp_manual_axis_limit;
+    if (axis_limit <= 0.0001f) {
+        return (axis3f_t){0};
+    }
+
+    const float scale = UDP_MANUAL_FULL_AXIS_RATE_DPS / axis_limit;
+    return (axis3f_t){
+        .roll = axis_command.roll * scale,
+        .pitch = axis_command.pitch * scale,
+        .yaw = axis_command.yaw * scale,
+    };
 }
 
 static void imu_uart_rx_task(void *arg)
@@ -308,7 +324,6 @@ static void flight_control_task(void *arg)
 
         if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_UDP_MANUAL) {
             udp_manual_control_t manual = {0};
-            flight_control_set_base_duty_active(0.0f);
             if (!udp_manual_get_control(now_us, loop_dt_us, &manual) || manual.should_disarm) {
                 safety_request_disarm();
                 udp_manual_reset();
@@ -318,12 +333,33 @@ static void flight_control_task(void *arg)
                 continue;
             }
 
+            const axis3f_t rate_setpoint = flight_control_udp_manual_rate_setpoint(manual.axis);
             runtime_state_set_axis_test_request(manual.axis);
-            runtime_state_set_rate_setpoint_request((axis3f_t){0});
+            runtime_state_set_rate_setpoint_request(rate_setpoint);
+            flight_control_set_base_duty_active(manual.throttle);
+
+            axis3f_t pid_axis = controller_get_last_rate_status().output;
+            if (fresh_sample && sample.has_gyro_acc) {
+                estimator_update_from_imu(&sample, &estimator_state);
+                if (last_rate_update_us != 0 && sample.timestamp_us > last_rate_update_us) {
+                    float controller_dt_s = (float)(sample.timestamp_us - last_rate_update_us) / 1000000.0f;
+                    if (controller_dt_s < 0.001f) {
+                        controller_dt_s = 0.001f;
+                    } else if (controller_dt_s > 0.050f) {
+                        controller_dt_s = 0.050f;
+                    }
+
+                    const rate_controller_status_t rate_status =
+                        controller_update_rate(&rate_setpoint, &estimator_state.rate_rpy_dps, controller_dt_s);
+                    pid_axis = rate_status.output;
+                }
+                last_rate_update_us = sample.timestamp_us;
+            }
+
             mixer_mix(mixer_coeffs,
                       &(mixer_input_t){
                           .throttle = manual.throttle,
-                          .axis = manual.axis,
+                          .axis = pid_axis,
                       },
                       command_outputs);
             motor_set_armed_outputs(command_outputs, false);

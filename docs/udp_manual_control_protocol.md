@@ -7,7 +7,7 @@ This feature is experimental bench/manual control only. It is not a mature free-
 - Transport: binary CLI/GUI UDP protocol on port `2391`, reachable through the ESP32 SoftAP transport described in [softap_udp_transport.md](./softap_udp_transport.md).
 - GUI: `UDP Control` tab in the Python GUI.
 - Firmware mode: `CONTROL_MODE_UDP_MANUAL`.
-- Control style: open-loop or semi-open-loop mixer input with firmware-side clamping and watchdog.
+- Control style: throttle is a collective/base duty target; roll/pitch/yaw are mapped through the existing rate PID before mixer output.
 - Legacy UDP compatibility on port `2390` is unchanged.
 
 ## Capability Gate
@@ -61,22 +61,24 @@ session.udp_manual_stop()
 
 These parameters are exposed through normal CLI/GUI parameter read/write and saved in the firmware parameter blob:
 
-- `udp_manual_max_pwm`: max manual duty/PWM fraction.
-- `udp_takeoff_pwm`: open-loop takeoff ramp target.
+- `udp_manual_max_pwm`: max manual collective/base duty fraction.
+- `udp_takeoff_pwm`: takeoff collective/base duty ramp target.
 - `udp_land_min_pwm`: landing/timeout safe duty floor.
-- `udp_manual_timeout_ms`: setpoint watchdog timeout, valid range `200..1000 ms`.
-- `udp_manual_axis_limit`: roll/pitch/yaw mixer input clamp.
+- `udp_manual_timeout_ms`: setpoint watchdog timeout, valid range `200..1000 ms`, default `1000 ms`.
+- `udp_manual_axis_limit`: roll/pitch/yaw normalized command clamp before rate-PID mapping. At the clamp limit, firmware maps the axis command to about `45 dps`.
 
 The GUI displays max duty as `Max PWM (%)`, but firmware stores normalized duty fractions.
 
 ## Firmware Safety Behavior
 
-- UDP manual commands are only honored in `CONTROL_MODE_UDP_MANUAL`.
+- UDP manual setpoints, landing, stop, and disable are honored in `CONTROL_MODE_UDP_MANUAL`; `UDP_TAKEOFF` may enter that mode from idle/disarmed state.
 - `UDP_MANUAL_ENABLE` requires idle mode and disarmed state unless the mode is already active.
-- `UDP_TAKEOFF` requests arm through the existing safety layer and ramps to `udp_takeoff_pwm`.
-- `UDP_LAND` ramps throttle down and auto-disarms when the ramp reaches the safe floor.
+- `UDP_TAKEOFF` requests arm through the existing safety layer and ramps base duty to `udp_takeoff_pwm`.
+- `UDP_LAND` keeps the rate loop active, ramps base duty down, and auto-disarms when the ramp reaches the safe floor.
+- After `UDP_LAND` has entered the landing stage, later manual setpoint frames are acknowledged but ignored so they cannot cancel the descent.
 - `UDP_MANUAL_STOP` and `UDP_MANUAL_DISABLE` clear setpoints, stop motors, leave manual mode, and request disarm.
 - Setpoints are finite-checked and clamped by firmware.
+- During `CONTROL_MODE_UDP_MANUAL`, throttle is the collective/base duty target, while roll/pitch/yaw commands are converted to rate setpoints and passed through the existing `rate_kp_* / rate_ki_* / rate_kd_*` controller before mixing.
 - If no setpoint arrives for `udp_manual_timeout_ms`, firmware zeros pitch/roll/yaw and reduces throttle toward `udp_land_min_pwm`.
 - If the timeout persists for `3 * udp_manual_timeout_ms`, firmware requests disarm and stops the manual mode.
 - Kill remains highest priority through the existing `CMD_KILL` path.

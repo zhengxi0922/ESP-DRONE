@@ -38,9 +38,11 @@ Compatibility is limited to the legacy control entry path. The rewrite does not 
 ## Experimental UDP Manual Control
 
 Protocol version `5` adds `udp_manual_control` on the new binary UDP port `2391`.
-This path is explicitly experimental and open-loop / semi-open-loop only. It adds
-manual enable/disable/stop, setpoint, takeoff, and land commands with firmware-side
-watchdog and max-duty clamps. It is not a mature free-flight takeoff/land mode.
+This path is explicitly experimental. The `throttle` field is treated as a
+collective/base duty target, while roll/pitch/yaw commands are mapped through the
+existing rate PID before mixer output. It adds manual enable/disable/stop, setpoint,
+takeoff, and land commands with firmware-side watchdog and max-duty clamps. It is not
+a mature free-flight takeoff/land mode.
 
 See [udp_manual_control_protocol.md](./udp_manual_control_protocol.md).
 For SoftAP setup and GUI UDP transport connection steps, see [softap_udp_transport.md](./softap_udp_transport.md).

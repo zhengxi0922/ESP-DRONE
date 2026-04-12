@@ -105,7 +105,7 @@ console_cmd_status_t udp_manual_enable(void)
     taskEXIT_CRITICAL(&s_udp_manual_lock);
 
     runtime_state_set_control_mode(CONTROL_MODE_UDP_MANUAL);
-    console_send_event_text("udp manual enabled: experimental open-loop control");
+    console_send_event_text("udp manual enabled: base duty with rate-PID axes");
     return CMD_STATUS_OK;
 }
 
@@ -137,28 +137,40 @@ console_cmd_status_t udp_manual_stop(void)
 
 console_cmd_status_t udp_manual_takeoff(void)
 {
-    if (runtime_state_get_control_mode() != CONTROL_MODE_UDP_MANUAL) {
-        return CMD_STATUS_CONFLICT;
-    }
-    if (runtime_state_get_arm_state() == ARM_STATE_FAILSAFE ||
-        runtime_state_get_arm_state() == ARM_STATE_FAULT_LOCK) {
+    const arm_state_t arm_state = runtime_state_get_arm_state();
+    const control_mode_t mode = runtime_state_get_control_mode();
+
+    if (arm_state == ARM_STATE_FAILSAFE || arm_state == ARM_STATE_FAULT_LOCK) {
         return CMD_STATUS_REJECTED;
     }
-
-    taskENTER_CRITICAL(&s_udp_manual_lock);
-    if (!s_udp_manual_state.enabled) {
-        taskEXIT_CRITICAL(&s_udp_manual_lock);
+    if (mode != CONTROL_MODE_IDLE && mode != CONTROL_MODE_UDP_MANUAL) {
         return CMD_STATUS_CONFLICT;
     }
+    if (mode == CONTROL_MODE_IDLE && arm_state != ARM_STATE_DISARMED) {
+        return CMD_STATUS_DISARM_REQUIRED;
+    }
+
+    runtime_state_set_motor_test(-1, 0.0f);
+    runtime_state_set_axis_test_request((axis3f_t){0});
+    runtime_state_set_rate_setpoint_request((axis3f_t){0});
+
+    const uint64_t now_us = (uint64_t)esp_timer_get_time();
+    taskENTER_CRITICAL(&s_udp_manual_lock);
+    if (!s_udp_manual_state.enabled) {
+        udp_manual_reset_locked();
+        s_udp_manual_state.enabled = true;
+    }
     s_udp_manual_state.stage = UDP_MANUAL_STAGE_TAKEOFF;
+    s_udp_manual_state.desired_throttle = 0.0f;
     s_udp_manual_state.desired_axis = (axis3f_t){0};
-    s_udp_manual_state.last_frame_us = (uint64_t)esp_timer_get_time();
+    s_udp_manual_state.last_frame_us = now_us;
     s_udp_manual_state.timeout_event_sent = false;
     s_udp_manual_state.disarm_event_sent = false;
     taskEXIT_CRITICAL(&s_udp_manual_lock);
 
+    runtime_state_set_control_mode(CONTROL_MODE_UDP_MANUAL);
     safety_request_arm(true);
-    console_send_event_text("udp takeoff requested: open-loop ramp only");
+    console_send_event_text("udp takeoff requested: base-duty ramp with rate-PID axes");
     return CMD_STATUS_OK;
 }
 
@@ -178,9 +190,10 @@ console_cmd_status_t udp_manual_land(void)
     s_udp_manual_state.desired_axis = (axis3f_t){0};
     s_udp_manual_state.last_frame_us = (uint64_t)esp_timer_get_time();
     s_udp_manual_state.timeout_event_sent = false;
+    s_udp_manual_state.disarm_event_sent = false;
     taskEXIT_CRITICAL(&s_udp_manual_lock);
 
-    console_send_event_text("udp land requested: open-loop ramp down");
+    console_send_event_text("udp land requested: closed-loop axes with base-duty ramp down");
     return CMD_STATUS_OK;
 }
 
@@ -201,6 +214,10 @@ console_cmd_status_t udp_manual_setpoint(float throttle, float pitch, float roll
     if (!s_udp_manual_state.enabled) {
         taskEXIT_CRITICAL(&s_udp_manual_lock);
         return CMD_STATUS_CONFLICT;
+    }
+    if (s_udp_manual_state.stage == UDP_MANUAL_STAGE_LAND) {
+        taskEXIT_CRITICAL(&s_udp_manual_lock);
+        return CMD_STATUS_OK;
     }
     s_udp_manual_state.desired_throttle = udp_manual_clampf(throttle, 0.0f, max_pwm);
     s_udp_manual_state.desired_axis.roll = udp_manual_clampf(roll, -axis_limit, axis_limit);
@@ -244,13 +261,19 @@ bool udp_manual_get_control(uint64_t now_us, uint32_t loop_dt_us, udp_manual_con
                                 ? (now_us - s_udp_manual_state.last_frame_us)
                                 : 0u;
 
-    if (age_us > timeout_us) {
+    const bool land_active = (s_udp_manual_state.stage == UDP_MANUAL_STAGE_LAND);
+    const bool takeoff_ramp_active =
+        (s_udp_manual_state.stage == UDP_MANUAL_STAGE_TAKEOFF) &&
+        (s_udp_manual_state.current_throttle < (takeoff_pwm - 0.001f));
+    const bool watchdog_active = !land_active && !takeoff_ramp_active;
+
+    if (watchdog_active && age_us > timeout_us) {
         timed_out = true;
         target_axis = (axis3f_t){0};
         target_throttle = land_min_pwm;
         if (!s_udp_manual_state.timeout_event_sent) {
             s_udp_manual_state.timeout_event_sent = true;
-            event_text = "udp manual watchdog timeout: zero axes and reduce throttle";
+            event_text = "udp manual watchdog timeout: zero rate setpoints and reduce base duty";
         }
         if (age_us > long_timeout_us) {
             target_throttle = 0.0f;

@@ -27,6 +27,16 @@ typedef struct {
 
 static params_store_t s_params;
 
+#define PARAMS_RATE_KP_ROLL_DEFAULT 0.0026f
+#define PARAMS_RATE_KI_ROLL_DEFAULT 0.0f
+#define PARAMS_RATE_KD_ROLL_DEFAULT 0.0f
+#define PARAMS_RATE_KP_PITCH_DEFAULT 0.0024f
+#define PARAMS_RATE_KI_PITCH_DEFAULT 0.0f
+#define PARAMS_RATE_KD_PITCH_DEFAULT 0.0f
+#define PARAMS_RATE_KP_YAW_DEFAULT 0.0026f
+#define PARAMS_RATE_KI_YAW_DEFAULT 0.0f
+#define PARAMS_RATE_KD_YAW_DEFAULT 0.0f
+
 /* 参数系统采用“单 blob + schema_version + CRC32”保存策略。
  * 运行时所有参数写入都必须先过 params_try_set() 的合法性校验。 */
 static uint32_t params_crc32(const void *data, size_t len)
@@ -111,6 +121,20 @@ static const param_descriptor_t s_runtime_param_descs[] = {
     {"attitude_ref_valid", PARAM_TYPE_BOOL, 0u},
 };
 
+/* Rate PID gains are tied to firmware defaults and are not restored from NVS. */
+static void params_apply_rate_pid_defaults(params_store_t *store)
+{
+    store->rate_kp_roll = PARAMS_RATE_KP_ROLL_DEFAULT;
+    store->rate_ki_roll = PARAMS_RATE_KI_ROLL_DEFAULT;
+    store->rate_kd_roll = PARAMS_RATE_KD_ROLL_DEFAULT;
+    store->rate_kp_pitch = PARAMS_RATE_KP_PITCH_DEFAULT;
+    store->rate_ki_pitch = PARAMS_RATE_KI_PITCH_DEFAULT;
+    store->rate_kd_pitch = PARAMS_RATE_KD_PITCH_DEFAULT;
+    store->rate_kp_yaw = PARAMS_RATE_KP_YAW_DEFAULT;
+    store->rate_ki_yaw = PARAMS_RATE_KI_YAW_DEFAULT;
+    store->rate_kd_yaw = PARAMS_RATE_KD_YAW_DEFAULT;
+}
+
 static void params_apply_defaults(params_store_t *store)
 {
     memset(store, 0, sizeof(*store));
@@ -126,7 +150,7 @@ static void params_apply_defaults(params_store_t *store)
     store->udp_manual_max_pwm = 0.12f;
     store->udp_takeoff_pwm = 0.10f;
     store->udp_land_min_pwm = 0.05f;
-    store->udp_manual_timeout_ms = 250;
+    store->udp_manual_timeout_ms = 1000;
     store->udp_manual_axis_limit = 0.05f;
 
     store->rc_timeout_ms = 300;
@@ -162,15 +186,7 @@ static void params_apply_defaults(params_store_t *store)
     store->motor_spin_is_cw[2] = false;
     store->motor_spin_is_cw[3] = true;
 
-    store->rate_kp_roll = 0.0030f;
-    store->rate_ki_roll = 0.0f;
-    store->rate_kd_roll = 0.0f;
-    store->rate_kp_pitch = 0.0030f;
-    store->rate_ki_pitch = 0.0f;
-    store->rate_kd_pitch = 0.0f;
-    store->rate_kp_yaw = 0.0030f;
-    store->rate_ki_yaw = 0.0f;
-    store->rate_kd_yaw = 0.0f;
+    params_apply_rate_pid_defaults(store);
     store->rate_integral_limit = 100.0f;
     store->rate_output_limit = 0.20f;
     store->attitude_kp_roll = 2.0f;
@@ -429,11 +445,14 @@ static bool params_try_load_from_nvs(params_store_t *store)
     if (crc != blob.header.crc32) {
         return false;
     }
-    if (!params_validate_store(&blob.payload)) {
+    params_store_t payload = blob.payload;
+    params_apply_rate_pid_defaults(&payload);
+
+    if (!params_validate_store(&payload)) {
         return false;
     }
 
-    *store = blob.payload;
+    *store = payload;
     return true;
 }
 
@@ -461,14 +480,17 @@ void params_reset_to_defaults(void)
 esp_err_t params_save(void)
 {
     nvs_handle_t handle;
+    params_store_t payload = s_params;
+    params_apply_rate_pid_defaults(&payload);
+
     params_blob_t blob = {
         .header = {
             .magic = PARAMS_BLOB_MAGIC,
             .schema_version = PARAMS_SCHEMA_VERSION,
-            .payload_len = sizeof(s_params),
-            .crc32 = params_crc32(&s_params, sizeof(s_params)),
+            .payload_len = sizeof(payload),
+            .crc32 = params_crc32(&payload, sizeof(payload)),
         },
-        .payload = s_params,
+        .payload = payload,
     };
 
     esp_err_t err = nvs_open(PARAMS_NAMESPACE, NVS_READWRITE, &handle);

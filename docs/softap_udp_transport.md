@@ -80,7 +80,7 @@ Use a restrained bench and conservative `udp_manual_max_pwm` before any motor-pr
 ## Safety Boundary
 
 - Serial / USB CDC remains the primary recovery and debug path.
-- UDP manual control remains experimental open-loop / semi-open-loop only.
+- UDP manual control remains experimental; throttle is a collective/base duty target, while roll/pitch/yaw use the rate PID before mixing.
 - Kill and disarm continue to use the existing highest-priority safety path.
 - UDP manual watchdog behavior remains unchanged: stale setpoints zero axes, reduce throttle, and then disarm on extended timeout.
 - This transport update does not make the vehicle free-flight ready.
