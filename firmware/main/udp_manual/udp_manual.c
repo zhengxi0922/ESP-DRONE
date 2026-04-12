@@ -8,7 +8,9 @@
 
 #include "esp_timer.h"
 
+#include "attitude_bench.h"
 #include "console.h"
+#include "imu.h"
 #include "motor.h"
 #include "params.h"
 #include "runtime_state.h"
@@ -55,6 +57,24 @@ static bool udp_manual_all_finite(float a, float b, float c, float d)
     return isfinite(a) && isfinite(b) && isfinite(c) && isfinite(d);
 }
 
+static console_cmd_status_t udp_manual_ensure_attitude_reference(void)
+{
+    if (runtime_state_get_attitude_hang_state().ref_valid) {
+        return CMD_STATUS_OK;
+    }
+
+    imu_sample_t sample = {0};
+    if (!imu_get_latest(&sample, NULL) ||
+        sample.health != IMU_HEALTH_OK ||
+        !sample.has_gyro_acc ||
+        !sample.has_quaternion ||
+        !attitude_bench_capture_reference(&sample)) {
+        return CMD_STATUS_IMU_NOT_READY;
+    }
+
+    return CMD_STATUS_OK;
+}
+
 static void udp_manual_reset_locked(void)
 {
     memset(&s_udp_manual_state, 0, sizeof(s_udp_manual_state));
@@ -97,6 +117,11 @@ console_cmd_status_t udp_manual_enable(void)
     runtime_state_set_axis_test_request((axis3f_t){0});
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
 
+    const console_cmd_status_t ref_status = udp_manual_ensure_attitude_reference();
+    if (ref_status != CMD_STATUS_OK) {
+        return ref_status;
+    }
+
     taskENTER_CRITICAL(&s_udp_manual_lock);
     udp_manual_reset_locked();
     s_udp_manual_state.enabled = true;
@@ -105,7 +130,7 @@ console_cmd_status_t udp_manual_enable(void)
     taskEXIT_CRITICAL(&s_udp_manual_lock);
 
     runtime_state_set_control_mode(CONTROL_MODE_UDP_MANUAL);
-    console_send_event_text("udp manual enabled: base duty with rate-PID axes");
+    console_send_event_text("udp manual enabled: attitude roll/pitch with rate-PID yaw");
     return CMD_STATUS_OK;
 }
 
@@ -154,6 +179,11 @@ console_cmd_status_t udp_manual_takeoff(void)
     runtime_state_set_axis_test_request((axis3f_t){0});
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
 
+    const console_cmd_status_t ref_status = udp_manual_ensure_attitude_reference();
+    if (ref_status != CMD_STATUS_OK) {
+        return ref_status;
+    }
+
     const uint64_t now_us = (uint64_t)esp_timer_get_time();
     taskENTER_CRITICAL(&s_udp_manual_lock);
     if (!s_udp_manual_state.enabled) {
@@ -170,7 +200,7 @@ console_cmd_status_t udp_manual_takeoff(void)
 
     runtime_state_set_control_mode(CONTROL_MODE_UDP_MANUAL);
     safety_request_arm(true);
-    console_send_event_text("udp takeoff requested: base-duty ramp with rate-PID axes");
+    console_send_event_text("udp takeoff requested: base-duty ramp with attitude roll/pitch");
     return CMD_STATUS_OK;
 }
 
@@ -193,7 +223,7 @@ console_cmd_status_t udp_manual_land(void)
     s_udp_manual_state.disarm_event_sent = false;
     taskEXIT_CRITICAL(&s_udp_manual_lock);
 
-    console_send_event_text("udp land requested: closed-loop axes with base-duty ramp down");
+    console_send_event_text("udp land requested: attitude roll/pitch with base-duty ramp down");
     return CMD_STATUS_OK;
 }
 
@@ -273,7 +303,7 @@ bool udp_manual_get_control(uint64_t now_us, uint32_t loop_dt_us, udp_manual_con
         target_throttle = land_min_pwm;
         if (!s_udp_manual_state.timeout_event_sent) {
             s_udp_manual_state.timeout_event_sent = true;
-            event_text = "udp manual watchdog timeout: zero rate setpoints and reduce base duty";
+            event_text = "udp manual watchdog timeout: zero manual yaw and reduce base duty";
         }
         if (age_us > long_timeout_us) {
             target_throttle = 0.0f;

@@ -879,7 +879,7 @@ EXTRA_TRANSLATIONS = {
         "hang.rate_limit_pitch": "Rate Limit Pitch",
         "hang.deadband_deg": "Deadband Deg",
         "hang.trip_deg": "Trip Deg",
-        "udp.warn": "Experimental UDP manual control. Throttle is the base duty target; roll/pitch/yaw use rate PID. Respect Max PWM and keep prop safety in mind. Not free-flight ready.",
+        "udp.warn": "Experimental UDP manual control. Throttle is the base duty target; roll/pitch use attitude hold and yaw uses rate PID. Respect Max PWM and keep prop safety in mind. Not free-flight ready.",
         "udp.max_pwm": "Max PWM (%)",
         "udp.throttle": "Throttle (%)",
         "udp.axis_step": "Axis Step (%)",
@@ -1398,7 +1398,7 @@ class MainWindow(QMainWindow):
         "udp_takeoff_pwm": "UDP takeoff base-duty ramp target, normalized 0..1.",
         "udp_land_min_pwm": "UDP landing and watchdog base-duty floor before auto-disarm.",
         "udp_manual_timeout_ms": "UDP manual setpoint watchdog timeout in milliseconds.",
-        "udp_manual_axis_limit": "UDP manual roll/pitch/yaw normalized command clamp before mapping to rate setpoints.",
+        "udp_manual_axis_limit": "UDP manual normalized command clamp. Yaw maps to rate setpoints; roll/pitch are held by attitude control.",
     }
 
     PARAM_HELP_ZH = {

@@ -7,7 +7,7 @@ This feature is experimental bench/manual control only. It is not a mature free-
 - Transport: binary CLI/GUI UDP protocol on port `2391`, reachable through the ESP32 SoftAP transport described in [softap_udp_transport.md](./softap_udp_transport.md).
 - GUI: `UDP Control` tab in the Python GUI.
 - Firmware mode: `CONTROL_MODE_UDP_MANUAL`.
-- Control style: throttle is a collective/base duty target; roll/pitch/yaw are mapped through the existing rate PID before mixer output.
+- Control style: throttle is a collective/base duty target; roll/pitch use the existing hang-attitude outer loop to generate rate setpoints, and yaw remains mapped through the existing rate PID before mixer output.
 - Legacy UDP compatibility on port `2390` is unchanged.
 
 ## Capability Gate
@@ -65,7 +65,7 @@ These parameters are exposed through normal CLI/GUI parameter read/write and sav
 - `udp_takeoff_pwm`: takeoff collective/base duty ramp target.
 - `udp_land_min_pwm`: landing/timeout safe duty floor.
 - `udp_manual_timeout_ms`: setpoint watchdog timeout, valid range `200..1000 ms`, default `1000 ms`.
-- `udp_manual_axis_limit`: roll/pitch/yaw normalized command clamp before rate-PID mapping. At the clamp limit, firmware maps the axis command to about `45 dps`.
+- `udp_manual_axis_limit`: normalized command clamp for manual inputs. In current firmware, yaw at the clamp limit maps to about `45 dps`; roll/pitch inputs are not mixed directly while attitude hold is active.
 
 The GUI displays max duty as `Max PWM (%)`, but firmware stores normalized duty fractions.
 
@@ -78,8 +78,9 @@ The GUI displays max duty as `Max PWM (%)`, but firmware stores normalized duty 
 - After `UDP_LAND` has entered the landing stage, later manual setpoint frames are acknowledged but ignored so they cannot cancel the descent.
 - `UDP_MANUAL_STOP` and `UDP_MANUAL_DISABLE` clear setpoints, stop motors, leave manual mode, and request disarm.
 - Setpoints are finite-checked and clamped by firmware.
-- During `CONTROL_MODE_UDP_MANUAL`, throttle is the collective/base duty target, while roll/pitch/yaw commands are converted to rate setpoints and passed through the existing `rate_kp_* / rate_ki_* / rate_kd_*` controller before mixing.
-- If no setpoint arrives for `udp_manual_timeout_ms`, firmware zeros pitch/roll/yaw and reduces throttle toward `udp_land_min_pwm`.
+- During `CONTROL_MODE_UDP_MANUAL`, throttle is the collective/base duty target. Roll/pitch rate setpoints come from `attitude_bench_compute()` using the captured attitude reference and then pass through the existing rate PID. Yaw keeps the manual normalized-input-to-rate-setpoint path before the same rate PID.
+- UDP manual enable/takeoff requires a valid attitude reference. If one is not already captured, firmware captures the current IMU quaternion through the existing attitude-bench reference path.
+- If no setpoint arrives for `udp_manual_timeout_ms`, firmware zeros manual yaw, keeps roll/pitch on the attitude outer loop, and reduces throttle toward `udp_land_min_pwm`.
 - If the timeout persists for `3 * udp_manual_timeout_ms`, firmware requests disarm and stops the manual mode.
 - Kill remains highest priority through the existing `CMD_KILL` path.
 

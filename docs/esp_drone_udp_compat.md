@@ -39,8 +39,8 @@ Compatibility is limited to the legacy control entry path. The rewrite does not 
 
 Protocol version `5` adds `udp_manual_control` on the new binary UDP port `2391`.
 This path is explicitly experimental. The `throttle` field is treated as a
-collective/base duty target, while roll/pitch/yaw commands are mapped through the
-existing rate PID before mixer output. It adds manual enable/disable/stop, setpoint,
+collective/base duty target, while roll/pitch are held through the existing
+hang-attitude outer loop and yaw remains mapped through the existing rate PID. It adds manual enable/disable/stop, setpoint,
 takeoff, and land commands with firmware-side watchdog and max-duty clamps. It is not
 a mature free-flight takeoff/land mode.
 

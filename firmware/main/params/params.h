@@ -91,7 +91,7 @@ typedef struct {
     float udp_takeoff_pwm;            /**< Experimental UDP takeoff target duty/PWM fraction. */
     float udp_land_min_pwm;           /**< Experimental UDP landing and timeout safe duty floor. */
     uint32_t udp_manual_timeout_ms;   /**< UDP manual watchdog timeout in ms. */
-    float udp_manual_axis_limit;      /**< UDP manual roll/pitch/yaw normalized command limit before rate PID mapping. */
+    float udp_manual_axis_limit;      /**< UDP manual normalized command limit; yaw maps to rate PID while roll/pitch use attitude hold. */
 
     uint32_t rc_timeout_ms;           /**< RC 超时阈值，单位为 ms；当前主循环尚未直接消费该参数。 */
     uint32_t imu_timeout_ms;          /**< IMU 超时阈值，单位为 ms。 */

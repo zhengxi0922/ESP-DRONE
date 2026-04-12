@@ -963,7 +963,7 @@ def build_parser() -> argparse.ArgumentParser:
     udp_manual_p = sub.add_parser(
         "udp-manual",
         help="experimental UDP manual control; not free-flight ready",
-        description="Experimental UDP manual control for restrained testing only. Throttle is the base duty target; roll/pitch/yaw use the rate PID before mixing. This is not a mature takeoff/land/free-flight mode.",
+        description="Experimental UDP manual control for restrained testing only. Throttle is the base duty target; roll/pitch use the hang-attitude outer loop and yaw uses the rate PID before mixing. This is not a mature takeoff/land/free-flight mode.",
     )
     udp_manual_sub = udp_manual_p.add_subparsers(dest="action", required=True)
     udp_manual_sub.add_parser("enable")

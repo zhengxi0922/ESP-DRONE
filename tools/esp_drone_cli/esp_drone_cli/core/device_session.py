@@ -630,7 +630,7 @@ class DeviceSession:
         return self.command(CmdId.UDP_MANUAL_STOP)
 
     def udp_takeoff(self) -> int:
-        """Request an experimental UDP takeoff base-duty ramp with rate PID on roll/pitch/yaw."""
+        """Request an experimental UDP takeoff base-duty ramp with attitude roll/pitch and rate-PID yaw."""
 
         self.require_udp_manual_control()
         return self.command(CmdId.UDP_TAKEOFF)
@@ -651,8 +651,10 @@ class DeviceSession:
     ) -> int:
         """Send one experimental UDP manual setpoint frame.
 
-        Throttle is a normalized base-duty target; pitch/roll/yaw are normalized
-        rate-setpoint requests. Firmware remains authoritative for clamping.
+        Throttle is a normalized base-duty target. Pitch/roll fields remain in
+        the protocol, but firmware holds roll/pitch through the attitude outer
+        loop and uses yaw as the manual rate request. Firmware remains
+        authoritative for clamping.
         """
 
         self.require_udp_manual_control()

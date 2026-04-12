@@ -33,7 +33,7 @@
 #define SERVICE_TASK_PRIO 10
 
 #define TASK_STACK_WORDS 4096
-#define UDP_MANUAL_FULL_AXIS_RATE_DPS 45.0f
+#define UDP_MANUAL_FULL_YAW_RATE_DPS 45.0f
 
 static void flight_control_set_base_duty_active(float base_duty)
 {
@@ -57,6 +57,47 @@ static void flight_control_stop_attitude_hang_test(float command_outputs[MOTOR_C
     if (reason != NULL) {
         console_send_event_text(reason);
     }
+}
+
+static void flight_control_stop_udp_manual(float command_outputs[MOTOR_COUNT], const char *reason, bool request_disarm)
+{
+    if (request_disarm) {
+        safety_request_disarm();
+    }
+    udp_manual_reset();
+    runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+    runtime_state_set_axis_test_request((axis3f_t){0});
+    runtime_state_set_rate_setpoint_request((axis3f_t){0});
+    attitude_bench_reset_status();
+    flight_control_set_base_duty_active(0.0f);
+
+    if (command_outputs != NULL) {
+        memset(command_outputs, 0, sizeof(float) * MOTOR_COUNT);
+    }
+    motor_stop_all();
+    if (reason != NULL) {
+        console_send_event_text(reason);
+    }
+}
+
+static bool flight_control_attitude_sample_ready(const imu_sample_t *sample)
+{
+    return sample != NULL &&
+           sample->health == IMU_HEALTH_OK &&
+           sample->has_gyro_acc &&
+           sample->has_quaternion;
+}
+
+static bool flight_control_attitude_reference_ready(void)
+{
+    return runtime_state_get_attitude_hang_state().ref_valid;
+}
+
+static bool flight_control_attitude_trip_exceeded(const params_store_t *params)
+{
+    const attitude_hang_state_t updated_state = runtime_state_get_attitude_hang_state();
+    return fabsf(updated_state.err_roll_deg) > params->attitude_trip_deg ||
+           fabsf(updated_state.err_pitch_deg) > params->attitude_trip_deg;
 }
 
 static void flight_control_apply_led_state(const safety_status_t *safety_status,
@@ -86,17 +127,17 @@ static void flight_control_apply_led_state(const safety_status_t *safety_status,
     }
 }
 
-static axis3f_t flight_control_udp_manual_rate_setpoint(axis3f_t axis_command)
+static axis3f_t flight_control_udp_manual_yaw_rate_setpoint(axis3f_t axis_command)
 {
     const float axis_limit = params_get()->udp_manual_axis_limit;
     if (axis_limit <= 0.0001f) {
         return (axis3f_t){0};
     }
 
-    const float scale = UDP_MANUAL_FULL_AXIS_RATE_DPS / axis_limit;
+    const float scale = UDP_MANUAL_FULL_YAW_RATE_DPS / axis_limit;
     return (axis3f_t){
-        .roll = axis_command.roll * scale,
-        .pitch = axis_command.pitch * scale,
+        .roll = 0.0f,
+        .pitch = 0.0f,
         .yaw = axis_command.yaw * scale,
     };
 }
@@ -215,11 +256,9 @@ static void flight_control_task(void *arg)
             (safety_status.arm_state == ARM_STATE_FAILSAFE ||
              safety_status.arm_state == ARM_STATE_FAULT_LOCK ||
              safety_status.failsafe_reason != FAILSAFE_REASON_NONE)) {
-            udp_manual_reset();
-            runtime_state_set_control_mode(CONTROL_MODE_IDLE);
-            memset(command_outputs, 0, sizeof(command_outputs));
-            motor_stop_all();
-            console_send_event_text("udp manual stopped: arm state or failsafe");
+            flight_control_stop_udp_manual(command_outputs,
+                                           "udp manual stopped: arm state or failsafe",
+                                           false);
             continue;
         }
 
@@ -267,12 +306,12 @@ static void flight_control_task(void *arg)
         if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_ATTITUDE_HANG_TEST) {
             const params_store_t *params = params_get();
 
-            if (sample.health != IMU_HEALTH_OK || !sample.has_gyro_acc || !sample.has_quaternion) {
+            if (!flight_control_attitude_sample_ready(&sample)) {
                 flight_control_stop_attitude_hang_test(command_outputs,
                                                        "attitude hang test stopped: imu not ready");
                 continue;
             }
-            if (!runtime_state_get_attitude_hang_state().ref_valid) {
+            if (!flight_control_attitude_reference_ready()) {
                 flight_control_stop_attitude_hang_test(command_outputs,
                                                        "attitude hang test stopped: reference missing");
                 continue;
@@ -289,9 +328,7 @@ static void flight_control_task(void *arg)
                     continue;
                 }
 
-                const attitude_hang_state_t updated_state = runtime_state_get_attitude_hang_state();
-                if (fabsf(updated_state.err_roll_deg) > params->attitude_trip_deg ||
-                    fabsf(updated_state.err_pitch_deg) > params->attitude_trip_deg) {
+                if (flight_control_attitude_trip_exceeded(params)) {
                     flight_control_stop_attitude_hang_test(command_outputs,
                                                            "attitude hang test stopped: attitude trip");
                     continue;
@@ -323,24 +360,60 @@ static void flight_control_task(void *arg)
         }
 
         if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_UDP_MANUAL) {
-            udp_manual_control_t manual = {0};
-            if (!udp_manual_get_control(now_us, loop_dt_us, &manual) || manual.should_disarm) {
-                safety_request_disarm();
-                udp_manual_reset();
-                runtime_state_set_control_mode(CONTROL_MODE_IDLE);
-                memset(command_outputs, 0, sizeof(command_outputs));
-                motor_stop_all();
+            const params_store_t *params = params_get();
+            if (!flight_control_attitude_sample_ready(&sample)) {
+                flight_control_stop_udp_manual(command_outputs,
+                                               "udp manual stopped: attitude imu not ready",
+                                               false);
+                continue;
+            }
+            if (!flight_control_attitude_reference_ready()) {
+                flight_control_stop_udp_manual(command_outputs,
+                                               "udp manual stopped: attitude reference missing",
+                                               false);
                 continue;
             }
 
-            const axis3f_t rate_setpoint = flight_control_udp_manual_rate_setpoint(manual.axis);
-            runtime_state_set_axis_test_request(manual.axis);
+            udp_manual_control_t manual = {0};
+            if (!udp_manual_get_control(now_us, loop_dt_us, &manual) || manual.should_disarm) {
+                flight_control_stop_udp_manual(command_outputs, NULL, true);
+                continue;
+            }
+
+            axis3f_t rate_setpoint = runtime_state_get_rate_setpoint_request();
+            const axis3f_t yaw_rate_setpoint = flight_control_udp_manual_yaw_rate_setpoint(manual.axis);
+            rate_setpoint.yaw = yaw_rate_setpoint.yaw;
+            runtime_state_set_axis_test_request((axis3f_t){
+                .roll = 0.0f,
+                .pitch = 0.0f,
+                .yaw = manual.axis.yaw,
+            });
             runtime_state_set_rate_setpoint_request(rate_setpoint);
             flight_control_set_base_duty_active(manual.throttle);
 
             axis3f_t pid_axis = controller_get_last_rate_status().output;
             if (fresh_sample && sample.has_gyro_acc) {
+                axis3f_t attitude_rate_setpoint = {0};
                 estimator_update_from_imu(&sample, &estimator_state);
+                if (!attitude_bench_compute(&estimator_state, &attitude_rate_setpoint)) {
+                    flight_control_stop_udp_manual(command_outputs,
+                                                   "udp manual stopped: estimator/ref invalid",
+                                                   false);
+                    continue;
+                }
+                if (flight_control_attitude_trip_exceeded(params)) {
+                    flight_control_stop_udp_manual(command_outputs,
+                                                   "udp manual stopped: attitude trip",
+                                                   false);
+                    continue;
+                }
+
+                rate_setpoint.roll = attitude_rate_setpoint.roll;
+                rate_setpoint.pitch = attitude_rate_setpoint.pitch;
+                rate_setpoint.yaw = yaw_rate_setpoint.yaw;
+                runtime_state_set_rate_setpoint_request(rate_setpoint);
+                flight_control_set_base_duty_active(manual.throttle);
+
                 if (last_rate_update_us != 0 && sample.timestamp_us > last_rate_update_us) {
                     float controller_dt_s = (float)(sample.timestamp_us - last_rate_update_us) / 1000000.0f;
                     if (controller_dt_s < 0.001f) {

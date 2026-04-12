@@ -128,7 +128,7 @@ typedef enum {
     CONTROL_MODE_RATE_TEST = 2,            /**< 速率环测试。 */
     CONTROL_MODE_HEIGHT_HOLD_RESERVED = 3, /**< 预留定高模式。 */
     CONTROL_MODE_ATTITUDE_HANG_TEST = 4,   /**< 鍦嗘/鍚婃灦/鍙楅檺鍙版灦涓撶敤 attitude 澶栫幆 bring-up銆?*/
-    CONTROL_MODE_UDP_MANUAL = 5,           /**< Experimental UDP manual control with base duty and rate-PID axes. */
+    CONTROL_MODE_UDP_MANUAL = 5,           /**< Experimental UDP manual control with attitude roll/pitch and rate-PID yaw. */
 } control_mode_t;
 
 /**
