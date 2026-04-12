@@ -4,7 +4,7 @@ This feature is experimental bench/manual control only. It is not a mature free-
 
 ## Scope
 
-- Transport: new binary CLI/GUI UDP protocol on port `2391`.
+- Transport: binary CLI/GUI UDP protocol on port `2391`, reachable through the ESP32 SoftAP transport described in [softap_udp_transport.md](./softap_udp_transport.md).
 - GUI: `UDP Control` tab in the Python GUI.
 - Firmware mode: `CONTROL_MODE_UDP_MANUAL`.
 - Control style: open-loop or semi-open-loop mixer input with firmware-side clamping and watchdog.
@@ -100,15 +100,16 @@ Screenshot: `docs/images/udp_control_tab.png`.
 ## Manual Verification Steps
 
 1. Build and flash firmware that advertises `protocol_version=5` and `udp_manual_control=True`.
-2. Start the Python GUI with `pip install -e tools/esp_drone_cli[gui]` installed.
-3. Connect using UDP host `192.168.4.1`, port `2391`, or the target network endpoint.
-4. Confirm capabilities show `udp_manual_control=True`.
-5. Set a conservative `Max PWM (%)`, for example `10..12`.
-6. Click `Enable UDP Manual`.
-7. Verify repeated setpoint frames are visible in the event log and that watchdog age stays below the timeout while enabled.
-8. Press and release `Forward`, `Backward`, `Yaw Left`, `Yaw Right`, `Up`, and `Down`; confirm setpoints return to zero when expected.
-9. Click `Takeoff` only on a restrained bench with prop safety handled; confirm ramp behavior, not a step jump.
-10. Click `Land`; confirm ramp-down and auto-disarm behavior.
-11. Click `Stop / Zero` and then `Kill`; confirm both override any previous setpoint and no high throttle continues after disconnect or timeout.
+2. Connect the PC Wi-Fi to the default `ESP-DRONE` SoftAP.
+3. Start the Python GUI with `pip install -e tools/esp_drone_cli[gui]` installed.
+4. Connect using UDP host `192.168.4.1`, port `2391`, or the target network endpoint.
+5. Confirm capabilities show `udp_manual_control=True`.
+6. Set a conservative `Max PWM (%)`, for example `10..12`.
+7. Click `Enable UDP Manual`.
+8. Verify repeated setpoint frames are visible in the event log and that watchdog age stays below the timeout while enabled.
+9. Press and release `Forward`, `Backward`, `Yaw Left`, `Yaw Right`, `Up`, and `Down`; confirm setpoints return to zero when expected.
+10. Click `Takeoff` only on a restrained bench with prop safety handled; confirm ramp behavior, not a step jump.
+11. Click `Land`; confirm ramp-down and auto-disarm behavior.
+12. Click `Stop / Zero` and then `Kill`; confirm both override any previous setpoint and no high throttle continues after disconnect or timeout.
 
 Do not use this workflow as proof that the vehicle is free-flight ready.

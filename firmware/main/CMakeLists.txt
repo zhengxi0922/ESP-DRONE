@@ -11,6 +11,7 @@ idf_component_register(
         "controller"
         "mixer"
         "led_status"
+        "network"
         "console"
         "safety"
         "udp_manual"
@@ -27,6 +28,7 @@ idf_component_register(
         "controller"
         "mixer"
         "led_status"
+        "network"
         "console"
         "safety"
         "udp_manual"
@@ -39,6 +41,9 @@ idf_component_register(
         esp_driver_uart
         esp_driver_ledc
         esp_vfs_console
+        esp_wifi
+        esp_netif
+        esp_event
         lwip
 )
 

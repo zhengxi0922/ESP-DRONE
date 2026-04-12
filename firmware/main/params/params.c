@@ -69,6 +69,9 @@ static const param_descriptor_t s_param_descs[] = {
     {"telemetry_usb_hz", PARAM_TYPE_U32, offsetof(params_store_t, telemetry_usb_hz)},
     {"telemetry_udp_hz", PARAM_TYPE_U32, offsetof(params_store_t, telemetry_udp_hz)},
     {"ring_buffer_seconds", PARAM_TYPE_U32, offsetof(params_store_t, ring_buffer_seconds)},
+    {"wifi_ap_enable", PARAM_TYPE_BOOL, offsetof(params_store_t, wifi_ap_enable)},
+    {"wifi_ap_channel", PARAM_TYPE_U8, offsetof(params_store_t, wifi_ap_channel)},
+    {"wifi_udp_port", PARAM_TYPE_U32, offsetof(params_store_t, wifi_udp_port)},
     {"imu_mode", PARAM_TYPE_I32, offsetof(params_store_t, imu_mode)},
     {"imu_return_rate_code", PARAM_TYPE_U32, offsetof(params_store_t, imu_return_rate_code)},
     {"imu_map_x", PARAM_TYPE_I32, offsetof(params_store_t, imu_map_x)},
@@ -139,6 +142,9 @@ static void params_apply_defaults(params_store_t *store)
     store->telemetry_usb_hz = 200;
     store->telemetry_udp_hz = 100;
     store->ring_buffer_seconds = 10;
+    store->wifi_ap_enable = true;
+    store->wifi_ap_channel = 6;
+    store->wifi_udp_port = 2391;
 
     store->imu_mode = IMU_MODE_DIRECT;
     store->imu_return_rate_code = 0x01;
@@ -275,6 +281,14 @@ static bool params_validate_telemetry_rates(const params_store_t *store)
            store->telemetry_udp_hz <= 100u;
 }
 
+static bool params_validate_network(const params_store_t *store)
+{
+    return store->wifi_ap_channel >= 1u &&
+           store->wifi_ap_channel <= 13u &&
+           store->wifi_udp_port >= 1u &&
+           store->wifi_udp_port <= 65535u;
+}
+
 static bool params_validate_battery_thresholds(const params_store_t *store)
 {
     return store->battery_warn_v > 0.0f &&
@@ -381,6 +395,7 @@ static bool params_validate_store(const params_store_t *store)
            params_validate_imu_map(store) &&
            store->imu_return_rate_code <= 0x09u &&
            params_validate_telemetry_rates(store) &&
+           params_validate_network(store) &&
            params_validate_battery_thresholds(store) &&
            params_validate_motor_duty_limits(store) &&
            params_validate_rate_pid_limits(store) &&

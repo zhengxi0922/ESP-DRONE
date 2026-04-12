@@ -23,6 +23,8 @@ This directory contains the repository's locked conventions, bring-up notes, and
 - [RAW Mode Attitude Plan](./raw_mode_attitude_plan.md)
 - [Barometer Framework](./barometer_framework.md)
 - [ESP-Drone UDP Compatibility](./esp_drone_udp_compat.md)
+- [ESP32 SoftAP + UDP Transport](./softap_udp_transport.md)
+- [Experimental UDP Manual Control](./udp_manual_control_protocol.md)
 
 ## Python Tooling
 

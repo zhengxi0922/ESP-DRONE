@@ -24,6 +24,7 @@
 #include "safety.h"
 #include "udp_manual.h"
 #include "udp_protocol.h"
+#include "wifi_ap.h"
 
 #define IMU_UART_RX_TASK_PRIO 23
 #define FLIGHT_CONTROL_TASK_PRIO 22
@@ -442,6 +443,7 @@ void app_main(void)
     mixer_init();
     imu_init();
     console_init();
+    wifi_ap_start();
     udp_manual_init();
     runtime_state_set_motor_test(-1, 0.0f);
     runtime_state_set_control_mode(CONTROL_MODE_IDLE);

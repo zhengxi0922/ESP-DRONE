@@ -800,6 +800,9 @@ EXTRA_TRANSLATIONS = {
         "udp.disabled": "udp manual disabled",
         "udp.stopped": "udp manual stop sent",
         "udp.setpoint_sent": "udp setpoint sent throttle={throttle:.3f} pitch={pitch:.3f} roll={roll:.3f} yaw={yaw:.3f}",
+        "udp.transport_hint": "Connect your PC to the ESP-DRONE SoftAP first. Default AP IP is 192.168.4.1. Default UDP port is 2391.",
+        "udp.ap_info": "Default SoftAP SSID: ESP-DRONE | Password: 12345678",
+        "msg.udp_host_required": "UDP Host is required.",
     },
     "en": {
         "status.connecting": "Connecting...",
@@ -876,6 +879,9 @@ EXTRA_TRANSLATIONS = {
         "udp.disabled": "udp manual disabled",
         "udp.stopped": "udp manual stop sent",
         "udp.setpoint_sent": "udp setpoint sent throttle={throttle:.3f} pitch={pitch:.3f} roll={roll:.3f} yaw={yaw:.3f}",
+        "udp.transport_hint": "Connect your PC to the ESP-DRONE SoftAP first. Default AP IP is 192.168.4.1. Default UDP port is 2391.",
+        "udp.ap_info": "Default SoftAP SSID: ESP-DRONE | Password: 12345678",
+        "msg.udp_host_required": "UDP Host is required.",
     },
 }
 
@@ -1333,6 +1339,9 @@ class MainWindow(QMainWindow):
     PARAM_HELP = {
         "telemetry_usb_hz": "USB CDC telemetry target rate in Hz. Device-side bounds still apply.",
         "telemetry_udp_hz": "UDP telemetry target rate in Hz. Device-side bounds still apply.",
+        "wifi_ap_enable": "Enable ESP32 SoftAP on boot. USB CDC remains available if Wi-Fi fails.",
+        "wifi_ap_channel": "ESP32 SoftAP channel, valid range 1..13. Default is 6.",
+        "wifi_udp_port": "Binary CLI/GUI UDP protocol listening port. Default is 2391.",
         "imu_mode": "0 = RAW, 1 = DIRECT. Bench validation is currently centered on DIRECT mode.",
         "imu_return_rate_code": "ATK-MS901M return-rate code. 0x00 is 250Hz, 0x01 is 200Hz.",
         "motor_idle_duty": "Brushed motor armed idle floor, normalized 0..1.",
@@ -1477,6 +1486,7 @@ class MainWindow(QMainWindow):
         self._closing = False
         self._connecting = False
         self._connecting_detail = ""
+        self._connection_target_detail = ""
         self._last_connect_error_message: str | None = None
         self._language = "zh"
         self._current_chart_group = "gyro"
@@ -1743,10 +1753,17 @@ class MainWindow(QMainWindow):
         self.session_info_group = QGroupBox()
         session_layout = QGridLayout(self.session_info_group)
         session_layout.setColumnStretch(1, 1)
-        session_layout.addWidget(self.session_title_label, 0, 0)
-        session_layout.addWidget(self.connection_info_label, 0, 1)
-        session_layout.addWidget(self.last_conn_error_title_label, 1, 0)
-        session_layout.addWidget(self.connection_error_detail, 1, 1)
+        self.tools_session_title_label = QLabel()
+        self.tools_last_conn_error_title_label = QLabel()
+        self.tools_connection_info_label = QLabel(self.connection_info_label.text())
+        self.tools_connection_info_label.setWordWrap(True)
+        self.tools_connection_error_detail = QLabel(self.connection_error_detail.text())
+        self.tools_connection_error_detail.setWordWrap(True)
+        self.tools_connection_error_detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        session_layout.addWidget(self.tools_session_title_label, 0, 0)
+        session_layout.addWidget(self.tools_connection_info_label, 0, 1)
+        session_layout.addWidget(self.tools_last_conn_error_title_label, 1, 0)
+        session_layout.addWidget(self.tools_connection_error_detail, 1, 1)
 
         self.calib_group = self._build_calibration_panel()
         self.csv_group = self._build_log_export_panel()
@@ -1868,11 +1885,19 @@ class MainWindow(QMainWindow):
         self.udp_port_spin = QSpinBox()
         self.udp_port_spin.setRange(1, 65535)
         self.udp_port_spin.setValue(2391)
+        self.udp_transport_hint_label = QLabel()
+        self.udp_transport_hint_label.setWordWrap(True)
+        self.udp_transport_hint_label.setStyleSheet("color:#bfdbfe;")
+        self.udp_ap_info_label = QLabel()
+        self.udp_ap_info_label.setWordWrap(True)
+        self.udp_ap_info_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         udp_form.setColumnStretch(1, 1)
         udp_form.addWidget(self.udp_host_label, 0, 0)
         udp_form.addWidget(self.udp_host_edit, 0, 1)
         udp_form.addWidget(self.udp_port_label, 1, 0)
         udp_form.addWidget(self.udp_port_spin, 1, 1)
+        udp_form.addWidget(self.udp_transport_hint_label, 2, 0, 1, 2)
+        udp_form.addWidget(self.udp_ap_info_label, 3, 0, 1, 2)
         self.transport_stack.addWidget(udp_page)
 
         self.connect_button = QPushButton()
@@ -1893,6 +1918,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.transport_stack, 1, 0, 1, 3)
         layout.addWidget(self.connect_button, 2, 1)
         layout.addWidget(self.disconnect_button, 2, 2)
+        layout.addWidget(self.session_title_label, 3, 0)
+        layout.addWidget(self.connection_info_label, 3, 1, 1, 2)
+        layout.addWidget(self.last_conn_error_title_label, 4, 0)
+        layout.addWidget(self.connection_error_detail, 4, 1, 1, 2)
         return group
 
     def _build_safety_group(self) -> QGroupBox:
@@ -2529,14 +2558,25 @@ class MainWindow(QMainWindow):
             return message
         return self._t("msg.connect_failed", error=message)
 
+    def _set_connection_info_text(self, text: str) -> None:
+        self.connection_info_label.setText(text)
+        if hasattr(self, "tools_connection_info_label"):
+            self.tools_connection_info_label.setText(text)
+
+    def _set_connection_error_text(self, text: str) -> None:
+        self.connection_error_detail.setText(text)
+        if hasattr(self, "tools_connection_error_detail"):
+            self.tools_connection_error_detail.setText(text)
+
     def _set_connecting_state(self, detail: str) -> None:
         self._connecting = True
         self._connecting_detail = detail
+        self._connection_target_detail = detail
         self._last_connect_error_message = None
         self._connect_watchdog_timer.start()
         _set_badge(self.connection_status_chip, self._t("status.connecting"), "active")
-        self.connection_info_label.setText(detail)
-        self.connection_error_detail.setText(self._t("status.no_conn_error"))
+        self._set_connection_info_text(detail)
+        self._set_connection_error_text(self._t("status.no_conn_error"))
         self.last_error_label.setText(self._t("status.no_error"))
         self._set_last_result(self._t("status.connecting"))
         self._append_log(f"{self._t('status.connecting')}: {detail}")
@@ -2549,8 +2589,8 @@ class MainWindow(QMainWindow):
         self._connect_watchdog_timer.stop()
         self._stream_enabled = False
         _set_badge(self.connection_status_chip, self._t("status.disconnected"), "warn")
-        self.connection_info_label.setText(self._t("status.no_session"))
-        self.connection_error_detail.setText(message)
+        self._set_connection_info_text(self._t("status.no_session"))
+        self._set_connection_error_text(message)
         self.last_error_label.setText(message)
         self._set_last_result(message)
         if self._last_connect_error_message != message:
@@ -2624,8 +2664,14 @@ class MainWindow(QMainWindow):
         self.baud_label.setText(self._t("label.baud"))
         self.udp_host_label.setText(self._t("label.udp_host"))
         self.udp_port_label.setText(self._t("label.udp_port"))
+        self.udp_transport_hint_label.setText(self._t("udp.transport_hint"))
+        self.udp_ap_info_label.setText(self._t("udp.ap_info"))
         self.session_title_label.setText(self._t("label.session"))
         self.last_conn_error_title_label.setText(self._t("label.last_conn_error"))
+        if hasattr(self, "tools_session_title_label"):
+            self.tools_session_title_label.setText(self._t("label.session"))
+        if hasattr(self, "tools_last_conn_error_title_label"):
+            self.tools_last_conn_error_title_label.setText(self._t("label.last_conn_error"))
         self.connect_button.setText(self._t("button.connect"))
         self.disconnect_button.setText(self._t("button.disconnect"))
         self.refresh_ports_button.setText(self._t("button.refresh"))
@@ -2859,7 +2905,7 @@ class MainWindow(QMainWindow):
         if (self.link_type_combo.currentData() or self.link_type_combo.currentText()) == "serial":
             port = self.serial_port_combo.currentText().strip()
             if not port:
-                self._on_error(self._t("msg.connect_no_port"))
+                self._show_connect_failure(self._t("msg.connect_no_port"))
                 return
             baudrate = int(self.baudrate_spin.value())
             self._set_connecting_state(f"serial {port} @ {baudrate}")
@@ -2876,7 +2922,7 @@ class MainWindow(QMainWindow):
 
         host = self.udp_host_edit.text().strip()
         if not host:
-            self._on_error(self._t("msg.connect_no_host"))
+            self._show_connect_failure(self._t("msg.udp_host_required"))
             return
         port = int(self.udp_port_spin.value())
         self._set_connecting_state(f"udp {host}:{port}")
@@ -3308,13 +3354,15 @@ class MainWindow(QMainWindow):
         error = payload.get("error")
         info = payload.get("device_info")
         if connected:
+            target_detail = self._connection_target_detail
             self._connecting = False
             self._connecting_detail = ""
             self._connect_watchdog_timer.stop()
             self._last_connect_error_message = None
             _set_badge(self.connection_status_chip, self._t("status.connected"), "ok")
-            self.connection_info_label.setText(_device_info_text(info))
-            self.connection_error_detail.setText(self._t("status.no_conn_error"))
+            info_text = _device_info_text(info)
+            self._set_connection_info_text(f"{target_detail}\n{info_text}" if target_detail else info_text)
+            self._set_connection_error_text(self._t("status.no_conn_error"))
             self.last_error_label.setText(self._t("status.no_error"))
             if hasattr(info, "stream_enabled"):
                 self._stream_enabled = bool(getattr(info, "stream_enabled"))
@@ -3327,14 +3375,15 @@ class MainWindow(QMainWindow):
             self._connecting = False
             self._connecting_detail = ""
             self._connect_watchdog_timer.stop()
+            self._connection_target_detail = ""
             self._udp_manual_enabled = False
             if hasattr(self, "_udp_control_timer"):
                 self._udp_control_timer.stop()
             _set_badge(self.connection_status_chip, self._t("status.disconnected"), "neutral" if not error else "warn")
-            self.connection_info_label.setText(self._t("status.no_session"))
+            self._set_connection_info_text(self._t("status.no_session"))
             self._stream_enabled = False
             if not self._closing:
-                self.connection_error_detail.setText(self._t("status.no_conn_error"))
+                self._set_connection_error_text(self._t("status.no_conn_error"))
                 self.last_error_label.setText(self._t("status.no_error"))
                 self._append_log(self._t("msg.disconnected"))
         self._update_stream_chip()

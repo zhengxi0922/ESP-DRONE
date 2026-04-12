@@ -175,6 +175,9 @@ class FakeSession:
             ParamValue("alpha", 2, 42),
             ParamValue("beta", 4, 1.5),
             ParamValue("udp_manual_max_pwm", 4, 0.12),
+            ParamValue("wifi_ap_enable", 0, True),
+            ParamValue("wifi_ap_channel", 1, 6),
+            ParamValue("wifi_udp_port", 2, 2391),
         ]
 
     def subscribe_telemetry(self, callback):
@@ -774,7 +777,14 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert window.debug_action_tabs.tabText(2) == "Hang Attitude"
     assert window.debug_action_tabs.tabText(3) == window._t("tab.udp_control")
     assert window.debug_action_tabs.currentIndex() == 0
-    assert window.params_table.rowCount() == 3
+    assert window.params_table.rowCount() == 6
+    window.link_type_combo.setCurrentIndex(window.link_type_combo.findData("udp"))
+    app.processEvents()
+    assert window.udp_host_edit.text() == "192.168.4.1"
+    assert window.udp_port_spin.value() == 2391
+    assert "ESP-DRONE" in window.udp_ap_info_label.text()
+    window.link_type_combo.setCurrentIndex(window.link_type_combo.findData("serial"))
+    app.processEvents()
     session.calls.clear()
 
     sample = TelemetrySample.from_payload(build_telemetry_payload())
@@ -954,6 +964,34 @@ def test_gui_connect_failure_shows_error_and_restores_inputs(monkeypatch, tmp_pa
     assert window.serial_port_combo.currentText() == "COM404"
     assert "Connect failed: HELLO timeout" in window.connection_error_detail.text()
     assert "Connect failed: HELLO timeout" in window.event_log_edit.toPlainText()
+
+    window.close()
+    app.processEvents()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
+def test_gui_udp_empty_host_fails_without_worker(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+
+    from esp_drone_cli.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    session = FakeSession()
+    settings = QSettings(str(tmp_path / "gui-empty-udp-host.ini"), QSettings.IniFormat)
+    window = MainWindow(session=session, serial_port_provider=lambda: [], settings=settings)
+
+    window.link_type_combo.setCurrentIndex(window.link_type_combo.findData("udp"))
+    window.udp_host_edit.setText("")
+    window.connect_button.click()
+    app.processEvents()
+
+    assert not any(name == "connect_udp" for name, _args, _kwargs in session.calls)
+    assert window.connection_status_chip.text() == window._t("status.disconnected")
+    assert window.connect_button.isEnabled()
+    assert "UDP Host is required" in window.connection_error_detail.text()
 
     window.close()
     app.processEvents()
@@ -1203,6 +1241,31 @@ def test_firmware_dispatch_registers_udp_manual_control():
     assert "MSG_UDP_MANUAL_SETPOINT" in udp_protocol
 
 
+def test_firmware_registers_softap_udp_transport():
+    repo_root = Path(__file__).resolve().parents[3]
+    app_main = (repo_root / "firmware" / "main" / "app_main.c").read_text(encoding="utf-8")
+    cmake = (repo_root / "firmware" / "main" / "CMakeLists.txt").read_text(encoding="utf-8")
+    params_h = (repo_root / "firmware" / "main" / "params" / "params.h").read_text(encoding="utf-8")
+    params_c = (repo_root / "firmware" / "main" / "params" / "params.c").read_text(encoding="utf-8")
+    wifi_ap = (repo_root / "firmware" / "main" / "network" / "wifi_ap.c").read_text(encoding="utf-8")
+    udp_protocol = (repo_root / "firmware" / "main" / "udp_protocol" / "udp_protocol.c").read_text(encoding="utf-8")
+
+    assert "wifi_ap_start();" in app_main
+    assert '"network"' in cmake
+    assert "esp_wifi" in cmake
+    assert "esp_netif" in cmake
+    assert "esp_event" in cmake
+    assert "wifi_ap_enable" in params_h
+    assert "wifi_ap_channel" in params_c
+    assert "wifi_udp_port" in params_c
+    assert "esp_netif_create_default_wifi_ap" in wifi_ap
+    assert "esp_wifi_set_mode(WIFI_MODE_AP)" in wifi_ap
+    assert "softap started ssid=" in wifi_ap
+    assert "WIFI_EVENT_AP_STACONNECTED" in wifi_ap
+    assert "INADDR_ANY" in udp_protocol
+    assert "params_get()->wifi_udp_port" in udp_protocol
+
+
 def test_set_param_detects_device_rejection():
     class RejectingTransport(MockTransport):
         def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
@@ -1306,7 +1369,12 @@ def test_serial_transport_keeps_default_control_lines(monkeypatch):
     serial_link.SerialTransport("COM7", baudrate=115200, timeout=0.2)
 
     assert len(serial_instances) == 1
-    assert serial_instances[0].kwargs == {"port": "COM7", "baudrate": 115200, "timeout": 0.2}
+    assert serial_instances[0].kwargs == {
+        "port": "COM7",
+        "baudrate": 115200,
+        "timeout": 0.2,
+        "write_timeout": 1.0,
+    }
     assert serial_instances[0].dtr_assignments == []
     assert serial_instances[0].rts_assignments == []
 

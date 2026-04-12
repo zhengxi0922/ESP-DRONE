@@ -14,6 +14,7 @@
 #include "lwip/sockets.h"
 
 #include "console_protocol.h"
+#include "console.h"
 #include "controller.h"
 #include "imu.h"
 #include "motor.h"
@@ -22,7 +23,7 @@
 #include "safety.h"
 #include "udp_manual.h"
 
-#define UDP_PROTOCOL_PORT 2391
+#define UDP_PROTOCOL_DEFAULT_PORT 2391
 #define UDP_PROTOCOL_RX_BUF_SIZE 512
 #define UDP_PROTOCOL_FRAME_BUF_SIZE 384
 
@@ -41,6 +42,15 @@ static socklen_t s_stream_client_len;
 static bool s_stream_client_valid;
 static bool s_udp_stream_enabled;
 static uint16_t s_udp_tx_seq;
+
+static uint16_t udp_protocol_port(void)
+{
+    const uint32_t configured_port = params_get()->wifi_udp_port;
+    if (configured_port == 0u || configured_port > 65535u) {
+        return UDP_PROTOCOL_DEFAULT_PORT;
+    }
+    return (uint16_t)configured_port;
+}
 
 static uint16_t udp_crc16_ccitt(const uint8_t *data, size_t len)
 {
@@ -405,13 +415,21 @@ void udp_protocol_task(void *arg)
             continue;
         }
 
+        const uint16_t listen_port = udp_protocol_port();
         const struct sockaddr_in bind_addr = {
             .sin_family = AF_INET,
-            .sin_port = htons(UDP_PROTOCOL_PORT),
+            .sin_port = htons(listen_port),
             .sin_addr.s_addr = htonl(INADDR_ANY),
         };
 
         if (bind(sock, (const struct sockaddr *)&bind_addr, sizeof(bind_addr)) != 0) {
+            char message[96];
+            snprintf(message,
+                     sizeof(message),
+                     "udp protocol bind failed port=%u errno=%d",
+                     (unsigned)listen_port,
+                     errno);
+            console_send_event_text(message);
             close(sock);
             vTaskDelay(pdMS_TO_TICKS(1000));
             continue;
@@ -420,6 +438,9 @@ void udp_protocol_task(void *arg)
         taskENTER_CRITICAL(&s_udp_protocol_lock);
         s_udp_socket = sock;
         taskEXIT_CRITICAL(&s_udp_protocol_lock);
+        char message[96];
+        snprintf(message, sizeof(message), "udp protocol listening addr=0.0.0.0 port=%u", (unsigned)listen_port);
+        console_send_event_text(message);
 
         while (1) {
             struct sockaddr_storage source_addr = {0};

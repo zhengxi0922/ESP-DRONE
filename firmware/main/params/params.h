@@ -39,7 +39,7 @@
  *
  * @note 参数布局发生不兼容变化时应递增。
  */
-#define PARAMS_SCHEMA_VERSION 3u
+#define PARAMS_SCHEMA_VERSION 4u
 
 /**
  * @brief 参数值类型编号。
@@ -106,6 +106,9 @@ typedef struct {
     uint32_t telemetry_usb_hz;        /**< USB 遥测发送频率，单位为 Hz。 */
     uint32_t telemetry_udp_hz;        /**< 预留 UDP 遥测频率，单位为 Hz；当前未直接消费。 */
     uint32_t ring_buffer_seconds;     /**< 预留环形缓冲区时长，单位为 s；当前未直接消费。 */
+    bool wifi_ap_enable;              /**< Enable ESP32 SoftAP on boot. */
+    uint8_t wifi_ap_channel;          /**< ESP32 SoftAP channel, 1..13. */
+    uint32_t wifi_udp_port;           /**< Binary CLI/GUI UDP protocol listening port. */
 
     imu_mode_t imu_mode;              /**< IMU 工作模式。 */
     uint32_t imu_return_rate_code;    /**< IMU 模块回传频率编码，范围为 `0x00` 到 `0x09`。 */

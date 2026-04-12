@@ -18,6 +18,7 @@ class SerialTransport:
         port: str,
         baudrate: int = 115200,
         timeout: float = 0.2,
+        write_timeout: float = 1.0,
         settle_delay_s: float = 0.25,
         open_retry_timeout_s: float = 5.0,
         open_retry_interval_s: float = 0.25,
@@ -43,7 +44,12 @@ class SerialTransport:
         last_error: Exception | None = None
         while True:
             try:
-                self._serial = serial.Serial(port=port, baudrate=baudrate, timeout=timeout)
+                self._serial = serial.Serial(
+                    port=port,
+                    baudrate=baudrate,
+                    timeout=timeout,
+                    write_timeout=write_timeout,
+                )
                 break
             except serial.SerialException as exc:
                 last_error = exc

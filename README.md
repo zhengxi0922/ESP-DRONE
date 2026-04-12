@@ -30,6 +30,7 @@ The repository now contains two constrained-rig control paths:
 
 - a usable three-axis rate-loop bench path for `roll / pitch / yaw`
 - a bench-only hang-attitude outer-loop bring-up path for a circular-rod or hanging rig with a natural `+Z down` equilibrium
+- an ESP32 SoftAP + binary UDP transport path for CLI/GUI connectivity and experimental UDP manual control
 
 The hang-attitude path is intentionally limited:
 
@@ -51,6 +52,25 @@ The documented live roll session was run on a constrained circular-rod bench wit
 That orientation does not change the roll rate-loop sign convention because the workflow evaluates only `rate_setpoint_roll`, mapped roll feedback, PID output, and motor split.
 
 This repository still does not declare any free-flight stabilize or angle mode ready for prop-on use.
+
+## SoftAP UDP Transport
+
+Firmware starts an ESP32 SoftAP by default:
+
+- SSID: `ESP-DRONE`
+- Password: `12345678`
+- AP IP: `192.168.4.1`
+- UDP protocol port: `2391`
+
+GUI connection order:
+
+1. Connect the PC Wi-Fi to the `ESP-DRONE` SoftAP.
+2. Start the Python GUI and set `Link` to `UDP`.
+3. Use `UDP Host = 192.168.4.1` and `UDP Port = 2391`.
+4. Click `Connect`.
+
+Serial / USB CDC debugging is unchanged and should be used first if Wi-Fi or UDP startup fails.
+See [docs/softap_udp_transport.md](./docs/softap_udp_transport.md).
 
 ## Build Firmware
 
@@ -93,6 +113,8 @@ pip install -e .[gui]
 - [docs/roll_bench_summary_sample.md](./docs/roll_bench_summary_sample.md)
 - [docs/python_cli_usage.md](./docs/python_cli_usage.md)
 - [docs/python_gui_usage.md](./docs/python_gui_usage.md)
+- [docs/softap_udp_transport.md](./docs/softap_udp_transport.md)
+- [docs/udp_manual_control_protocol.md](./docs/udp_manual_control_protocol.md)
 - [docs/bringup_checklist.md](./docs/bringup_checklist.md)
 - [docs/python_gui_manual_checklist.md](./docs/python_gui_manual_checklist.md)
 - [docs/rate_bringup_results.md](./docs/rate_bringup_results.md)
