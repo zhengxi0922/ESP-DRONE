@@ -283,6 +283,7 @@ class DeviceSession:
         baudrate: int = 115200,
         timeout: float = 0.2,
         hello_timeout: float = 4.0,
+        open_retry_timeout_s: float = 5.0,
     ) -> DeviceInfo:
         """通过串口建立连接。
 
@@ -302,7 +303,12 @@ class DeviceSession:
         last_timeout: TimeoutError | None = None
         for attempt in range(2):
             try:
-                transport = SerialTransport(port=port, baudrate=baudrate, timeout=timeout)
+                transport = SerialTransport(
+                    port=port,
+                    baudrate=baudrate,
+                    timeout=timeout,
+                    open_retry_timeout_s=open_retry_timeout_s,
+                )
             except Exception as exc:
                 self._last_error = str(exc)
                 self._notify_connection(connected=False, error=self._last_error)
@@ -358,13 +364,18 @@ class DeviceSession:
             except Exception:
                 pass
 
-        self._stop_event.set()
+        if self._reader_thread is not None and threading.current_thread() is not self._reader_thread:
+            self._stop_event.set()
+            self._reader_thread.join(timeout=0.5)
+        else:
+            self._stop_event.set()
+
         try:
             self._transport.close()
         except Exception:
             pass
         if self._reader_thread is not None and threading.current_thread() is not self._reader_thread:
-            self._reader_thread.join(timeout=1.0)
+            self._reader_thread.join(timeout=0.5)
         if self._csv_logger is not None:
             self._csv_logger.close()
             self._csv_logger = None

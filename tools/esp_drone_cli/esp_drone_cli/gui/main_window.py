@@ -1476,6 +1476,7 @@ class MainWindow(QMainWindow):
         self._last_result = "-"
         self._closing = False
         self._connecting = False
+        self._connecting_detail = ""
         self._last_connect_error_message: str | None = None
         self._language = "zh"
         self._current_chart_group = "gyro"
@@ -1501,6 +1502,11 @@ class MainWindow(QMainWindow):
         self._udp_control_timer = QTimer(self)
         self._udp_control_timer.setInterval(100)
         self._udp_control_timer.timeout.connect(self._send_udp_manual_timer_setpoint)
+
+        self._connect_watchdog_timer = QTimer(self)
+        self._connect_watchdog_timer.setSingleShot(True)
+        self._connect_watchdog_timer.setInterval(12000)
+        self._connect_watchdog_timer.timeout.connect(self._handle_connect_watchdog_timeout)
 
     def _t(self, key: str, **kwargs) -> str:
         table = TRANSLATIONS.get(self._language, TRANSLATIONS["zh"])
@@ -2525,7 +2531,9 @@ class MainWindow(QMainWindow):
 
     def _set_connecting_state(self, detail: str) -> None:
         self._connecting = True
+        self._connecting_detail = detail
         self._last_connect_error_message = None
+        self._connect_watchdog_timer.start()
         _set_badge(self.connection_status_chip, self._t("status.connecting"), "active")
         self.connection_info_label.setText(detail)
         self.connection_error_detail.setText(self._t("status.no_conn_error"))
@@ -2537,6 +2545,8 @@ class MainWindow(QMainWindow):
     def _show_connect_failure(self, error: object) -> None:
         message = self._connect_failed_text(error)
         self._connecting = False
+        self._connecting_detail = ""
+        self._connect_watchdog_timer.stop()
         self._stream_enabled = False
         _set_badge(self.connection_status_chip, self._t("status.disconnected"), "warn")
         self.connection_info_label.setText(self._t("status.no_session"))
@@ -2548,6 +2558,16 @@ class MainWindow(QMainWindow):
             self._last_connect_error_message = message
         self._update_stream_chip()
         self._refresh_enabled_state()
+
+    def _handle_connect_watchdog_timeout(self) -> None:
+        if not self._connecting:
+            return
+        detail = self._connecting_detail or "device"
+        self._show_connect_failure(
+            f"connection attempt timed out in GUI while waiting for result from {detail}. "
+            "If this is a serial link, close any other serial monitor or GUI that may be holding the port, "
+            "then unplug/replug the device and retry."
+        )
 
     def _save_event_log(self) -> None:
         output, _ = QFileDialog.getSaveFileName(
@@ -2845,7 +2865,12 @@ class MainWindow(QMainWindow):
             self._set_connecting_state(f"serial {port} @ {baudrate}")
             self._run_session_action(
                 "connect_serial",
-                lambda: self._session.connect_serial(port, baudrate=baudrate, timeout=0.2),
+                lambda: self._session.connect_serial(
+                    port,
+                    baudrate=baudrate,
+                    timeout=0.2,
+                    open_retry_timeout_s=0.75,
+                ),
             )
             return
 
@@ -3284,6 +3309,8 @@ class MainWindow(QMainWindow):
         info = payload.get("device_info")
         if connected:
             self._connecting = False
+            self._connecting_detail = ""
+            self._connect_watchdog_timer.stop()
             self._last_connect_error_message = None
             _set_badge(self.connection_status_chip, self._t("status.connected"), "ok")
             self.connection_info_label.setText(_device_info_text(info))
@@ -3298,6 +3325,8 @@ class MainWindow(QMainWindow):
                 self._show_connect_failure(error)
                 return
             self._connecting = False
+            self._connecting_detail = ""
+            self._connect_watchdog_timer.stop()
             self._udp_manual_enabled = False
             if hasattr(self, "_udp_control_timer"):
                 self._udp_control_timer.stop()
@@ -3597,6 +3626,8 @@ class MainWindow(QMainWindow):
 
         self._closing = True
         self._plot_timer.stop()
+        if hasattr(self, "_connect_watchdog_timer"):
+            self._connect_watchdog_timer.stop()
         if hasattr(self, "_udp_control_timer"):
             self._udp_control_timer.stop()
         self._save_settings()

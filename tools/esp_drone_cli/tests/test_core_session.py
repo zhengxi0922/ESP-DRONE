@@ -212,8 +212,14 @@ class FakeSession:
         for callback in self._telemetry_callbacks:
             callback(sample)
 
-    def connect_serial(self, port: str, baudrate: int = 115200, timeout: float = 0.2):
-        self._record("connect_serial", port, baudrate, timeout)
+    def connect_serial(
+        self,
+        port: str,
+        baudrate: int = 115200,
+        timeout: float = 0.2,
+        open_retry_timeout_s: float = 5.0,
+    ):
+        self._record("connect_serial", port, baudrate, timeout, open_retry_timeout_s)
         self.is_connected = True
         self.device_info = type("DeviceInfoStub", (), {
             "protocol_version": 5,
@@ -748,7 +754,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     window.serial_port_combo.setCurrentText("COM9")
     window.connect_button.click()
     app.processEvents()
-    assert ("connect_serial", ("COM9", 115200, 0.2), {}) in session.calls
+    assert ("connect_serial", ("COM9", 115200, 0.2, 0.75), {}) in session.calls
     assert window.connection_status_chip.text() == window._t("status.connected")
     assert window.right_tabs.currentIndex() == 0
     assert window.right_tabs.tabText(0) == window._t("tab.params")
@@ -907,8 +913,14 @@ def test_gui_connect_failure_shows_error_and_restores_inputs(monkeypatch, tmp_pa
     from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
 
     class FailingSession(FakeSession):
-        def connect_serial(self, port: str, baudrate: int = 115200, timeout: float = 0.2):
-            self._record("connect_serial", port, baudrate, timeout)
+        def connect_serial(
+            self,
+            port: str,
+            baudrate: int = 115200,
+            timeout: float = 0.2,
+            open_retry_timeout_s: float = 5.0,
+        ):
+            self._record("connect_serial", port, baudrate, timeout, open_retry_timeout_s)
             raise TimeoutError("HELLO timeout")
 
     class SyncBridge(QtSessionBridge):
@@ -936,12 +948,53 @@ def test_gui_connect_failure_shows_error_and_restores_inputs(monkeypatch, tmp_pa
     window.connect_button.click()
     app.processEvents()
 
-    assert ("connect_serial", ("COM404", 115200, 0.2), {}) in session.calls
+    assert ("connect_serial", ("COM404", 115200, 0.2, 0.75), {}) in session.calls
     assert window.connection_status_chip.text() == window._t("status.disconnected")
     assert window.connect_button.isEnabled()
     assert window.serial_port_combo.currentText() == "COM404"
     assert "Connect failed: HELLO timeout" in window.connection_error_detail.text()
     assert "Connect failed: HELLO timeout" in window.event_log_edit.toPlainText()
+
+    window.close()
+    app.processEvents()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
+def test_gui_connect_watchdog_restores_ui_when_worker_never_returns(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+
+    from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
+
+    class HangingBridge(QtSessionBridge):
+        def run_async(self, label: str, callback) -> None:
+            self._session._record("bridge_hang", label)
+
+    app = QApplication.instance() or QApplication([])
+    session = FakeSession()
+    settings = QSettings(str(tmp_path / "gui-watchdog.ini"), QSettings.IniFormat)
+    window = MainWindow(
+        session=session,
+        bridge_cls=HangingBridge,
+        serial_port_provider=lambda: ["COM55"],
+        settings=settings,
+    )
+
+    window.serial_port_combo.setCurrentText("COM55")
+    window.connect_button.click()
+    app.processEvents()
+    assert not window.connect_button.isEnabled()
+
+    window._handle_connect_watchdog_timeout()
+    app.processEvents()
+
+    assert window.connection_status_chip.text() == window._t("status.disconnected")
+    assert window.connect_button.isEnabled()
+    assert window.serial_port_combo.currentText() == "COM55"
+    assert "Connect failed: connection attempt timed out in GUI" in window.connection_error_detail.text()
+    assert "Connect failed: connection attempt timed out in GUI" in window.event_log_edit.toPlainText()
 
     window.close()
     app.processEvents()
