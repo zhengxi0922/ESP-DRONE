@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from collections import deque
@@ -50,6 +51,12 @@ from PyQt5.QtWidgets import (
 )
 import pyqtgraph as pg
 from serial.tools import list_ports
+
+if __package__ in (None, ""):
+    package_root = Path(__file__).resolve().parents[2]
+    package_root_text = str(package_root)
+    if package_root_text not in sys.path:
+        sys.path.insert(0, package_root_text)
 
 from esp_drone_cli.core import DeviceSession, ParamValue, TelemetrySample
 from esp_drone_cli.core.protocol.messages import CmdId, ensure_command_ok
@@ -3607,3 +3614,7 @@ def run_gui(_argv: list[str] | None = None) -> int:
     window = MainWindow()
     window.show()
     return int(app.exec())
+
+
+if __name__ == "__main__":
+    raise SystemExit(run_gui())
