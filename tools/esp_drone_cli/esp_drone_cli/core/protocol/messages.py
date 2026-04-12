@@ -23,6 +23,7 @@ class MsgType:
     STREAM_CTRL = 0x30
     TELEMETRY_SAMPLE = 0x31
     EVENT_LOG_TEXT = 0x40
+    UDP_MANUAL_SETPOINT = 0x50
 
 
 class CmdId:
@@ -38,6 +39,12 @@ class CmdId:
     ATTITUDE_CAPTURE_REF = 10
     ATTITUDE_TEST_START = 11
     ATTITUDE_TEST_STOP = 12
+    UDP_MANUAL_ENABLE = 13
+    UDP_MANUAL_DISABLE = 14
+    UDP_MANUAL_SETPOINT = 15
+    UDP_TAKEOFF = 16
+    UDP_LAND = 17
+    UDP_MANUAL_STOP = 18
 
 
 class CmdStatus:
@@ -66,6 +73,12 @@ CMD_NAMES = {
     CmdId.ATTITUDE_CAPTURE_REF: "attitude-capture-ref",
     CmdId.ATTITUDE_TEST_START: "attitude-test start",
     CmdId.ATTITUDE_TEST_STOP: "attitude-test stop",
+    CmdId.UDP_MANUAL_ENABLE: "udp-manual enable",
+    CmdId.UDP_MANUAL_DISABLE: "udp-manual disable",
+    CmdId.UDP_MANUAL_SETPOINT: "udp-manual setpoint",
+    CmdId.UDP_TAKEOFF: "udp takeoff",
+    CmdId.UDP_LAND: "udp land",
+    CmdId.UDP_MANUAL_STOP: "udp-manual stop",
 }
 
 CMD_STATUS_TEXT = {

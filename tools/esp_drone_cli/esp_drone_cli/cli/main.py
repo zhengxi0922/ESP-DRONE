@@ -12,7 +12,9 @@ from esp_drone_cli.core import DeviceSession, TelemetrySample
 from esp_drone_cli.core.models import (
     FEATURE_ATTITUDE_HANG_BENCH,
     FEATURE_NAMES,
+    FEATURE_UDP_MANUAL_CONTROL,
     MIN_ATTITUDE_HANG_PROTOCOL_VERSION,
+    MIN_UDP_MANUAL_PROTOCOL_VERSION,
 )
 from esp_drone_cli.core.roll_bench import (
     apply_axis_bench_params,
@@ -218,6 +220,29 @@ def require_attitude_hang_capability(session: DeviceSession) -> None:
         f"feature attitude_hang_bench/0x{FEATURE_ATTITUDE_HANG_BENCH:02x}; "
         f"got protocol_version={protocol_version}, feature_bitmap=0x{feature_bitmap:08x}). "
         "Rebuild and flash the current main firmware before running hang-attitude commands."
+    )
+
+
+def require_udp_manual_capability(session: DeviceSession) -> None:
+    """Reject experimental UDP manual commands before sending manual-control opcodes."""
+
+    if hasattr(session, "require_udp_manual_control"):
+        session.require_udp_manual_control()
+        return
+    info = session.device_info or session.hello()
+    if hasattr(info, "require_udp_manual_control"):
+        info.require_udp_manual_control()
+        return
+    protocol_version = int(getattr(info, "protocol_version", 0))
+    feature_bitmap = int(getattr(info, "feature_bitmap", 0))
+    if protocol_version >= MIN_UDP_MANUAL_PROTOCOL_VERSION and (feature_bitmap & FEATURE_UDP_MANUAL_CONTROL):
+        return
+    raise RuntimeError(
+        "device firmware does not advertise experimental UDP manual control support "
+        f"(need protocol_version>={MIN_UDP_MANUAL_PROTOCOL_VERSION} and "
+        f"feature udp_manual_control/0x{FEATURE_UDP_MANUAL_CONTROL:02x}; "
+        f"got protocol_version={protocol_version}, feature_bitmap=0x{feature_bitmap:08x}). "
+        "Rebuild and flash the current main firmware before using UDP Control."
     )
 
 
@@ -569,6 +594,40 @@ def cmd_watch_attitude(session: DeviceSession, args) -> int:
         session.unsubscribe(token)
 
 
+def cmd_udp_manual(session: DeviceSession, args) -> int:
+    """Run experimental open-loop UDP manual-control commands."""
+
+    require_udp_manual_capability(session)
+    action = args.action
+    if action == "enable":
+        ensure_command_ok(CmdId.UDP_MANUAL_ENABLE, session.udp_manual_enable())
+        return 0
+    if action == "disable":
+        ensure_command_ok(CmdId.UDP_MANUAL_DISABLE, session.udp_manual_disable())
+        return 0
+    if action == "stop":
+        ensure_command_ok(CmdId.UDP_MANUAL_STOP, session.udp_manual_stop())
+        return 0
+    if action == "takeoff":
+        ensure_command_ok(CmdId.UDP_TAKEOFF, session.udp_takeoff())
+        return 0
+    if action == "land":
+        ensure_command_ok(CmdId.UDP_LAND, session.udp_land())
+        return 0
+    if action == "setpoint":
+        ensure_command_ok(
+            CmdId.UDP_MANUAL_SETPOINT,
+            session.udp_manual_setpoint(
+                throttle=args.throttle,
+                pitch=args.pitch,
+                roll=args.roll,
+                yaw=args.yaw,
+            ),
+        )
+        return 0
+    raise SystemExit(f"unsupported udp-manual action {action}")
+
+
 def cmd_dump_csv(session: DeviceSession, args) -> int:
     """在指定时长内采集遥测并导出 CSV。
 
@@ -901,6 +960,23 @@ def build_parser() -> argparse.ArgumentParser:
     watch_attitude_p.add_argument("--timeout", type=float, default=5.0)
     watch_attitude_p.add_argument("--interval", type=float, default=0.2)
 
+    udp_manual_p = sub.add_parser(
+        "udp-manual",
+        help="experimental open-loop UDP manual control; not free-flight ready",
+        description="Experimental UDP manual control for restrained testing only. This is open-loop/semi-open-loop and is not a mature takeoff/land/free-flight mode.",
+    )
+    udp_manual_sub = udp_manual_p.add_subparsers(dest="action", required=True)
+    udp_manual_sub.add_parser("enable")
+    udp_manual_sub.add_parser("disable")
+    udp_manual_sub.add_parser("stop")
+    udp_manual_sub.add_parser("takeoff")
+    udp_manual_sub.add_parser("land")
+    udp_manual_setpoint_p = udp_manual_sub.add_parser("setpoint")
+    udp_manual_setpoint_p.add_argument("--throttle", type=float, required=True)
+    udp_manual_setpoint_p.add_argument("--pitch", type=float, default=0.0)
+    udp_manual_setpoint_p.add_argument("--roll", type=float, default=0.0)
+    udp_manual_setpoint_p.add_argument("--yaw", type=float, default=0.0)
+
     calib_p = sub.add_parser("calib")
     calib_p.add_argument("kind", choices=["gyro", "level"])
 
@@ -1004,6 +1080,7 @@ def main(argv: list[str] | None = None) -> int:
             "attitude-test": cmd_attitude_test,
             "attitude-status": cmd_attitude_status,
             "watch-attitude": cmd_watch_attitude,
+            "udp-manual": cmd_udp_manual,
             "calib": cmd_calib,
             "axis-bench": cmd_axis_bench,
             "rate-bench": cmd_axis_bench,

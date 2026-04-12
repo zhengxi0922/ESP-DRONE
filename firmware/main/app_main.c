@@ -22,6 +22,8 @@
 #include "params.h"
 #include "runtime_state.h"
 #include "safety.h"
+#include "udp_manual.h"
+#include "udp_protocol.h"
 
 #define IMU_UART_RX_TASK_PRIO 23
 #define FLIGHT_CONTROL_TASK_PRIO 22
@@ -192,6 +194,18 @@ static void flight_control_task(void *arg)
             continue;
         }
 
+        if (control_mode == CONTROL_MODE_UDP_MANUAL &&
+            (safety_status.arm_state == ARM_STATE_FAILSAFE ||
+             safety_status.arm_state == ARM_STATE_FAULT_LOCK ||
+             safety_status.failsafe_reason != FAILSAFE_REASON_NONE)) {
+            udp_manual_reset();
+            runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+            memset(command_outputs, 0, sizeof(command_outputs));
+            motor_stop_all();
+            console_send_event_text("udp manual stopped: arm state or failsafe");
+            continue;
+        }
+
         if (control_mode == CONTROL_MODE_AXIS_TEST && safety_status.arm_state == ARM_STATE_DISARMED) {
             const axis3f_t axis_request = runtime_state_get_axis_test_request();
             flight_control_set_base_duty_active(params_get()->bringup_test_base_duty);
@@ -291,6 +305,30 @@ static void flight_control_task(void *arg)
             continue;
         }
 
+        if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_UDP_MANUAL) {
+            udp_manual_control_t manual = {0};
+            flight_control_set_base_duty_active(0.0f);
+            if (!udp_manual_get_control(now_us, loop_dt_us, &manual) || manual.should_disarm) {
+                safety_request_disarm();
+                udp_manual_reset();
+                runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+                memset(command_outputs, 0, sizeof(command_outputs));
+                motor_stop_all();
+                continue;
+            }
+
+            runtime_state_set_axis_test_request(manual.axis);
+            runtime_state_set_rate_setpoint_request((axis3f_t){0});
+            mixer_mix(mixer_coeffs,
+                      &(mixer_input_t){
+                          .throttle = manual.throttle,
+                          .axis = manual.axis,
+                      },
+                      command_outputs);
+            motor_set_armed_outputs(command_outputs, false);
+            continue;
+        }
+
         flight_control_set_base_duty_active(0.0f);
         if (safety_status.arm_state == ARM_STATE_ARMED) {
             float zeros[MOTOR_COUNT] = {0};
@@ -303,10 +341,7 @@ static void flight_control_task(void *arg)
 
 static void rc_udp_task(void *arg)
 {
-    (void)arg;
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
+    udp_protocol_task(arg);
 }
 
 static void telemetry_task(void *arg)
@@ -336,6 +371,7 @@ static void telemetry_task(void *arg)
         float battery_v = 0.0f;
         board_battery_read(&battery_raw, &battery_mv, &battery_v);
         console_send_telemetry(&sample, &baro_state, battery_v, battery_raw);
+        udp_protocol_send_telemetry(&sample, &baro_state, battery_v, battery_raw);
     }
 }
 
@@ -406,6 +442,7 @@ void app_main(void)
     mixer_init();
     imu_init();
     console_init();
+    udp_manual_init();
     runtime_state_set_motor_test(-1, 0.0f);
     runtime_state_set_control_mode(CONTROL_MODE_IDLE);
     runtime_state_set_axis_test_request((axis3f_t){0});

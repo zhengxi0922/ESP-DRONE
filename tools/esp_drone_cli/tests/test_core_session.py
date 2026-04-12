@@ -14,7 +14,9 @@ import importlib
 import importlib.util
 import json
 import queue
+import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -35,9 +37,10 @@ from esp_drone_cli.core.models import (
     TELEMETRY_STRUCT_V1,
     TELEMETRY_STRUCT_V3,
     TelemetrySample,
+    UDP_MANUAL_SETPOINT_STRUCT,
     decode_device_info,
 )
-from esp_drone_cli.core.protocol.framing import encode_serial_packet
+from esp_drone_cli.core.protocol.framing import decode_frame, encode_frame, encode_serial_packet
 from esp_drone_cli.core.protocol.messages import CmdId, Frame, MsgType
 
 
@@ -108,7 +111,7 @@ class MockTransport:
     def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
         self.sent.append((msg_type, payload))
         if msg_type == MsgType.HELLO_REQ:
-            hello = HELLO_RESP_STRUCT.pack(3, 1, 0, 0, 0x3F)
+            hello = HELLO_RESP_STRUCT.pack(5, 1, 0, 0, 0x7F)
             self.inject(Frame(MsgType.HELLO_RESP, flags, seq, hello))
             return
         if msg_type == MsgType.CMD_REQ:
@@ -134,6 +137,9 @@ class MockTransport:
             return
         if msg_type in {MsgType.PARAM_SAVE, MsgType.PARAM_RESET, MsgType.STREAM_CTRL}:
             self.inject(Frame(msg_type, flags, seq, payload))
+            return
+        if msg_type == MsgType.UDP_MANUAL_SETPOINT:
+            self.inject(Frame(MsgType.CMD_RESP, flags, seq, bytes([CmdId.UDP_MANUAL_SETPOINT, 0, 0, 0])))
 
     def recv_frame(self, timeout: float) -> Frame:
         try:
@@ -168,6 +174,7 @@ class FakeSession:
         self._params = [
             ParamValue("alpha", 2, 42),
             ParamValue("beta", 4, 1.5),
+            ParamValue("udp_manual_max_pwm", 4, 0.12),
         ]
 
     def subscribe_telemetry(self, callback):
@@ -209,11 +216,11 @@ class FakeSession:
         self._record("connect_serial", port, baudrate, timeout)
         self.is_connected = True
         self.device_info = type("DeviceInfoStub", (), {
-            "protocol_version": 3,
+            "protocol_version": 5,
             "imu_mode": 1,
             "arm_state": 0,
             "stream_enabled": 0,
-            "feature_bitmap": 0x3F,
+            "feature_bitmap": 0x7F,
         })()
         self._emit_connection()
         return "fake-device"
@@ -222,11 +229,11 @@ class FakeSession:
         self._record("connect_udp", host, port, timeout)
         self.is_connected = True
         self.device_info = type("DeviceInfoStub", (), {
-            "protocol_version": 3,
+            "protocol_version": 5,
             "imu_mode": 1,
             "arm_state": 0,
             "stream_enabled": 0,
-            "feature_bitmap": 0x3F,
+            "feature_bitmap": 0x7F,
         })()
         self._emit_connection()
         return "fake-device"
@@ -326,6 +333,33 @@ class FakeSession:
         self._record("attitude_test_stop")
         return 0
 
+    def require_udp_manual_control(self) -> None:
+        self._record("require_udp_manual_control")
+
+    def udp_manual_enable(self) -> int:
+        self._record("udp_manual_enable")
+        return 0
+
+    def udp_manual_disable(self) -> int:
+        self._record("udp_manual_disable")
+        return 0
+
+    def udp_manual_stop(self) -> int:
+        self._record("udp_manual_stop")
+        return 0
+
+    def udp_takeoff(self) -> int:
+        self._record("udp_takeoff")
+        return 0
+
+    def udp_land(self) -> int:
+        self._record("udp_land")
+        return 0
+
+    def udp_manual_setpoint(self, throttle: float, pitch: float, roll: float, yaw: float, timeout: float = 1.0) -> int:
+        self._record("udp_manual_setpoint", throttle, pitch, roll, yaw, timeout)
+        return 0
+
     def start_csv_log(self, output_path: Path) -> None:
         self._record("start_csv_log", output_path)
         self.last_log_path = output_path
@@ -342,11 +376,11 @@ class FakeSession:
     def hello(self):
         self._record("hello")
         self.device_info = type("DeviceInfoStub", (), {
-            "protocol_version": 3,
+            "protocol_version": 5,
             "imu_mode": 1,
             "arm_state": 0,
             "stream_enabled": 0,
-            "feature_bitmap": 0x3F,
+            "feature_bitmap": 0x7F,
         })()
         return self.device_info
 
@@ -355,7 +389,7 @@ def test_device_session_mock_roundtrip(tmp_path: Path):
     session = DeviceSession()
     transport = MockTransport()
     info = session.connect_transport(transport)
-    assert info.protocol_version == 3
+    assert info.protocol_version == 5
     assert TELEMETRY_STRUCT.size == TELEMETRY_STRUCT_V3.size
     assert session.arm() == 0
     assert session.disarm() == 0
@@ -418,7 +452,7 @@ def test_connect_serial_retries_one_hello_timeout_without_reporting_first_failur
 
     info = session.connect_serial("COM7", hello_timeout=0.05)
 
-    assert info.protocol_version == 3
+    assert info.protocol_version == 5
     assert first.closed
     assert session.last_error is None
     assert [event["connected"] for event in events] == [True]
@@ -509,6 +543,82 @@ def test_attitude_capture_ref_rejects_old_firmware_before_opcode():
 
     assert [msg_type for msg_type, _payload in transport.sent].count(MsgType.CMD_REQ) == 0
     session.disconnect()
+
+
+def test_udp_manual_setpoint_encodes_expected_payload():
+    session = DeviceSession()
+    transport = MockTransport()
+    session.connect_transport(transport)
+    transport.sent.clear()
+
+    assert session.udp_manual_setpoint(throttle=0.10, pitch=-0.02, roll=0.01, yaw=0.03) == 0
+
+    setpoint_frames = [payload for msg_type, payload in transport.sent if msg_type == MsgType.UDP_MANUAL_SETPOINT]
+    assert setpoint_frames
+    throttle, pitch, roll, yaw = UDP_MANUAL_SETPOINT_STRUCT.unpack(setpoint_frames[-1])
+    assert throttle == pytest.approx(0.10)
+    assert pitch == pytest.approx(-0.02)
+    assert roll == pytest.approx(0.01)
+    assert yaw == pytest.approx(0.03)
+    session.disconnect()
+
+
+def test_udp_transport_connects_and_sends_manual_control_frames():
+    server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server.bind(("127.0.0.1", 0))
+    server.settimeout(2.0)
+    host, port = server.getsockname()
+    received: list[Frame] = []
+
+    def handle_once(expected_type: int, response_type: int, response_payload: bytes) -> None:
+        data, addr = server.recvfrom(2048)
+        frame = decode_frame(data)
+        received.append(frame)
+        assert frame.msg_type == expected_type
+        server.sendto(encode_frame(response_type, response_payload, seq=frame.seq), addr)
+
+    def server_thread() -> None:
+        try:
+            hello = HELLO_RESP_STRUCT_V2.pack(
+                5,
+                1,
+                0,
+                0,
+                0x7F,
+                b"udp-test\x00\x00\x00\x00\x00\x00\x00\x00",
+                b"2026-04-12T00:00:00Z\x00\x00\x00\x00",
+            )
+            handle_once(MsgType.HELLO_REQ, MsgType.HELLO_RESP, hello)
+            handle_once(MsgType.CMD_REQ, MsgType.CMD_RESP, bytes([CmdId.UDP_MANUAL_ENABLE, 0, 0, 0]))
+            handle_once(
+                MsgType.UDP_MANUAL_SETPOINT,
+                MsgType.CMD_RESP,
+                bytes([CmdId.UDP_MANUAL_SETPOINT, 0, 0, 0]),
+            )
+        finally:
+            server.close()
+
+    thread = threading.Thread(target=server_thread, daemon=True)
+    thread.start()
+
+    session = DeviceSession()
+    info = session.connect_udp(host, port=port, timeout=1.0)
+    assert info.protocol_version == 5
+    assert session.udp_manual_enable() == 0
+    assert session.udp_manual_setpoint(throttle=0.08, pitch=-0.01, roll=0.0, yaw=0.02) == 0
+    session.disconnect()
+    thread.join(timeout=1.0)
+
+    assert [frame.msg_type for frame in received] == [
+        MsgType.HELLO_REQ,
+        MsgType.CMD_REQ,
+        MsgType.UDP_MANUAL_SETPOINT,
+    ]
+    throttle, pitch, roll, yaw = UDP_MANUAL_SETPOINT_STRUCT.unpack(received[-1].payload)
+    assert throttle == pytest.approx(0.08)
+    assert pitch == pytest.approx(-0.01)
+    assert roll == pytest.approx(0.0)
+    assert yaw == pytest.approx(0.02)
 
 
 def test_device_session_telemetry_subscription_receives_samples():
@@ -652,12 +762,13 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert window.left_panel.verticalScrollBarPolicy() == Qt.ScrollBarAsNeeded
     assert window.connection_section.is_expanded() is True
     assert window.safety_section.is_expanded() is True
-    assert window.debug_action_tabs.count() == 3
+    assert window.debug_action_tabs.count() == 4
     assert window.debug_action_tabs.tabText(0) == window._t("tab.motor")
     assert window.debug_action_tabs.tabText(1) == window._t("tab.rate")
     assert window.debug_action_tabs.tabText(2) == "Hang Attitude"
+    assert window.debug_action_tabs.tabText(3) == window._t("tab.udp_control")
     assert window.debug_action_tabs.currentIndex() == 0
-    assert window.params_table.rowCount() == 2
+    assert window.params_table.rowCount() == 3
     session.calls.clear()
 
     sample = TelemetrySample.from_payload(build_telemetry_payload())
@@ -724,6 +835,16 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     window.rate_start_button.click()
     window.rate_stop_button.click()
 
+    window.udp_max_pwm_spin.setValue(11.0)
+    window.udp_enable_button.click()
+    window.udp_forward_button.click()
+    window.udp_yaw_right_button.click()
+    window.udp_up_button.click()
+    window.udp_takeoff_button.click()
+    window.udp_land_button.click()
+    window.udp_stop_button.click()
+    window.udp_disable_button.click()
+
     log_path = tmp_path / "telemetry.csv"
     window.log_path_edit.setText(str(log_path))
     window.start_log_button.click()
@@ -758,6 +879,13 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert ("motor_test", (2, 0.0), {}) in session.calls
     assert ("rate_test", (1, 35.0), {}) in session.calls
     assert ("rate_test", (1, 0.0), {}) in session.calls
+    assert "udp_manual_enable" in call_names
+    assert "udp_manual_disable" in call_names
+    assert "udp_manual_stop" in call_names
+    assert "udp_takeoff" in call_names
+    assert "udp_land" in call_names
+    assert "udp_manual_setpoint" in call_names
+    assert ("set_param", ("udp_manual_max_pwm", 4, 0.11), {}) in session.calls
     assert "start_csv_log" in call_names
     assert "stop_csv_log" in call_names
     assert "dump_csv" in call_names
@@ -860,6 +988,14 @@ def test_cli_parser_compatibility_without_gui_dependency():
 
     capability_args = build_parser().parse_args(["--serial", "COM7", "capabilities"])
     assert capability_args.command == "capabilities"
+
+    udp_args = build_parser().parse_args(
+        ["--udp", "192.168.4.1:2391", "udp-manual", "setpoint", "--throttle", "0.08", "--pitch", "-0.02"]
+    )
+    assert udp_args.command == "udp-manual"
+    assert udp_args.action == "setpoint"
+    assert udp_args.throttle == pytest.approx(0.08)
+    assert udp_args.pitch == pytest.approx(-0.02)
 
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
@@ -994,6 +1130,24 @@ def test_firmware_dispatch_registers_attitude_capture_ref():
     assert "case CMD_ATTITUDE_CAPTURE_REF:" in dispatch
     assert "attitude_bench_capture_reference(&sample)" in dispatch
     assert "CONSOLE_FEATURE_ATTITUDE_HANG_BENCH" in protocol
+
+
+def test_firmware_dispatch_registers_udp_manual_control():
+    repo_root = Path(__file__).resolve().parents[3]
+    protocol = (repo_root / "firmware" / "main" / "console" / "console_protocol.h").read_text(encoding="utf-8")
+    dispatch = (repo_root / "firmware" / "main" / "console" / "console.c").read_text(encoding="utf-8")
+    udp_manual = (repo_root / "firmware" / "main" / "udp_manual" / "udp_manual.c").read_text(encoding="utf-8")
+    udp_protocol = (repo_root / "firmware" / "main" / "udp_protocol" / "udp_protocol.c").read_text(encoding="utf-8")
+
+    assert "CMD_UDP_MANUAL_ENABLE = 13" in protocol
+    assert "MSG_UDP_MANUAL_SETPOINT = 0x50" in protocol
+    assert "CONSOLE_FEATURE_UDP_MANUAL_CONTROL" in protocol
+    assert "case CMD_UDP_MANUAL_ENABLE:" in dispatch
+    assert "case MSG_UDP_MANUAL_SETPOINT:" in dispatch
+    assert "CONTROL_MODE_UDP_MANUAL" in udp_manual
+    assert "udp manual watchdog timeout" in udp_manual
+    assert "udp_protocol_task" in udp_protocol
+    assert "MSG_UDP_MANUAL_SETPOINT" in udp_protocol
 
 
 def test_set_param_detects_device_rejection():

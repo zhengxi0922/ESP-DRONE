@@ -13,6 +13,8 @@ idf_component_register(
         "led_status"
         "console"
         "safety"
+        "udp_manual"
+        "udp_protocol"
     INCLUDE_DIRS
         "."
         "board"
@@ -27,6 +29,8 @@ idf_component_register(
         "led_status"
         "console"
         "safety"
+        "udp_manual"
+        "udp_protocol"
     REQUIRES
         nvs_flash
         esp_timer
@@ -35,6 +39,7 @@ idf_component_register(
         esp_driver_uart
         esp_driver_ledc
         esp_vfs_console
+        lwip
 )
 
 execute_process(

@@ -30,7 +30,16 @@ Compatibility is limited to the legacy control entry path. The rewrite does not 
 ## Replacement Strategy
 
 - `2390`: legacy compatibility layer for control ingress and basic downlink
-- `2391`: new binary CLI UDP protocol
+- `2391`: new binary CLI/GUI UDP protocol
 - `USB CDC`: the same new binary protocol as `2391`
 - explicit `arm`, `disarm`, and `kill`: always available through the new CLI
 - the legacy control path can still arm or disarm through stick gestures and the safety state machine
+
+## Experimental UDP Manual Control
+
+Protocol version `5` adds `udp_manual_control` on the new binary UDP port `2391`.
+This path is explicitly experimental and open-loop / semi-open-loop only. It adds
+manual enable/disable/stop, setpoint, takeoff, and land commands with firmware-side
+watchdog and max-duty clamps. It is not a mature free-flight takeoff/land mode.
+
+See [udp_manual_control_protocol.md](./udp_manual_control_protocol.md).

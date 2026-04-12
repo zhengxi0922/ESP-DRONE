@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import math
 import queue
 import threading
 import time
@@ -22,6 +23,7 @@ from .models import (
     ParamSnapshot,
     ParamValue,
     TelemetrySample,
+    UDP_MANUAL_SETPOINT_STRUCT,
     coerce_param_value,
     decode_device_info,
     decode_event_text,
@@ -497,6 +499,12 @@ class DeviceSession:
         info = self._device_info or self.hello()
         info.require_attitude_hang_bench()
 
+    def require_udp_manual_control(self) -> None:
+        """Fail before sending experimental UDP manual commands to unsupported firmware."""
+
+        info = self._device_info or self.hello()
+        info.require_udp_manual_control()
+
     def arm(self) -> int:
         """请求设备解锁。"""
 
@@ -576,6 +584,61 @@ class DeviceSession:
 
         self.require_attitude_hang_bench()
         return self.command(CmdId.ATTITUDE_TEST_STOP)
+
+    def udp_manual_enable(self) -> int:
+        """Enter experimental open-loop UDP manual mode."""
+
+        self.require_udp_manual_control()
+        return self.command(CmdId.UDP_MANUAL_ENABLE)
+
+    def udp_manual_disable(self) -> int:
+        """Disable experimental UDP manual mode and request disarm."""
+
+        self.require_udp_manual_control()
+        return self.command(CmdId.UDP_MANUAL_DISABLE)
+
+    def udp_manual_stop(self) -> int:
+        """Send the explicit experimental UDP manual stop command."""
+
+        self.require_udp_manual_control()
+        return self.command(CmdId.UDP_MANUAL_STOP)
+
+    def udp_takeoff(self) -> int:
+        """Request an open-loop experimental UDP takeoff ramp."""
+
+        self.require_udp_manual_control()
+        return self.command(CmdId.UDP_TAKEOFF)
+
+    def udp_land(self) -> int:
+        """Request an open-loop experimental UDP landing ramp."""
+
+        self.require_udp_manual_control()
+        return self.command(CmdId.UDP_LAND)
+
+    def udp_manual_setpoint(
+        self,
+        throttle: float,
+        pitch: float,
+        roll: float,
+        yaw: float,
+        timeout: float = 1.0,
+    ) -> int:
+        """Send one experimental UDP manual setpoint frame.
+
+        Values are normalized duty/mixer inputs. Firmware remains authoritative for clamping.
+        """
+
+        self.require_udp_manual_control()
+        values = (float(throttle), float(pitch), float(roll), float(yaw))
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("udp manual setpoint values must be finite")
+        with self._command_lock:
+            self._send_message(MsgType.UDP_MANUAL_SETPOINT, UDP_MANUAL_SETPOINT_STRUCT.pack(*values))
+            frame = self._recv_until(MsgType.CMD_RESP, timeout=timeout)
+            cmd_id, status, _ = CMD_RESP_STRUCT.unpack(frame.payload)
+            if cmd_id != CmdId.UDP_MANUAL_SETPOINT:
+                raise RuntimeError(f"unexpected command response id {cmd_id}")
+            return status
 
     def calib_gyro(self) -> int:
         """请求执行陀螺仪校准。"""

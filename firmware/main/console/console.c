@@ -26,6 +26,7 @@
 #include "params.h"
 #include "runtime_state.h"
 #include "safety.h"
+#include "udp_manual.h"
 
 #define CONSOLE_RX_BUF_SIZE 512
 #define CONSOLE_FRAME_BUF_SIZE 384
@@ -196,6 +197,7 @@ static void console_stop_active_control(bool clear_attitude_reference)
     runtime_state_set_axis_test_request((axis3f_t){0});
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
     console_reset_attitude_state(clear_attitude_reference);
+    udp_manual_reset();
 }
 
 static bool console_value_is_finite_in_range(float value, float min_value, float max_value)
@@ -444,6 +446,21 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         motor_stop_all();
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
+    case CMD_UDP_MANUAL_ENABLE:
+        console_send_cmd_resp(req.cmd_id, udp_manual_enable());
+        break;
+    case CMD_UDP_MANUAL_DISABLE:
+        console_send_cmd_resp(req.cmd_id, udp_manual_disable());
+        break;
+    case CMD_UDP_TAKEOFF:
+        console_send_cmd_resp(req.cmd_id, udp_manual_takeoff());
+        break;
+    case CMD_UDP_LAND:
+        console_send_cmd_resp(req.cmd_id, udp_manual_land());
+        break;
+    case CMD_UDP_MANUAL_STOP:
+        console_send_cmd_resp(req.cmd_id, udp_manual_stop());
+        break;
     case CMD_CALIB_GYRO:
         console_send_cmd_resp(req.cmd_id, (imu_calibrate_gyro() == ESP_OK) ? CMD_STATUS_OK : CMD_STATUS_IMU_NOT_READY);
         break;
@@ -581,6 +598,18 @@ static void console_handle_message(uint8_t msg_type, const uint8_t *payload, siz
         runtime_state_set_stream_enabled(len > 0 && payload[0] != 0);
         console_send_frame(MSG_STREAM_CTRL, payload, (uint16_t)len);
         break;
+    case MSG_UDP_MANUAL_SETPOINT: {
+        if (len < sizeof(console_udp_manual_setpoint_t)) {
+            console_send_cmd_resp(CMD_UDP_MANUAL_SETPOINT, CMD_STATUS_INVALID_ARGUMENT);
+            break;
+        }
+        console_udp_manual_setpoint_t setpoint = {0};
+        memcpy(&setpoint, payload, sizeof(setpoint));
+        console_send_cmd_resp(
+            CMD_UDP_MANUAL_SETPOINT,
+            udp_manual_setpoint(setpoint.throttle, setpoint.pitch, setpoint.roll, setpoint.yaw));
+        break;
+    }
     default:
         break;
     }

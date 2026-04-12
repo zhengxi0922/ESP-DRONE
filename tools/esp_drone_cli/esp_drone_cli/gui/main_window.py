@@ -764,6 +764,35 @@ EXTRA_TRANSLATIONS = {
         "baro.valid": "有效",
         "baro.invalid_data": "无效",
         "control.height_hold_reserved": "定高保留",
+        "control.udp_manual": "UDP_MANUAL",
+        "tab.udp_control": "UDP Control",
+        "udp.warn": "Experimental UDP manual control. Open-loop / semi-open-loop only. Respect Max PWM and keep prop safety in mind. Not free-flight ready.",
+        "udp.max_pwm": "Max PWM (%)",
+        "udp.throttle": "Throttle (%)",
+        "udp.axis_step": "Axis Step (%)",
+        "udp.pitch": "Pitch (%)",
+        "udp.roll": "Roll (%)",
+        "udp.yaw": "Yaw (%)",
+        "udp.enable": "Enable UDP Manual",
+        "udp.disable": "Disable",
+        "udp.stop": "Stop / Zero",
+        "udp.takeoff": "Takeoff",
+        "udp.land": "Land",
+        "udp.forward": "Forward",
+        "udp.backward": "Backward",
+        "udp.up": "Up",
+        "udp.down": "Down",
+        "udp.yaw_left": "Yaw Left",
+        "udp.yaw_right": "Yaw Right",
+        "udp.send": "Send Setpoint",
+        "udp.status_watchdog": "Watchdog",
+        "udp.status_mode": "Mode",
+        "udp.status_armed": "Armed",
+        "udp.status_battery": "Battery",
+        "udp.enabled": "udp manual enabled",
+        "udp.disabled": "udp manual disabled",
+        "udp.stopped": "udp manual stop sent",
+        "udp.setpoint_sent": "udp setpoint sent throttle={throttle:.3f} pitch={pitch:.3f} roll={roll:.3f} yaw={yaw:.3f}",
     },
     "en": {
         "status.connecting": "Connecting...",
@@ -811,6 +840,35 @@ EXTRA_TRANSLATIONS = {
         "baro.invalid_data": "INVALID",
         "control.height_hold_reserved": "HEIGHT_HOLD_RESERVED",
         "control.attitude_hang_test": "ATTITUDE_HANG_TEST",
+        "control.udp_manual": "UDP_MANUAL",
+        "tab.udp_control": "UDP Control",
+        "udp.warn": "Experimental UDP manual control. Open-loop / semi-open-loop only. Respect Max PWM and keep prop safety in mind. Not free-flight ready.",
+        "udp.max_pwm": "Max PWM (%)",
+        "udp.throttle": "Throttle (%)",
+        "udp.axis_step": "Axis Step (%)",
+        "udp.pitch": "Pitch (%)",
+        "udp.roll": "Roll (%)",
+        "udp.yaw": "Yaw (%)",
+        "udp.enable": "Enable UDP Manual",
+        "udp.disable": "Disable",
+        "udp.stop": "Stop / Zero",
+        "udp.takeoff": "Takeoff",
+        "udp.land": "Land",
+        "udp.forward": "Forward",
+        "udp.backward": "Backward",
+        "udp.up": "Up",
+        "udp.down": "Down",
+        "udp.yaw_left": "Yaw Left",
+        "udp.yaw_right": "Yaw Right",
+        "udp.send": "Send Setpoint",
+        "udp.status_watchdog": "Watchdog",
+        "udp.status_mode": "Mode",
+        "udp.status_armed": "Armed",
+        "udp.status_battery": "Battery",
+        "udp.enabled": "udp manual enabled",
+        "udp.disabled": "udp manual disabled",
+        "udp.stopped": "udp manual stop sent",
+        "udp.setpoint_sent": "udp setpoint sent throttle={throttle:.3f} pitch={pitch:.3f} roll={roll:.3f} yaw={yaw:.3f}",
     },
 }
 
@@ -903,6 +961,7 @@ CONTROL_MODE_TEXT = {
     2: ("control.rate_test", "active"),
     3: ("control.height_hold_reserved", "warn"),
     4: ("control.attitude_hang_test", "active"),
+    5: ("control.udp_manual", "warn"),
 }
 
 IMU_MODE_TEXT = {
@@ -1415,6 +1474,9 @@ class MainWindow(QMainWindow):
         self._current_chart_group = "gyro"
         self._chart_curves: dict[str, object] = {}
         self._chart_channel_checks: dict[str, QCheckBox] = {}
+        self._udp_manual_enabled = False
+        self._udp_manual_last_send_monotonic: float | None = None
+        self._udp_manual_send_inflight = False
 
         self._build_ui()
         self._wire_signals()
@@ -1428,6 +1490,10 @@ class MainWindow(QMainWindow):
         self._plot_timer.setInterval(100)
         self._plot_timer.timeout.connect(self._refresh_plots)
         self._plot_timer.start()
+
+        self._udp_control_timer = QTimer(self)
+        self._udp_control_timer.setInterval(100)
+        self._udp_control_timer.timeout.connect(self._send_udp_manual_timer_setpoint)
 
     def _t(self, key: str, **kwargs) -> str:
         table = TRANSLATIONS.get(self._language, TRANSLATIONS["zh"])
@@ -1446,7 +1512,7 @@ class MainWindow(QMainWindow):
                 background-color: #111827;
                 color: #e5eefb;
                 font-size: 13px;
-                font-family: "Microsoft YaHei";
+                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
             }
             QMainWindow {
                 background-color: #0b1220;
@@ -2148,9 +2214,103 @@ class MainWindow(QMainWindow):
         hang_layout.addWidget(self.hang_trip_label, 4, 2)
         hang_layout.addWidget(self.hang_trip_spin, 4, 3)
 
+        udp_box = QWidget()
+        self.udp_group = udp_box
+        udp_layout = QGridLayout(udp_box)
+        udp_layout.setColumnStretch(1, 1)
+        udp_layout.setColumnStretch(3, 1)
+        udp_layout.setColumnStretch(5, 1)
+        self.udp_warning_label = QLabel()
+        self.udp_warning_label.setWordWrap(True)
+        self.udp_warning_label.setStyleSheet(
+            "color:#fecaca;background:#7f1d1d;border:1px solid #ef4444;border-radius:6px;padding:8px;font-weight:700;"
+        )
+        self.udp_enable_button = QPushButton()
+        self.udp_disable_button = QPushButton()
+        self.udp_stop_button = QPushButton()
+        self.udp_takeoff_button = QPushButton()
+        self.udp_land_button = QPushButton()
+        self.udp_forward_button = QPushButton()
+        self.udp_backward_button = QPushButton()
+        self.udp_yaw_left_button = QPushButton()
+        self.udp_yaw_right_button = QPushButton()
+        self.udp_up_button = QPushButton()
+        self.udp_down_button = QPushButton()
+        self.udp_send_button = QPushButton()
+        self.udp_max_pwm_label = QLabel()
+        self.udp_throttle_label = QLabel()
+        self.udp_axis_step_label = QLabel()
+        self.udp_pitch_label = QLabel()
+        self.udp_roll_label = QLabel()
+        self.udp_yaw_label = QLabel()
+        self.udp_max_pwm_spin = QDoubleSpinBox()
+        self.udp_max_pwm_spin.setRange(1.0, 30.0)
+        self.udp_max_pwm_spin.setDecimals(1)
+        self.udp_max_pwm_spin.setSingleStep(1.0)
+        self.udp_max_pwm_spin.setValue(12.0)
+        self.udp_throttle_spin = QDoubleSpinBox()
+        self.udp_throttle_spin.setRange(0.0, 30.0)
+        self.udp_throttle_spin.setDecimals(1)
+        self.udp_throttle_spin.setSingleStep(1.0)
+        self.udp_pitch_spin = QDoubleSpinBox()
+        self.udp_roll_spin = QDoubleSpinBox()
+        self.udp_yaw_spin = QDoubleSpinBox()
+        self.udp_axis_step_spin = QDoubleSpinBox()
+        for spin in (self.udp_pitch_spin, self.udp_roll_spin, self.udp_yaw_spin):
+            spin.setRange(-15.0, 15.0)
+            spin.setDecimals(1)
+            spin.setSingleStep(1.0)
+        self.udp_axis_step_spin.setRange(0.5, 10.0)
+        self.udp_axis_step_spin.setDecimals(1)
+        self.udp_axis_step_spin.setSingleStep(0.5)
+        self.udp_axis_step_spin.setValue(3.0)
+        self.udp_watchdog_status_label = QLabel("-")
+        self.udp_mode_status_label = QLabel("-")
+        self.udp_armed_status_label = QLabel("-")
+        self.udp_battery_status_label = QLabel("-")
+        self.udp_watchdog_title_label = QLabel()
+        self.udp_mode_title_label = QLabel()
+        self.udp_armed_title_label = QLabel()
+        self.udp_battery_title_label = QLabel()
+
+        udp_layout.addWidget(self.udp_warning_label, 0, 0, 1, 6)
+        udp_layout.addWidget(self.udp_enable_button, 1, 0)
+        udp_layout.addWidget(self.udp_disable_button, 1, 1)
+        udp_layout.addWidget(self.udp_stop_button, 1, 2)
+        udp_layout.addWidget(self.udp_takeoff_button, 1, 3)
+        udp_layout.addWidget(self.udp_land_button, 1, 4)
+        udp_layout.addWidget(self.udp_max_pwm_label, 2, 0)
+        udp_layout.addWidget(self.udp_max_pwm_spin, 2, 1)
+        udp_layout.addWidget(self.udp_throttle_label, 2, 2)
+        udp_layout.addWidget(self.udp_throttle_spin, 2, 3)
+        udp_layout.addWidget(self.udp_axis_step_label, 2, 4)
+        udp_layout.addWidget(self.udp_axis_step_spin, 2, 5)
+        udp_layout.addWidget(self.udp_pitch_label, 3, 0)
+        udp_layout.addWidget(self.udp_pitch_spin, 3, 1)
+        udp_layout.addWidget(self.udp_roll_label, 3, 2)
+        udp_layout.addWidget(self.udp_roll_spin, 3, 3)
+        udp_layout.addWidget(self.udp_yaw_label, 3, 4)
+        udp_layout.addWidget(self.udp_yaw_spin, 3, 5)
+        udp_layout.addWidget(self.udp_forward_button, 4, 0)
+        udp_layout.addWidget(self.udp_backward_button, 4, 1)
+        udp_layout.addWidget(self.udp_yaw_left_button, 4, 2)
+        udp_layout.addWidget(self.udp_yaw_right_button, 4, 3)
+        udp_layout.addWidget(self.udp_up_button, 4, 4)
+        udp_layout.addWidget(self.udp_down_button, 4, 5)
+        udp_layout.addWidget(self.udp_send_button, 5, 0)
+        udp_layout.addWidget(self.udp_watchdog_title_label, 5, 1)
+        udp_layout.addWidget(self.udp_watchdog_status_label, 5, 2)
+        udp_layout.addWidget(self.udp_mode_title_label, 5, 3)
+        udp_layout.addWidget(self.udp_mode_status_label, 5, 4)
+        udp_layout.addWidget(self.udp_armed_title_label, 6, 0)
+        udp_layout.addWidget(self.udp_armed_status_label, 6, 1)
+        udp_layout.addWidget(self.udp_battery_title_label, 6, 2)
+        udp_layout.addWidget(self.udp_battery_status_label, 6, 3)
+
         self.debug_action_tabs.addTab(motor_box, "")
         self.debug_action_tabs.addTab(rate_box, "")
         self.debug_action_tabs.addTab(hang_box, "Hang Attitude")
+        self.debug_action_tabs.addTab(udp_box, "UDP Control")
         layout.addWidget(self.debug_action_tabs)
 
         return group
@@ -2287,6 +2447,23 @@ class MainWindow(QMainWindow):
         self.hang_capture_button.clicked.connect(self._capture_attitude_ref)
         self.hang_start_button.clicked.connect(self._start_attitude_test)
         self.hang_stop_button.clicked.connect(self._stop_attitude_test)
+        self.udp_enable_button.clicked.connect(self._enable_udp_manual)
+        self.udp_disable_button.clicked.connect(self._disable_udp_manual)
+        self.udp_stop_button.clicked.connect(self._stop_udp_manual)
+        self.udp_takeoff_button.clicked.connect(self._takeoff_udp_manual)
+        self.udp_land_button.clicked.connect(self._land_udp_manual)
+        self.udp_send_button.clicked.connect(self._send_udp_manual_once)
+        self.udp_max_pwm_spin.valueChanged.connect(self._clamp_udp_throttle_spin)
+        self.udp_forward_button.pressed.connect(lambda: self._set_udp_motion(pitch=-self.udp_axis_step_spin.value()))
+        self.udp_forward_button.released.connect(self._zero_udp_axes)
+        self.udp_backward_button.pressed.connect(lambda: self._set_udp_motion(pitch=self.udp_axis_step_spin.value()))
+        self.udp_backward_button.released.connect(self._zero_udp_axes)
+        self.udp_yaw_left_button.pressed.connect(lambda: self._set_udp_motion(yaw=-self.udp_axis_step_spin.value()))
+        self.udp_yaw_left_button.released.connect(self._zero_udp_axes)
+        self.udp_yaw_right_button.pressed.connect(lambda: self._set_udp_motion(yaw=self.udp_axis_step_spin.value()))
+        self.udp_yaw_right_button.released.connect(self._zero_udp_axes)
+        self.udp_up_button.clicked.connect(lambda: self._adjust_udp_throttle(+self.udp_axis_step_spin.value()))
+        self.udp_down_button.clicked.connect(lambda: self._adjust_udp_throttle(-self.udp_axis_step_spin.value()))
         self.log_browse_button.clicked.connect(self._browse_log_path)
         self.log_path_edit.textChanged.connect(self._sync_log_path_tooltip)
         self.start_log_button.clicked.connect(self._start_log)
@@ -2446,6 +2623,29 @@ class MainWindow(QMainWindow):
         self.hang_rate_limit_pitch_label.setText("Rate Limit Pitch")
         self.hang_deadband_label.setText("Deadband Deg")
         self.hang_trip_label.setText("Trip Deg")
+        self.udp_warning_label.setText(self._t("udp.warn"))
+        self.udp_enable_button.setText(self._t("udp.enable"))
+        self.udp_disable_button.setText(self._t("udp.disable"))
+        self.udp_stop_button.setText(self._t("udp.stop"))
+        self.udp_takeoff_button.setText(self._t("udp.takeoff"))
+        self.udp_land_button.setText(self._t("udp.land"))
+        self.udp_forward_button.setText(self._t("udp.forward"))
+        self.udp_backward_button.setText(self._t("udp.backward"))
+        self.udp_yaw_left_button.setText(self._t("udp.yaw_left"))
+        self.udp_yaw_right_button.setText(self._t("udp.yaw_right"))
+        self.udp_up_button.setText(self._t("udp.up"))
+        self.udp_down_button.setText(self._t("udp.down"))
+        self.udp_send_button.setText(self._t("udp.send"))
+        self.udp_max_pwm_label.setText(self._t("udp.max_pwm"))
+        self.udp_throttle_label.setText(self._t("udp.throttle"))
+        self.udp_axis_step_label.setText(self._t("udp.axis_step"))
+        self.udp_pitch_label.setText(self._t("udp.pitch"))
+        self.udp_roll_label.setText(self._t("udp.roll"))
+        self.udp_yaw_label.setText(self._t("udp.yaw"))
+        self.udp_watchdog_title_label.setText(self._t("udp.status_watchdog"))
+        self.udp_mode_title_label.setText(self._t("udp.status_mode"))
+        self.udp_armed_title_label.setText(self._t("udp.status_armed"))
+        self.udp_battery_title_label.setText(self._t("udp.status_battery"))
         self.output_label.setText(self._t("label.output"))
         self.dump_s_label.setText(self._t("label.dump_s"))
         self.log_browse_button.setText(self._t("button.browse"))
@@ -2455,6 +2655,7 @@ class MainWindow(QMainWindow):
         self.debug_action_tabs.setTabText(0, self._t("tab.motor"))
         self.debug_action_tabs.setTabText(1, self._t("tab.rate"))
         self.debug_action_tabs.setTabText(2, "Hang Attitude")
+        self.debug_action_tabs.setTabText(3, self._t("tab.udp_control"))
 
         self.stream_on_button.setText(self._t("button.stream_on"))
         self.stream_off_button.setText(self._t("button.stream_off"))
@@ -2644,6 +2845,9 @@ class MainWindow(QMainWindow):
         )
 
     def _disconnect_requested(self) -> None:
+        self._udp_manual_enabled = False
+        if hasattr(self, "_udp_control_timer"):
+            self._udp_control_timer.stop()
         self._run_session_action("disconnect", lambda: self._session.disconnect())
 
     def _apply_stream_rate(self) -> None:
@@ -2666,6 +2870,7 @@ class MainWindow(QMainWindow):
             self.params_table.setItem(row, 1, QTableWidgetItem(TYPE_NAMES.get(param.type_id, str(param.type_id))))
             self.params_table.setItem(row, 2, QTableWidgetItem(_format_value(param.name, param.value)))
         self._sync_hang_param_spins()
+        self._sync_udp_param_spins()
         self._filter_params_table()
 
     def _filter_params_table(self) -> None:
@@ -2823,6 +3028,130 @@ class MainWindow(QMainWindow):
     def _stop_attitude_test(self) -> None:
         self._run_checked_command_action("attitude_test_stop", CmdId.ATTITUDE_TEST_STOP, self._session.attitude_test_stop)
 
+    def _sync_udp_param_spins(self) -> None:
+        if not getattr(self, "_params", None):
+            return
+        param_map = {item.name: item.value for item in self._params}
+        if "udp_manual_max_pwm" in param_map:
+            self.udp_max_pwm_spin.blockSignals(True)
+            self.udp_max_pwm_spin.setValue(float(param_map["udp_manual_max_pwm"]) * 100.0)
+            self.udp_max_pwm_spin.blockSignals(False)
+            self._clamp_udp_throttle_spin()
+
+    def _clamp_udp_throttle_spin(self) -> None:
+        max_pwm = float(self.udp_max_pwm_spin.value())
+        self.udp_throttle_spin.setMaximum(max_pwm)
+        if self.udp_throttle_spin.value() > max_pwm:
+            self.udp_throttle_spin.setValue(max_pwm)
+
+    def _udp_setpoint_values(self) -> tuple[float, float, float, float]:
+        throttle = min(float(self.udp_throttle_spin.value()), float(self.udp_max_pwm_spin.value())) / 100.0
+        pitch = float(self.udp_pitch_spin.value()) / 100.0
+        roll = float(self.udp_roll_spin.value()) / 100.0
+        yaw = float(self.udp_yaw_spin.value()) / 100.0
+        return throttle, pitch, roll, yaw
+
+    def _apply_udp_max_pwm_param(self) -> None:
+        self._session.set_param("udp_manual_max_pwm", 4, float(self.udp_max_pwm_spin.value()) / 100.0)
+
+    def _enable_udp_manual(self) -> None:
+        def action():
+            self._session.require_udp_manual_control()
+            self._apply_udp_max_pwm_param()
+            return ensure_command_ok(CmdId.UDP_MANUAL_ENABLE, int(self._session.udp_manual_enable()))
+
+        self._run_session_action("udp_manual_enable", action)
+
+    def _disable_udp_manual(self) -> None:
+        def action():
+            return ensure_command_ok(CmdId.UDP_MANUAL_DISABLE, int(self._session.udp_manual_disable()))
+
+        self._udp_manual_enabled = False
+        self._udp_control_timer.stop()
+        self._run_session_action("udp_manual_disable", action)
+
+    def _stop_udp_manual(self) -> None:
+        self.udp_throttle_spin.setValue(0.0)
+        self._zero_udp_axes(send=False)
+
+        def action():
+            return ensure_command_ok(CmdId.UDP_MANUAL_STOP, int(self._session.udp_manual_stop()))
+
+        self._udp_manual_enabled = False
+        self._udp_control_timer.stop()
+        self._run_session_action("udp_manual_stop", action)
+
+    def _takeoff_udp_manual(self) -> None:
+        takeoff_percent = min(float(self.udp_max_pwm_spin.value()), 10.0)
+        self.udp_throttle_spin.setValue(takeoff_percent)
+
+        def action():
+            self._session.require_udp_manual_control()
+            self._apply_udp_max_pwm_param()
+            return ensure_command_ok(CmdId.UDP_TAKEOFF, int(self._session.udp_takeoff()))
+
+        self._run_session_action("udp_takeoff", action)
+
+    def _land_udp_manual(self) -> None:
+        self.udp_throttle_spin.setValue(0.0)
+        self._zero_udp_axes(send=False)
+
+        def action():
+            return ensure_command_ok(CmdId.UDP_LAND, int(self._session.udp_land()))
+
+        self._run_session_action("udp_land", action)
+
+    def _set_udp_motion(self, *, pitch: float = 0.0, roll: float = 0.0, yaw: float = 0.0) -> None:
+        self.udp_pitch_spin.setValue(pitch)
+        self.udp_roll_spin.setValue(roll)
+        self.udp_yaw_spin.setValue(yaw)
+        self._send_udp_manual_once()
+
+    def _zero_udp_axes(self, send: bool = True) -> None:
+        self.udp_pitch_spin.setValue(0.0)
+        self.udp_roll_spin.setValue(0.0)
+        self.udp_yaw_spin.setValue(0.0)
+        if send:
+            self._send_udp_manual_once()
+
+    def _adjust_udp_throttle(self, delta_percent: float) -> None:
+        value = float(self.udp_throttle_spin.value()) + float(delta_percent)
+        value = max(0.0, min(float(self.udp_max_pwm_spin.value()), value))
+        self.udp_throttle_spin.setValue(value)
+        self._send_udp_manual_once()
+
+    def _send_udp_manual_timer_setpoint(self) -> None:
+        if self._udp_manual_enabled:
+            self._send_udp_manual_once(from_timer=True)
+        self._refresh_udp_watchdog_status()
+
+    def _send_udp_manual_once(self, from_timer: bool = False) -> None:
+        if not getattr(self._session, "is_connected", False):
+            return
+        if self._udp_manual_send_inflight:
+            return
+        throttle, pitch, roll, yaw = self._udp_setpoint_values()
+
+        def action():
+            return ensure_command_ok(
+                CmdId.UDP_MANUAL_SETPOINT,
+                int(self._session.udp_manual_setpoint(throttle=throttle, pitch=pitch, roll=roll, yaw=yaw)),
+            )
+
+        self._udp_manual_send_inflight = True
+        self._udp_manual_last_send_monotonic = time.monotonic()
+        label = "udp_manual_setpoint_timer" if from_timer else "udp_manual_setpoint"
+        self._run_session_action(label, action)
+        if not from_timer:
+            self._append_log(self._t("udp.setpoint_sent", throttle=throttle, pitch=pitch, roll=roll, yaw=yaw))
+
+    def _refresh_udp_watchdog_status(self) -> None:
+        if self._udp_manual_last_send_monotonic is None:
+            self.udp_watchdog_status_label.setText("-")
+            return
+        age_ms = (time.monotonic() - self._udp_manual_last_send_monotonic) * 1000.0
+        self.udp_watchdog_status_label.setText(f"{age_ms:.0f} ms since setpoint")
+
     def _browse_log_path(self) -> None:
         output, _ = QFileDialog.getSaveFileName(self, self._t("label.output"), self.log_path_edit.text(), "CSV Files (*.csv)")
         if output:
@@ -2904,6 +3233,18 @@ class MainWindow(QMainWindow):
             self.hang_capture_button,
             self.hang_start_button,
             self.hang_stop_button,
+            self.udp_enable_button,
+            self.udp_disable_button,
+            self.udp_stop_button,
+            self.udp_takeoff_button,
+            self.udp_land_button,
+            self.udp_forward_button,
+            self.udp_backward_button,
+            self.udp_yaw_left_button,
+            self.udp_yaw_right_button,
+            self.udp_up_button,
+            self.udp_down_button,
+            self.udp_send_button,
             self.start_log_button,
             self.stop_log_button,
             self.dump_csv_button,
@@ -2941,6 +3282,9 @@ class MainWindow(QMainWindow):
                 self._show_connect_failure(error)
                 return
             self._connecting = False
+            self._udp_manual_enabled = False
+            if hasattr(self, "_udp_control_timer"):
+                self._udp_control_timer.stop()
             _set_badge(self.connection_status_chip, self._t("status.disconnected"), "neutral" if not error else "warn")
             self.connection_info_label.setText(self._t("status.no_session"))
             self._stream_enabled = False
@@ -2992,12 +3336,18 @@ class MainWindow(QMainWindow):
         self.status_cards["baro_altitude_m"][1].setText(
             f"{sample.baro_altitude_m:.3f} m" if sample.baro_valid else self._t("status.no_value")
         )
+        self.udp_mode_status_label.setText(control_text)
+        self.udp_armed_status_label.setText(arm_text)
+        self.udp_battery_status_label.setText(f"{sample.battery_voltage:.3f} V")
+        self._refresh_udp_watchdog_status()
         self._update_stream_chip()
 
     def _on_event_received(self, message: str) -> None:
         self._append_log(message)
 
     def _on_error(self, message: str) -> None:
+        if "udp_manual_setpoint" in message:
+            self._udp_manual_send_inflight = False
         if self._connecting or message.startswith("Connect failed:") or message.startswith("connect_serial:") or message.startswith("connect_udp:"):
             self._show_connect_failure(message)
             return
@@ -3068,6 +3418,35 @@ class MainWindow(QMainWindow):
             self.last_log_path_label.setText(str(path))
             self._set_last_result(self._t("msg.dump_csv_done", rows=rows, path=path))
             self._append_log(self._t("msg.dump_csv_done", rows=rows, path=path))
+            return
+        if label == "udp_manual_enable":
+            self._udp_manual_enabled = True
+            self._udp_control_timer.start()
+            self._set_last_result(self._t("udp.enabled"))
+            self._append_log(self._t("udp.enabled"))
+            self._send_udp_manual_once()
+            return
+        if label == "udp_manual_disable":
+            self._udp_manual_enabled = False
+            self._udp_control_timer.stop()
+            self._set_last_result(self._t("udp.disabled"))
+            self._append_log(self._t("udp.disabled"))
+            return
+        if label == "udp_manual_stop":
+            self._udp_manual_enabled = False
+            self._udp_control_timer.stop()
+            self._set_last_result(self._t("udp.stopped"))
+            self._append_log(self._t("udp.stopped"))
+            return
+        if label in {"udp_takeoff", "udp_land"}:
+            summary = self._t("msg.command_ok", label=label.replace("_", " "))
+            self._set_last_result(summary)
+            self._append_log(summary)
+            return
+        if label in {"udp_manual_setpoint", "udp_manual_setpoint_timer"}:
+            self._udp_manual_send_inflight = False
+            if label == "udp_manual_setpoint":
+                self._set_last_result(self._t("msg.command_ok", label=self._t("udp.send")))
             return
         if label in {"connect_serial", "connect_udp", "disconnect", "arm", "disarm", "kill", "reboot", "save_params", "reset_params", "motor_test_start", "motor_test_stop", "calib_gyro", "calib_level", "rate_test_start", "rate_test_stop", "attitude_capture_ref", "attitude_test_start", "attitude_test_stop"}:
             summary = label.replace("_", " ")
@@ -3202,6 +3581,8 @@ class MainWindow(QMainWindow):
 
         self._closing = True
         self._plot_timer.stop()
+        if hasattr(self, "_udp_control_timer"):
+            self._udp_control_timer.stop()
         self._save_settings()
         try:
             self._session.disconnect()

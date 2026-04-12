@@ -39,7 +39,7 @@
  *
  * @note 参数布局发生不兼容变化时应递增。
  */
-#define PARAMS_SCHEMA_VERSION 2u
+#define PARAMS_SCHEMA_VERSION 3u
 
 /**
  * @brief 参数值类型编号。
@@ -87,6 +87,11 @@ typedef struct {
     uint32_t motor_startup_boost_ms;  /**< 起转提升时长，单位为 ms；当前实现尚未消费该参数。 */
     float motor_slew_limit_per_tick;  /**< 每个控制周期允许的最大占空比变化量。 */
     float bringup_test_base_duty;     /**< 台架 bring-up 测试的基础油门，占空比范围为 `0.0f` 到 `1.0f`。 */
+    float udp_manual_max_pwm;         /**< Experimental UDP manual max duty/PWM fraction. */
+    float udp_takeoff_pwm;            /**< Experimental UDP takeoff target duty/PWM fraction. */
+    float udp_land_min_pwm;           /**< Experimental UDP landing and timeout safe duty floor. */
+    uint32_t udp_manual_timeout_ms;   /**< UDP manual watchdog timeout in ms. */
+    float udp_manual_axis_limit;      /**< UDP manual roll/pitch/yaw mixer input limit. */
 
     uint32_t rc_timeout_ms;           /**< RC 超时阈值，单位为 ms；当前主循环尚未直接消费该参数。 */
     uint32_t imu_timeout_ms;          /**< IMU 超时阈值，单位为 ms。 */

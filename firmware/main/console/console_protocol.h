@@ -4,7 +4,7 @@
 
 #define CONSOLE_FRAME_MAGIC 0xA5u
 #define CONSOLE_FRAME_VERSION 0x01u
-#define CONSOLE_PROTOCOL_VERSION 0x04u
+#define CONSOLE_PROTOCOL_VERSION 0x05u
 #define CONSOLE_BUILD_GIT_HASH_LEN 16u
 #define CONSOLE_BUILD_TIME_LEN 24u
 
@@ -14,13 +14,15 @@
 #define CONSOLE_FEATURE_RATE_TEST (1u << 3)
 #define CONSOLE_FEATURE_BARO_TELEMETRY (1u << 4)
 #define CONSOLE_FEATURE_ATTITUDE_HANG_BENCH (1u << 5)
+#define CONSOLE_FEATURE_UDP_MANUAL_CONTROL (1u << 6)
 #define CONSOLE_FEATURE_BITMAP_CURRENT \
     (CONSOLE_FEATURE_PARAMS | \
      CONSOLE_FEATURE_STREAMING | \
      CONSOLE_FEATURE_MOTOR_AXIS_TEST | \
      CONSOLE_FEATURE_RATE_TEST | \
      CONSOLE_FEATURE_BARO_TELEMETRY | \
-     CONSOLE_FEATURE_ATTITUDE_HANG_BENCH)
+     CONSOLE_FEATURE_ATTITUDE_HANG_BENCH | \
+     CONSOLE_FEATURE_UDP_MANUAL_CONTROL)
 
 typedef enum {
     MSG_HELLO_REQ = 0x01,
@@ -38,6 +40,7 @@ typedef enum {
     MSG_STREAM_CTRL = 0x30,
     MSG_TELEMETRY_SAMPLE = 0x31,
     MSG_EVENT_LOG_TEXT = 0x40,
+    MSG_UDP_MANUAL_SETPOINT = 0x50,
 } console_msg_type_t;
 
 typedef enum {
@@ -53,6 +56,12 @@ typedef enum {
     CMD_ATTITUDE_CAPTURE_REF = 10,
     CMD_ATTITUDE_TEST_START = 11,
     CMD_ATTITUDE_TEST_STOP = 12,
+    CMD_UDP_MANUAL_ENABLE = 13,
+    CMD_UDP_MANUAL_DISABLE = 14,
+    CMD_UDP_MANUAL_SETPOINT = 15,
+    CMD_UDP_TAKEOFF = 16,
+    CMD_UDP_LAND = 17,
+    CMD_UDP_MANUAL_STOP = 18,
 } console_cmd_id_t;
 
 typedef enum {
@@ -89,6 +98,13 @@ typedef struct __attribute__((packed)) {
     uint8_t status;
     uint16_t reserved;
 } console_cmd_resp_t;
+
+typedef struct __attribute__((packed)) {
+    float throttle;
+    float pitch;
+    float roll;
+    float yaw;
+} console_udp_manual_setpoint_t;
 
 typedef struct __attribute__((packed)) {
     uint8_t protocol_version;

@@ -53,6 +53,11 @@ static const param_descriptor_t s_param_descs[] = {
     {"motor_startup_boost_ms", PARAM_TYPE_U32, offsetof(params_store_t, motor_startup_boost_ms)},
     {"motor_slew_limit_per_tick", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_slew_limit_per_tick)},
     {"bringup_test_base_duty", PARAM_TYPE_FLOAT, offsetof(params_store_t, bringup_test_base_duty)},
+    {"udp_manual_max_pwm", PARAM_TYPE_FLOAT, offsetof(params_store_t, udp_manual_max_pwm)},
+    {"udp_takeoff_pwm", PARAM_TYPE_FLOAT, offsetof(params_store_t, udp_takeoff_pwm)},
+    {"udp_land_min_pwm", PARAM_TYPE_FLOAT, offsetof(params_store_t, udp_land_min_pwm)},
+    {"udp_manual_timeout_ms", PARAM_TYPE_U32, offsetof(params_store_t, udp_manual_timeout_ms)},
+    {"udp_manual_axis_limit", PARAM_TYPE_FLOAT, offsetof(params_store_t, udp_manual_axis_limit)},
     {"rc_timeout_ms", PARAM_TYPE_U32, offsetof(params_store_t, rc_timeout_ms)},
     {"imu_timeout_ms", PARAM_TYPE_U32, offsetof(params_store_t, imu_timeout_ms)},
     {"imu_parse_error_limit", PARAM_TYPE_U32, offsetof(params_store_t, imu_parse_error_limit)},
@@ -115,6 +120,11 @@ static void params_apply_defaults(params_store_t *store)
     store->motor_startup_boost_ms = 25;
     store->motor_slew_limit_per_tick = 0.03f;
     store->bringup_test_base_duty = 0.15f;
+    store->udp_manual_max_pwm = 0.12f;
+    store->udp_takeoff_pwm = 0.10f;
+    store->udp_land_min_pwm = 0.05f;
+    store->udp_manual_timeout_ms = 250;
+    store->udp_manual_axis_limit = 0.05f;
 
     store->rc_timeout_ms = 300;
     store->imu_timeout_ms = 50;
@@ -287,6 +297,12 @@ static bool params_validate_motor_duty_limits(const params_store_t *store)
            store->motor_startup_boost_duty <= 1.0f &&
            store->bringup_test_base_duty >= 0.0f &&
            store->bringup_test_base_duty <= 1.0f &&
+           store->udp_manual_max_pwm >= 0.0f &&
+           store->udp_manual_max_pwm <= 1.0f &&
+           store->udp_takeoff_pwm >= 0.0f &&
+           store->udp_takeoff_pwm <= 1.0f &&
+           store->udp_land_min_pwm >= 0.0f &&
+           store->udp_land_min_pwm <= 1.0f &&
            store->attitude_test_base_duty >= 0.0f &&
            store->attitude_test_base_duty <= 1.0f &&
            store->motor_idle_duty <= store->motor_max_duty &&
@@ -294,6 +310,10 @@ static bool params_validate_motor_duty_limits(const params_store_t *store)
            store->motor_startup_boost_duty <= store->motor_max_duty &&
            store->bringup_test_base_duty >= store->motor_idle_duty &&
            store->bringup_test_base_duty <= store->motor_max_duty &&
+           store->udp_manual_max_pwm >= store->motor_idle_duty &&
+           store->udp_manual_max_pwm <= store->motor_max_duty &&
+           store->udp_land_min_pwm <= store->udp_takeoff_pwm &&
+           store->udp_takeoff_pwm <= store->udp_manual_max_pwm &&
            store->attitude_test_base_duty >= store->motor_idle_duty &&
            store->attitude_test_base_duty <= store->motor_max_duty;
 }
@@ -344,6 +364,13 @@ static bool params_validate_attitude_bench_limits(const params_store_t *store)
     return (store->attitude_test_base_duty + store->rate_output_limit) <= store->motor_max_duty;
 }
 
+static bool params_validate_udp_manual_limits(const params_store_t *store)
+{
+    return store->udp_manual_timeout_ms >= 200u &&
+           store->udp_manual_timeout_ms <= 1000u &&
+           params_float_in_range(store->udp_manual_axis_limit, 0.0f, 0.15f);
+}
+
 static bool params_validate_store(const params_store_t *store)
 {
     if (store == NULL) {
@@ -357,7 +384,8 @@ static bool params_validate_store(const params_store_t *store)
            params_validate_battery_thresholds(store) &&
            params_validate_motor_duty_limits(store) &&
            params_validate_rate_pid_limits(store) &&
-           params_validate_attitude_bench_limits(store);
+           params_validate_attitude_bench_limits(store) &&
+           params_validate_udp_manual_limits(store);
 }
 
 static bool params_try_load_from_nvs(params_store_t *store)

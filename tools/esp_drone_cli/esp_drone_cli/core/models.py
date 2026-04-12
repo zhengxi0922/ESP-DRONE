@@ -8,6 +8,7 @@ from pathlib import Path
 
 CMD_REQ_STRUCT = struct.Struct("<BBHf")
 CMD_RESP_STRUCT = struct.Struct("<BBH")
+UDP_MANUAL_SETPOINT_STRUCT = struct.Struct("<ffff")
 HELLO_RESP_STRUCT = struct.Struct("<BBBBI")
 HELLO_RESP_STRUCT_V2 = struct.Struct("<BBBBI16s24s")
 TELEMETRY_STRUCT_V1 = struct.Struct("<Q" + "f" * 36 + "III8B")
@@ -55,7 +56,9 @@ FEATURE_MOTOR_AXIS_TEST = 1 << 2
 FEATURE_RATE_TEST = 1 << 3
 FEATURE_BARO_TELEMETRY = 1 << 4
 FEATURE_ATTITUDE_HANG_BENCH = 1 << 5
+FEATURE_UDP_MANUAL_CONTROL = 1 << 6
 MIN_ATTITUDE_HANG_PROTOCOL_VERSION = 3
+MIN_UDP_MANUAL_PROTOCOL_VERSION = 5
 
 FEATURE_NAMES = {
     FEATURE_PARAMS: "params",
@@ -64,6 +67,7 @@ FEATURE_NAMES = {
     FEATURE_RATE_TEST: "rate_test",
     FEATURE_BARO_TELEMETRY: "baro_telemetry",
     FEATURE_ATTITUDE_HANG_BENCH: "attitude_hang_bench",
+    FEATURE_UDP_MANUAL_CONTROL: "udp_manual_control",
 }
 
 
@@ -106,6 +110,20 @@ class DeviceInfo:
             f"build_git_hash={self.build_git_hash or 'unknown'}, "
             f"build_time_utc={self.build_time_utc or 'unknown'}). "
             "Rebuild and flash the current main firmware before running hang-attitude commands."
+        )
+
+    def require_udp_manual_control(self) -> None:
+        if self.protocol_version >= MIN_UDP_MANUAL_PROTOCOL_VERSION and self.supports_feature(FEATURE_UDP_MANUAL_CONTROL):
+            return
+        raise CapabilityError(
+            "device firmware does not advertise experimental UDP manual control support "
+            f"(need protocol_version>={MIN_UDP_MANUAL_PROTOCOL_VERSION} and "
+            f"feature udp_manual_control/0x{FEATURE_UDP_MANUAL_CONTROL:02x}; "
+            f"got protocol_version={self.protocol_version}, "
+            f"feature_bitmap=0x{self.feature_bitmap:08x}, "
+            f"build_git_hash={self.build_git_hash or 'unknown'}, "
+            f"build_time_utc={self.build_time_utc or 'unknown'}). "
+            "Rebuild and flash the current main firmware before using UDP Control."
         )
 
 
