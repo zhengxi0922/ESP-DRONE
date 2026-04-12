@@ -12,6 +12,10 @@
 static adc_oneshot_unit_handle_t s_adc_handle;
 static adc_cali_handle_t s_adc_cali_handle;
 static bool s_battery_adc_ready;
+static bool s_battery_last_nonzero_valid;
+static int s_battery_last_raw;
+static int s_battery_last_mv;
+static float s_battery_last_voltage;
 
 static const board_motor_config_t s_motor_configs[BOARD_MOTOR_COUNT] = {
     {
@@ -62,6 +66,19 @@ static const board_config_t s_board = {
 const board_config_t *board_config_get(void)
 {
     return &s_board;
+}
+
+static void board_battery_set_outputs(int *out_raw, int *out_mv, float *out_voltage, int raw, int mv, float voltage)
+{
+    if (out_raw != NULL) {
+        *out_raw = raw;
+    }
+    if (out_mv != NULL) {
+        *out_mv = mv;
+    }
+    if (out_voltage != NULL) {
+        *out_voltage = voltage;
+    }
 }
 
 const board_motor_config_t *board_get_motor_config(board_motor_id_t logical_id)
@@ -147,15 +164,22 @@ esp_err_t board_battery_read(int *out_raw, int *out_mv, float *out_voltage)
         mv = (raw * 2800) / 4095;
     }
 
-    if (out_raw != NULL) {
-        *out_raw = raw;
-    }
-    if (out_mv != NULL) {
-        *out_mv = mv;
-    }
-    if (out_voltage != NULL) {
-        *out_voltage = ((float)mv / 1000.0f) * s_board.bat_divider_ratio;
+    const float voltage = ((float)mv / 1000.0f) * s_board.bat_divider_ratio;
+    if (!(voltage > 0.0f)) {
+        if (!s_battery_last_nonzero_valid) {
+            return ESP_ERR_INVALID_RESPONSE;
+        }
+
+        board_battery_set_outputs(out_raw, out_mv, out_voltage,
+                                  s_battery_last_raw, s_battery_last_mv, s_battery_last_voltage);
+        return ESP_OK;
     }
 
+    s_battery_last_nonzero_valid = true;
+    s_battery_last_raw = raw;
+    s_battery_last_mv = mv;
+    s_battery_last_voltage = voltage;
+
+    board_battery_set_outputs(out_raw, out_mv, out_voltage, raw, mv, voltage);
     return ESP_OK;
 }
