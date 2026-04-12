@@ -51,6 +51,31 @@ or:
 python -m esp_drone_cli.gui_main
 ```
 
+## VS Code Run Without Debugging
+
+1. Open the repository root in VS Code.
+2. Select the Python interpreter that should run the toolchain.
+3. Install GUI dependencies:
+
+```powershell
+cd tools\esp_drone_cli
+python -m pip install -e ".[gui]"
+```
+
+4. In the Run and Debug view, select `ESP-DRONE GUI (No Debug)`.
+5. Press `Ctrl+F5` or choose `Run Without Debugging`.
+
+The VS Code launch configuration starts the GUI with:
+
+```powershell
+python -m esp_drone_cli.gui_main
+```
+
+It intentionally uses the package module entry point instead of running
+`esp_drone_cli/gui/main_window.py` directly, so package imports, the working
+directory, and GUI environment setup stay aligned with the installed
+`esp-drone-gui` script.
+
 ## Window Layout
 
 The workbench keeps the current three-column layout plus a collapsible bottom log:

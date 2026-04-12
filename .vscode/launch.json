@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ESP-DRONE GUI (No Debug)",
+      "type": "python",
+      "request": "launch",
+      "module": "esp_drone_cli.gui_main",
+      "cwd": "${workspaceFolder}/tools/esp_drone_cli",
+      "console": "integratedTerminal",
+      "env": {
+        "PYQTGRAPH_QT_LIB": "PyQt5"
+      }
+    }
+  ]
+}
