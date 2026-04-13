@@ -39,7 +39,7 @@
  *
  * @note 参数布局发生不兼容变化时应递增。
  */
-#define PARAMS_SCHEMA_VERSION 5u
+#define PARAMS_SCHEMA_VERSION 6u
 
 /**
  * @brief 参数值类型编号。
@@ -140,6 +140,27 @@ typedef struct {
     float attitude_error_deadband_deg;
     float attitude_trip_deg;
     float attitude_test_base_duty;
+
+    float gyro_lpf_hz;
+    float accel_lpf_hz;
+    float rate_lpf_hz;
+    bool kalman_enable;
+    float kalman_q_angle;
+    float kalman_q_bias;
+    float kalman_r_measure;
+    bool ground_tune_use_kalman_attitude;
+    bool ground_tune_use_filtered_rate;
+
+    float ground_att_kp_roll;
+    float ground_att_kp_pitch;
+    float ground_att_rate_limit_roll;
+    float ground_att_rate_limit_pitch;
+    float ground_att_error_deadband_deg;
+    float ground_att_trip_deg;
+    float ground_test_base_duty;
+    float ground_test_max_extra_duty;
+    float ground_test_motor_balance_limit;
+    uint32_t ground_test_auto_disarm_ms;
 } params_store_t;
 
 /**

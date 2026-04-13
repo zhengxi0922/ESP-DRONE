@@ -15,6 +15,7 @@
 #include "controller.h"
 #include "console.h"
 #include "estimator.h"
+#include "ground_tune.h"
 #include "imu.h"
 #include "led_status.h"
 #include "mixer.h"
@@ -34,12 +35,21 @@
 
 #define TASK_STACK_WORDS 4096
 #define UDP_MANUAL_FULL_YAW_RATE_DPS 45.0f
+#define GROUND_SATURATION_TRIP_TICKS 150u
+#define GROUND_RATE_JITTER_TRIP_TICKS 80u
 
 static void flight_control_set_base_duty_active(float base_duty)
 {
     attitude_hang_state_t state = runtime_state_get_attitude_hang_state();
     state.base_duty_active = base_duty;
     runtime_state_set_attitude_hang_state(state);
+}
+
+static void flight_control_set_ground_base_duty_active(float base_duty)
+{
+    ground_tune_state_t state = runtime_state_get_ground_tune_state();
+    state.base_duty_active = base_duty;
+    runtime_state_set_ground_tune_state(state);
 }
 
 static void flight_control_stop_attitude_hang_test(float command_outputs[MOTOR_COUNT], const char *reason)
@@ -80,6 +90,30 @@ static void flight_control_stop_udp_manual(float command_outputs[MOTOR_COUNT], c
     }
 }
 
+static void flight_control_stop_ground_tune(float command_outputs[MOTOR_COUNT],
+                                            ground_tune_trip_reason_t trip_reason,
+                                            const char *reason,
+                                            bool request_disarm)
+{
+    if (request_disarm) {
+        safety_request_disarm();
+    }
+    runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+    runtime_state_set_axis_test_request((axis3f_t){0});
+    runtime_state_set_rate_setpoint_request((axis3f_t){0});
+    ground_tune_set_trip_reason(trip_reason);
+    flight_control_set_ground_base_duty_active(0.0f);
+    controller_set_runtime_flags(false, 0.0f, false, true);
+
+    if (command_outputs != NULL) {
+        memset(command_outputs, 0, sizeof(float) * MOTOR_COUNT);
+    }
+    motor_stop_all();
+    if (reason != NULL) {
+        console_send_event_text(reason);
+    }
+}
+
 static bool flight_control_attitude_sample_ready(const imu_sample_t *sample)
 {
     return sample != NULL &&
@@ -98,6 +132,62 @@ static bool flight_control_attitude_trip_exceeded(const params_store_t *params)
     const attitude_hang_state_t updated_state = runtime_state_get_attitude_hang_state();
     return fabsf(updated_state.err_roll_deg) > params->attitude_trip_deg ||
            fabsf(updated_state.err_pitch_deg) > params->attitude_trip_deg;
+}
+
+static bool flight_control_ground_trip_exceeded(const params_store_t *params)
+{
+    const ground_tune_state_t state = runtime_state_get_ground_tune_state();
+    return fabsf(state.err_roll_deg) > params->ground_att_trip_deg ||
+           fabsf(state.err_pitch_deg) > params->ground_att_trip_deg;
+}
+
+static bool flight_control_ground_limit_outputs(const params_store_t *params, float outputs[MOTOR_COUNT])
+{
+    bool saturated = false;
+    const float lower = fmaxf(0.0f, params->ground_test_base_duty - params->ground_test_max_extra_duty);
+    const float upper = fminf(params->motor_max_duty, params->ground_test_base_duty + params->ground_test_max_extra_duty);
+    float min_output = 1.0f;
+    float max_output = 0.0f;
+
+    for (int i = 0; i < MOTOR_COUNT; ++i) {
+        const float before = outputs[i];
+        if (outputs[i] < lower) {
+            outputs[i] = lower;
+        } else if (outputs[i] > upper) {
+            outputs[i] = upper;
+        }
+        if (fabsf(outputs[i] - before) > 0.0005f) {
+            saturated = true;
+        }
+        if (outputs[i] <= lower + 0.001f || outputs[i] >= upper - 0.001f) {
+            saturated = true;
+        }
+        if (outputs[i] < min_output) {
+            min_output = outputs[i];
+        }
+        if (outputs[i] > max_output) {
+            max_output = outputs[i];
+        }
+    }
+
+    if ((max_output - min_output) > params->ground_test_motor_balance_limit) {
+        saturated = true;
+    }
+    return saturated;
+}
+
+static bool flight_control_ground_rate_jitter(axis3f_t previous, axis3f_t current)
+{
+    const float threshold = 0.025f;
+    const bool roll_flip =
+        fabsf(previous.roll) > threshold &&
+        fabsf(current.roll) > threshold &&
+        previous.roll * current.roll < 0.0f;
+    const bool pitch_flip =
+        fabsf(previous.pitch) > threshold &&
+        fabsf(current.pitch) > threshold &&
+        previous.pitch * current.pitch < 0.0f;
+    return roll_flip || pitch_flip;
 }
 
 static void flight_control_apply_led_state(const safety_status_t *safety_status,
@@ -168,6 +258,11 @@ static void flight_control_task(void *arg)
     uint64_t last_rate_update_us = 0;
     arm_state_t last_arm_state = ARM_STATE_DISARMED;
     control_mode_t last_control_mode = CONTROL_MODE_IDLE;
+    uint32_t ground_saturation_ticks = 0;
+    uint32_t ground_jitter_ticks = 0;
+    uint64_t ground_mode_start_us = 0;
+    bool ground_saturated_for_freeze = false;
+    axis3f_t previous_ground_pid_axis = {0};
 
     mixer_build_coeffs(mixer_coeffs);
 
@@ -231,8 +326,17 @@ static void flight_control_task(void *arg)
             memset(command_outputs, 0, sizeof(command_outputs));
             last_rate_update_us = 0;
             attitude_bench_reset_status();
+            ground_saturation_ticks = 0;
+            ground_jitter_ticks = 0;
+            ground_saturated_for_freeze = false;
+            previous_ground_pid_axis = (axis3f_t){0};
+            ground_mode_start_us = (control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE) ? now_us : 0u;
             last_arm_state = safety_status.arm_state;
             last_control_mode = control_mode;
+        }
+
+        if (fresh_sample && sample.has_gyro_acc) {
+            estimator_update_from_imu(&sample, &estimator_state);
         }
 
         int test_motor = -1;
@@ -240,6 +344,7 @@ static void flight_control_task(void *arg)
         runtime_state_get_motor_test(&test_motor, &test_duty);
         if (test_motor >= 0 && test_duty > 0.0f && safety_status.arm_state == ARM_STATE_DISARMED) {
             flight_control_set_base_duty_active(0.0f);
+            flight_control_set_ground_base_duty_active(0.0f);
             motor_set_test_output((uint8_t)test_motor, test_duty);
             continue;
         }
@@ -262,6 +367,20 @@ static void flight_control_task(void *arg)
             continue;
         }
 
+        if (control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE &&
+            (safety_status.arm_state != ARM_STATE_ARMED ||
+             safety_status.failsafe_reason != FAILSAFE_REASON_NONE)) {
+            const bool request_disarm =
+                safety_status.failsafe_reason == FAILSAFE_REASON_BATTERY_CRITICAL ||
+                safety_status.arm_state == ARM_STATE_FAILSAFE ||
+                safety_status.arm_state == ARM_STATE_FAULT_LOCK;
+            flight_control_stop_ground_tune(command_outputs,
+                                            GROUND_TUNE_TRIP_FAILSAFE,
+                                            "ground tune stopped: battery critical or failsafe",
+                                            request_disarm);
+            continue;
+        }
+
         if (control_mode == CONTROL_MODE_AXIS_TEST && safety_status.arm_state == ARM_STATE_DISARMED) {
             const axis3f_t axis_request = runtime_state_get_axis_test_request();
             flight_control_set_base_duty_active(params_get()->bringup_test_base_duty);
@@ -278,7 +397,6 @@ static void flight_control_task(void *arg)
         if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_RATE_TEST) {
             flight_control_set_base_duty_active(params_get()->bringup_test_base_duty);
             if (fresh_sample && sample.has_gyro_acc) {
-                estimator_update_from_imu(&sample, &estimator_state);
                 const axis3f_t rate_setpoint = runtime_state_get_rate_setpoint_request();
                 if (last_rate_update_us != 0 && sample.timestamp_us > last_rate_update_us) {
                     float controller_dt_s = (float)(sample.timestamp_us - last_rate_update_us) / 1000000.0f;
@@ -288,6 +406,7 @@ static void flight_control_task(void *arg)
                         controller_dt_s = 0.050f;
                     }
 
+                    controller_set_runtime_flags(true, params_get()->bringup_test_base_duty, false, false);
                     const rate_controller_status_t rate_status =
                         controller_update_rate(&rate_setpoint, &estimator_state.rate_rpy_dps, controller_dt_s);
                     mixer_mix(mixer_coeffs,
@@ -321,7 +440,6 @@ static void flight_control_task(void *arg)
             if (fresh_sample) {
                 axis3f_t rate_setpoint = {0};
 
-                estimator_update_from_imu(&sample, &estimator_state);
                 if (!attitude_bench_compute(&estimator_state, &rate_setpoint)) {
                     flight_control_stop_attitude_hang_test(command_outputs,
                                                            "attitude hang test stopped: estimator/ref invalid");
@@ -343,6 +461,7 @@ static void flight_control_task(void *arg)
                         controller_dt_s = 0.050f;
                     }
 
+                    controller_set_runtime_flags(true, params->attitude_test_base_duty, false, false);
                     const rate_controller_status_t rate_status =
                         controller_update_rate(&rate_setpoint, &estimator_state.rate_rpy_dps, controller_dt_s);
                     mixer_mix(mixer_coeffs,
@@ -351,6 +470,129 @@ static void flight_control_task(void *arg)
                                   .axis = rate_status.output,
                               },
                               command_outputs);
+                }
+                last_rate_update_us = sample.timestamp_us;
+            }
+
+            motor_set_armed_outputs(command_outputs, false);
+            continue;
+        }
+
+        if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE) {
+            const params_store_t *params = params_get();
+
+            if (ground_mode_start_us == 0u) {
+                ground_mode_start_us = now_us;
+            }
+            if (!flight_control_attitude_sample_ready(&sample)) {
+                flight_control_stop_ground_tune(command_outputs,
+                                                GROUND_TUNE_TRIP_IMU_STALE,
+                                                "ground tune stopped: imu stale",
+                                                false);
+                continue;
+            }
+            if (sample.update_age_us > (params->imu_timeout_ms * 1000u)) {
+                flight_control_stop_ground_tune(command_outputs,
+                                                GROUND_TUNE_TRIP_IMU_STALE,
+                                                "ground tune stopped: imu stale",
+                                                false);
+                continue;
+            }
+            if (!runtime_state_get_ground_tune_state().ref_valid) {
+                flight_control_stop_ground_tune(command_outputs,
+                                                GROUND_TUNE_TRIP_REF_MISSING,
+                                                "ground tune stopped: ground ref missing",
+                                                false);
+                continue;
+            }
+            if (params->ground_tune_use_kalman_attitude && !estimator_state.kalman_valid) {
+                flight_control_stop_ground_tune(command_outputs,
+                                                GROUND_TUNE_TRIP_KALMAN_INVALID,
+                                                "ground tune stopped: kalman invalid",
+                                                false);
+                continue;
+            }
+            if ((now_us - ground_mode_start_us) >= ((uint64_t)params->ground_test_auto_disarm_ms * 1000u)) {
+                flight_control_stop_ground_tune(command_outputs,
+                                                GROUND_TUNE_TRIP_WATCHDOG,
+                                                "ground tune stopped: watchdog timeout",
+                                                true);
+                continue;
+            }
+
+            flight_control_set_ground_base_duty_active(params->ground_test_base_duty);
+            if (fresh_sample) {
+                axis3f_t rate_setpoint = {0};
+                if (!ground_tune_compute(&estimator_state, &rate_setpoint)) {
+                    const ground_tune_trip_reason_t trip =
+                        runtime_state_get_ground_tune_state().trip_reason;
+                    const char *reason = "ground tune stopped: estimator/ref invalid";
+                    if (trip == GROUND_TUNE_TRIP_REF_MISSING) {
+                        reason = "ground tune stopped: ground ref missing";
+                    } else if (trip == GROUND_TUNE_TRIP_KALMAN_INVALID) {
+                        reason = "ground tune stopped: kalman invalid";
+                    } else if (trip == GROUND_TUNE_TRIP_IMU_STALE) {
+                        reason = "ground tune stopped: imu stale";
+                    }
+                    flight_control_stop_ground_tune(command_outputs, trip, reason, false);
+                    continue;
+                }
+                if (flight_control_ground_trip_exceeded(params)) {
+                    flight_control_stop_ground_tune(command_outputs,
+                                                    GROUND_TUNE_TRIP_ANGLE,
+                                                    "ground tune stopped: angle trip",
+                                                    false);
+                    continue;
+                }
+
+                runtime_state_set_rate_setpoint_request(rate_setpoint);
+                if (last_rate_update_us != 0 && sample.timestamp_us > last_rate_update_us) {
+                    float controller_dt_s = (float)(sample.timestamp_us - last_rate_update_us) / 1000000.0f;
+                    if (controller_dt_s < 0.001f) {
+                        controller_dt_s = 0.001f;
+                    } else if (controller_dt_s > 0.050f) {
+                        controller_dt_s = 0.050f;
+                    }
+
+                    const axis3f_t measured_rate =
+                        params->ground_tune_use_filtered_rate ? estimator_state.filtered_rate_rpy_dps : estimator_state.rate_rpy_dps;
+                    controller_set_runtime_flags(true,
+                                                 params->ground_test_base_duty,
+                                                 ground_saturated_for_freeze,
+                                                 false);
+                    const rate_controller_status_t rate_status =
+                        controller_update_rate(&rate_setpoint, &measured_rate, controller_dt_s);
+                    mixer_mix(mixer_coeffs,
+                              &(mixer_input_t){
+                                  .throttle = params->ground_test_base_duty,
+                                  .axis = rate_status.output,
+                              },
+                              command_outputs);
+
+                    const bool saturated = flight_control_ground_limit_outputs(params, command_outputs);
+                    ground_saturated_for_freeze = saturated;
+                    controller_set_runtime_flags(true, params->ground_test_base_duty, saturated, false);
+                    ground_saturation_ticks = saturated ? (ground_saturation_ticks + 1u) : 0u;
+                    ground_jitter_ticks =
+                        flight_control_ground_rate_jitter(previous_ground_pid_axis, rate_status.output)
+                            ? (ground_jitter_ticks + 1u)
+                            : 0u;
+                    previous_ground_pid_axis = rate_status.output;
+
+                    if (ground_saturation_ticks >= GROUND_SATURATION_TRIP_TICKS) {
+                        flight_control_stop_ground_tune(command_outputs,
+                                                        GROUND_TUNE_TRIP_SATURATION,
+                                                        "ground tune stopped: saturation trip",
+                                                        false);
+                        continue;
+                    }
+                    if (ground_jitter_ticks >= GROUND_RATE_JITTER_TRIP_TICKS) {
+                        flight_control_stop_ground_tune(command_outputs,
+                                                        GROUND_TUNE_TRIP_RATE_JITTER,
+                                                        "ground tune stopped: rate output jitter trip",
+                                                        false);
+                        continue;
+                    }
                 }
                 last_rate_update_us = sample.timestamp_us;
             }
@@ -394,7 +636,6 @@ static void flight_control_task(void *arg)
             axis3f_t pid_axis = controller_get_last_rate_status().output;
             if (fresh_sample && sample.has_gyro_acc) {
                 axis3f_t attitude_rate_setpoint = {0};
-                estimator_update_from_imu(&sample, &estimator_state);
                 if (!attitude_bench_compute(&estimator_state, &attitude_rate_setpoint)) {
                     flight_control_stop_udp_manual(command_outputs,
                                                    "udp manual stopped: estimator/ref invalid",
@@ -422,6 +663,7 @@ static void flight_control_task(void *arg)
                         controller_dt_s = 0.050f;
                     }
 
+                    controller_set_runtime_flags(true, manual.throttle, false, false);
                     const rate_controller_status_t rate_status =
                         controller_update_rate(&rate_setpoint, &estimator_state.rate_rpy_dps, controller_dt_s);
                     pid_axis = rate_status.output;
@@ -440,6 +682,7 @@ static void flight_control_task(void *arg)
         }
 
         flight_control_set_base_duty_active(0.0f);
+        flight_control_set_ground_base_duty_active(0.0f);
         if (safety_status.arm_state == ARM_STATE_ARMED) {
             float zeros[MOTOR_COUNT] = {0};
             motor_set_armed_outputs(zeros, false);
@@ -470,7 +713,8 @@ static void telemetry_task(void *arg)
         last_send_us = now_us;
 
         imu_sample_t sample = {0};
-        if (!imu_get_latest(&sample, NULL)) {
+        uint32_t sample_seq = 0;
+        if (!imu_get_latest(&sample, &sample_seq)) {
             continue;
         }
         barometer_state_t baro_state = {0};
@@ -480,8 +724,8 @@ static void telemetry_task(void *arg)
         int battery_mv = 0;
         float battery_v = 0.0f;
         board_battery_read(&battery_raw, &battery_mv, &battery_v);
-        console_send_telemetry(&sample, &baro_state, battery_v, battery_raw);
-        udp_protocol_send_telemetry(&sample, &baro_state, battery_v, battery_raw);
+        console_send_telemetry(&sample, sample_seq, &baro_state, battery_v, battery_raw);
+        udp_protocol_send_telemetry(&sample, sample_seq, &baro_state, battery_v, battery_raw);
     }
 }
 
@@ -559,6 +803,7 @@ void app_main(void)
     runtime_state_set_axis_test_request((axis3f_t){0});
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
     attitude_bench_clear_reference();
+    ground_tune_clear_reference();
     if (!mixer_self_test()) {
         runtime_state_set_arm_state(ARM_STATE_FAULT_LOCK);
         runtime_state_set_failsafe_reason(FAILSAFE_REASON_NONE);

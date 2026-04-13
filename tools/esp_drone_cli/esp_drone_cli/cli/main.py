@@ -11,11 +11,14 @@ from pathlib import Path
 from esp_drone_cli.core import DeviceSession, TelemetrySample
 from esp_drone_cli.core.models import (
     FEATURE_ATTITUDE_HANG_BENCH,
+    FEATURE_GROUND_TUNE,
     FEATURE_NAMES,
     FEATURE_UDP_MANUAL_CONTROL,
     MIN_ATTITUDE_HANG_PROTOCOL_VERSION,
+    MIN_GROUND_TUNE_PROTOCOL_VERSION,
     MIN_UDP_MANUAL_PROTOCOL_VERSION,
 )
+from esp_drone_cli.core.ground_bench import run_ground_bench_round
 from esp_drone_cli.core.roll_bench import (
     apply_axis_bench_params,
     run_axis_bench_round,
@@ -100,6 +103,42 @@ def format_attitude_status_line_all(sample: TelemetrySample) -> str:
         f"{sample.attitude_ref_qy:.4f}, {sample.attitude_ref_qz:.4f}]"
     )
     return " | ".join(parts + [ref_q])
+
+
+def format_ground_status_line(sample: TelemetrySample, axis_name: str) -> str:
+    motors = ", ".join(f"{value:.3f}" for value in (sample.motor1, sample.motor2, sample.motor3, sample.motor4))
+    if axis_name in {"roll", "pitch"}:
+        err = float(getattr(sample, f"attitude_err_{axis_name}_deg"))
+        rate_sp = float(getattr(sample, f"attitude_rate_sp_{axis_name}"))
+    else:
+        err = 0.0
+        rate_sp = float(sample.rate_setpoint_yaw)
+    return (
+        f"{axis_name} "
+        f"ref_valid={sample.reference_valid} "
+        f"ground_ref={sample.ground_ref_valid} "
+        f"kalman_valid={sample.kalman_valid} "
+        f"trip={sample.ground_trip_reason} "
+        f"err={err:.3f}deg "
+        f"rate_sp={rate_sp:.3f}dps "
+        f"raw_rate={float(getattr(sample, f'rate_meas_{axis_name}_raw')):.3f} "
+        f"filtered_rate={float(getattr(sample, f'rate_meas_{axis_name}_filtered')):.3f} "
+        f"rate_err={float(getattr(sample, f'rate_err_{axis_name}')):.3f} "
+        f"pid_p={float(getattr(sample, f'rate_pid_p_{axis_name}')):.4f} "
+        f"pid_i={float(getattr(sample, f'rate_pid_i_{axis_name}')):.4f} "
+        f"pid_d={float(getattr(sample, f'rate_pid_d_{axis_name}')):.4f} "
+        f"pid_out={float(getattr(sample, f'pid_out_{axis_name}')):.4f} "
+        f"base={sample.base_duty_active:.3f} "
+        f"sat={sample.motor_saturation_flag} "
+        f"i_freeze={sample.integrator_freeze_flag} "
+        f"motors=[{motors}] "
+        f"arm={sample.arm_state} mode={sample.control_mode} imu_age_us={sample.imu_age_us}"
+    )
+
+
+def format_ground_status_line_all(sample: TelemetrySample) -> str:
+    parts = [format_ground_status_line(sample, axis_name) for axis_name in ("roll", "pitch", "yaw")]
+    return " | ".join(parts)
 
 
 def wait_for_one_sample(session: DeviceSession, timeout: float) -> TelemetrySample:
@@ -243,6 +282,29 @@ def require_udp_manual_capability(session: DeviceSession) -> None:
         f"feature udp_manual_control/0x{FEATURE_UDP_MANUAL_CONTROL:02x}; "
         f"got protocol_version={protocol_version}, feature_bitmap=0x{feature_bitmap:08x}). "
         "Rebuild and flash the current main firmware before using UDP Control."
+    )
+
+
+def require_ground_tune_capability(session: DeviceSession) -> None:
+    """Reject flat-ground tune commands before sending ground opcodes."""
+
+    if hasattr(session, "require_ground_tune"):
+        session.require_ground_tune()
+        return
+    info = session.device_info or session.hello()
+    if hasattr(info, "require_ground_tune"):
+        info.require_ground_tune()
+        return
+    protocol_version = int(getattr(info, "protocol_version", 0))
+    feature_bitmap = int(getattr(info, "feature_bitmap", 0))
+    if protocol_version >= MIN_GROUND_TUNE_PROTOCOL_VERSION and (feature_bitmap & FEATURE_GROUND_TUNE):
+        return
+    raise RuntimeError(
+        "device firmware does not advertise flat-ground tune support "
+        f"(need protocol_version>={MIN_GROUND_TUNE_PROTOCOL_VERSION} and "
+        f"feature ground_tune/0x{FEATURE_GROUND_TUNE:02x}; "
+        f"got protocol_version={protocol_version}, feature_bitmap=0x{feature_bitmap:08x}). "
+        "Rebuild and flash the current main firmware before running ground tune commands."
     )
 
 
@@ -592,6 +654,87 @@ def cmd_watch_attitude(session: DeviceSession, args) -> int:
         except Exception:
             pass
         session.unsubscribe(token)
+
+
+def cmd_ground_capture_ref(session: DeviceSession, _args) -> int:
+    require_ground_tune_capability(session)
+    ensure_command_ok(CmdId.GROUND_CAPTURE_REF, session.ground_capture_ref())
+    return 0
+
+
+def cmd_ground_test(session: DeviceSession, args) -> int:
+    require_ground_tune_capability(session)
+    if args.action == "start":
+        ensure_command_ok(CmdId.GROUND_TEST_START, session.ground_test_start(base_duty=args.base_duty))
+        return 0
+    ensure_command_ok(CmdId.GROUND_TEST_STOP, session.ground_test_stop())
+    return 0
+
+
+def cmd_ground_status(session: DeviceSession, args) -> int:
+    require_ground_tune_capability(session)
+    sample = wait_for_one_sample(session, timeout=args.timeout)
+    print(format_ground_status_line_all(sample))
+    return 0
+
+
+def cmd_watch_ground(session: DeviceSession, args) -> int:
+    require_ground_tune_capability(session)
+    samples: deque[TelemetrySample] = deque(maxlen=1)
+
+    def on_telemetry(sample: TelemetrySample) -> None:
+        samples.append(sample)
+
+    token = session.subscribe_telemetry(on_telemetry)
+    had_sample = False
+    next_emit = time.monotonic()
+    try:
+        session.start_stream()
+        deadline = time.monotonic() + args.timeout
+        while time.monotonic() < deadline:
+            if not samples:
+                time.sleep(0.02)
+                continue
+            if time.monotonic() < next_emit:
+                time.sleep(0.02)
+                continue
+            sample = samples[-1]
+            had_sample = True
+            if args.axis == "all":
+                print(format_ground_status_line_all(sample))
+            else:
+                print(format_ground_status_line(sample, args.axis))
+            next_emit = time.monotonic() + args.interval
+        if not had_sample:
+            print("watch-ground did not receive telemetry within timeout")
+            return 1
+        return 0
+    finally:
+        try:
+            session.stop_stream()
+        except Exception:
+            pass
+        session.unsubscribe(token)
+
+
+def cmd_ground_bench(session: DeviceSession, args) -> int:
+    require_ground_tune_capability(session)
+    result = run_ground_bench_round(
+        session,
+        Path(args.output_root),
+        axis=args.axis,
+        duration_s=args.duration,
+        base_duty=args.base_duty,
+        auto_arm=args.auto_arm,
+        mode=args.mode,
+    )
+    print(f"saved_dir={result.output_dir}")
+    print(f"safe_to_continue={result.summary.safe_to_continue}")
+    print(f"next_action_hint={result.summary.next_action_hint}")
+    print(f"telemetry_csv={result.telemetry_csv}")
+    print(f"summary_json={result.summary_json}")
+    print(f"summary_md={result.summary_md}")
+    return 0 if result.summary.safe_to_continue else 2
 
 
 def cmd_udp_manual(session: DeviceSession, args) -> int:
@@ -960,6 +1103,43 @@ def build_parser() -> argparse.ArgumentParser:
     watch_attitude_p.add_argument("--timeout", type=float, default=5.0)
     watch_attitude_p.add_argument("--interval", type=float, default=0.2)
 
+    ground_capture_p = sub.add_parser(
+        "ground-capture-ref",
+        help="capture the current flat-ground pose as the ground tune reference",
+        description="Capture the current flat-ground pose for the low-throttle ground tune mode.",
+    )
+    ground_capture_p.set_defaults(command="ground-capture-ref")
+
+    ground_test_p = sub.add_parser(
+        "ground-test",
+        help="start or stop flat-ground low-throttle tune mode",
+        description="Flat-ground low-throttle attitude tune mode. Roll/pitch use the ground outer loop; yaw remains rate-only.",
+    )
+    ground_test_sub = ground_test_p.add_subparsers(dest="action", required=True)
+    ground_test_start_p = ground_test_sub.add_parser("start")
+    ground_test_start_p.add_argument("--base-duty", type=float)
+    ground_test_sub.add_parser("stop")
+
+    ground_status_p = sub.add_parser("ground-status", help="print one ground tune telemetry snapshot")
+    ground_status_p.add_argument("--timeout", type=float, default=5.0)
+
+    watch_ground_p = sub.add_parser("watch-ground", help="watch ground tune telemetry")
+    watch_ground_p.add_argument("axis", nargs="?", choices=["roll", "pitch", "yaw", "all"], default="all")
+    watch_ground_p.add_argument("--timeout", type=float, default=10.0)
+    watch_ground_p.add_argument("--interval", type=float, default=0.1)
+
+    ground_bench_p = sub.add_parser(
+        "ground-bench",
+        help="run a flat-ground low-throttle bench recording and summary",
+        description="Run ground-capture-ref, ground-test start/stop, telemetry logging, and conservative summary generation.",
+    )
+    ground_bench_p.add_argument("axis", choices=["roll", "pitch", "yaw", "all"])
+    ground_bench_p.add_argument("--output-root", default="logs")
+    ground_bench_p.add_argument("--duration", type=float, default=5.0)
+    ground_bench_p.add_argument("--base-duty", type=float)
+    ground_bench_p.add_argument("--auto-arm", action="store_true")
+    ground_bench_p.add_argument("--mode", default="manual_perturb")
+
     udp_manual_p = sub.add_parser(
         "udp-manual",
         help="experimental UDP manual control; not free-flight ready",
@@ -1080,6 +1260,11 @@ def main(argv: list[str] | None = None) -> int:
             "attitude-test": cmd_attitude_test,
             "attitude-status": cmd_attitude_status,
             "watch-attitude": cmd_watch_attitude,
+            "ground-capture-ref": cmd_ground_capture_ref,
+            "ground-test": cmd_ground_test,
+            "ground-status": cmd_ground_status,
+            "watch-ground": cmd_watch_ground,
+            "ground-bench": cmd_ground_bench,
             "udp-manual": cmd_udp_manual,
             "calib": cmd_calib,
             "axis-bench": cmd_axis_bench,

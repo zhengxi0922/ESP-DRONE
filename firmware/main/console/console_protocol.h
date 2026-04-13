@@ -4,7 +4,7 @@
 
 #define CONSOLE_FRAME_MAGIC 0xA5u
 #define CONSOLE_FRAME_VERSION 0x01u
-#define CONSOLE_PROTOCOL_VERSION 0x05u
+#define CONSOLE_PROTOCOL_VERSION 0x06u
 #define CONSOLE_BUILD_GIT_HASH_LEN 16u
 #define CONSOLE_BUILD_TIME_LEN 24u
 
@@ -15,6 +15,7 @@
 #define CONSOLE_FEATURE_BARO_TELEMETRY (1u << 4)
 #define CONSOLE_FEATURE_ATTITUDE_HANG_BENCH (1u << 5)
 #define CONSOLE_FEATURE_UDP_MANUAL_CONTROL (1u << 6)
+#define CONSOLE_FEATURE_GROUND_TUNE (1u << 7)
 #define CONSOLE_FEATURE_BITMAP_CURRENT \
     (CONSOLE_FEATURE_PARAMS | \
      CONSOLE_FEATURE_STREAMING | \
@@ -22,7 +23,8 @@
      CONSOLE_FEATURE_RATE_TEST | \
      CONSOLE_FEATURE_BARO_TELEMETRY | \
      CONSOLE_FEATURE_ATTITUDE_HANG_BENCH | \
-     CONSOLE_FEATURE_UDP_MANUAL_CONTROL)
+     CONSOLE_FEATURE_UDP_MANUAL_CONTROL | \
+     CONSOLE_FEATURE_GROUND_TUNE)
 
 typedef enum {
     MSG_HELLO_REQ = 0x01,
@@ -62,6 +64,9 @@ typedef enum {
     CMD_UDP_TAKEOFF = 16,
     CMD_UDP_LAND = 17,
     CMD_UDP_MANUAL_STOP = 18,
+    CMD_GROUND_CAPTURE_REF = 19,
+    CMD_GROUND_TEST_START = 20,
+    CMD_GROUND_TEST_STOP = 21,
 } console_cmd_id_t;
 
 typedef enum {
@@ -182,4 +187,30 @@ typedef struct __attribute__((packed)) {
     float base_duty_active;
     uint8_t attitude_ref_valid;
     uint8_t attitude_reserved[3];
+    float filtered_gyro_x;
+    float filtered_gyro_y;
+    float filtered_gyro_z;
+    float filtered_acc_x;
+    float filtered_acc_y;
+    float filtered_acc_z;
+    float kalman_roll_deg;
+    float kalman_pitch_deg;
+    float rate_meas_roll_raw;
+    float rate_meas_pitch_raw;
+    float rate_meas_yaw_raw;
+    float rate_meas_roll_filtered;
+    float rate_meas_pitch_filtered;
+    float rate_meas_yaw_filtered;
+    float rate_err_roll;
+    float rate_err_pitch;
+    float rate_err_yaw;
+    uint32_t sample_seq;
+    uint8_t attitude_valid;
+    uint8_t kalman_valid;
+    uint8_t motor_saturation_flag;
+    uint8_t integrator_freeze_flag;
+    uint8_t ground_ref_valid;
+    uint8_t reference_valid;
+    uint8_t ground_trip_reason;
+    uint8_t telemetry_reserved;
 } console_telemetry_sample_t;

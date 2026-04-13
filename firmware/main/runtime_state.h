@@ -142,3 +142,11 @@ attitude_hang_state_t runtime_state_get_attitude_hang_state(void);
 /**
  * @brief 璁剧疆 attitude hang 杩愯鎬佸揩鐓с€? */
 void runtime_state_set_attitude_hang_state(attitude_hang_state_t state);
+
+void runtime_state_set_ground_reference(bool valid,
+                                        quatf_t ref_q_body_to_world,
+                                        float ref_kalman_roll_deg,
+                                        float ref_kalman_pitch_deg);
+void runtime_state_clear_ground_reference(void);
+ground_tune_state_t runtime_state_get_ground_tune_state(void);
+void runtime_state_set_ground_tune_state(ground_tune_state_t state);

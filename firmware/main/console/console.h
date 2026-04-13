@@ -41,6 +41,7 @@ void console_send_event_text(const char *text);
  * @note 仅当控制台已初始化且遥测流开关已打开时才会实际发送。
  */
 void console_send_telemetry(const imu_sample_t *imu_sample,
+                            uint32_t sample_seq,
                             const barometer_state_t *baro_state,
                             float battery_voltage,
                             int battery_raw);

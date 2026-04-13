@@ -16,6 +16,8 @@
 #include "console_protocol.h"
 #include "console.h"
 #include "controller.h"
+#include "estimator.h"
+#include "ground_tune.h"
 #include "imu.h"
 #include "motor.h"
 #include "params.h"
@@ -158,9 +160,21 @@ static void udp_send_param_value_to(int sock,
     udp_send_frame_to(sock, addr, addr_len, MSG_PARAM_VALUE, payload, (uint16_t)(offset + value_len));
 }
 
-static console_cmd_status_t udp_handle_command(uint8_t cmd_id)
+static bool udp_sample_supports_ground_ref(const imu_sample_t *sample)
 {
-    switch ((console_cmd_id_t)cmd_id) {
+    return sample != NULL &&
+           sample->health == IMU_HEALTH_OK &&
+           sample->has_gyro_acc &&
+           sample->has_quaternion;
+}
+
+static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
+{
+    if (req == NULL) {
+        return CMD_STATUS_INVALID_ARGUMENT;
+    }
+
+    switch ((console_cmd_id_t)req->cmd_id) {
     case CMD_ARM:
         runtime_state_set_motor_test(-1, 0.0f);
         return safety_request_arm(true) ? CMD_STATUS_OK : CMD_STATUS_REJECTED;
@@ -192,6 +206,75 @@ static console_cmd_status_t udp_handle_command(uint8_t cmd_id)
         return udp_manual_land();
     case CMD_UDP_MANUAL_STOP:
         return udp_manual_stop();
+    case CMD_GROUND_CAPTURE_REF: {
+        imu_sample_t sample = {0};
+        estimator_state_t estimator_state = {0};
+        const arm_state_t arm_state = runtime_state_get_arm_state();
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE) {
+            return CMD_STATUS_CONFLICT;
+        }
+        if (arm_state == ARM_STATE_FAILSAFE || arm_state == ARM_STATE_FAULT_LOCK) {
+            return CMD_STATUS_REJECTED;
+        }
+        if (!imu_get_latest(&sample, NULL) || !udp_sample_supports_ground_ref(&sample)) {
+            return CMD_STATUS_IMU_NOT_READY;
+        }
+        if (!estimator_get_latest(&estimator_state) || estimator_state.timestamp_us != sample.timestamp_us) {
+            estimator_update_from_imu(&sample, &estimator_state);
+        }
+        if (!ground_tune_capture_reference(&sample, &estimator_state)) {
+            return CMD_STATUS_IMU_NOT_READY;
+        }
+        controller_reset();
+        console_send_event_text("ground ref captured");
+        return CMD_STATUS_OK;
+    }
+    case CMD_GROUND_TEST_START: {
+        imu_sample_t sample = {0};
+        estimator_state_t estimator_state = {0};
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE) {
+            return CMD_STATUS_CONFLICT;
+        }
+        if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
+            return CMD_STATUS_ARM_REQUIRED;
+        }
+        if (!runtime_state_get_ground_tune_state().ref_valid) {
+            return CMD_STATUS_REF_REQUIRED;
+        }
+        if (!imu_get_latest(&sample, NULL) || !udp_sample_supports_ground_ref(&sample)) {
+            return CMD_STATUS_IMU_NOT_READY;
+        }
+        if (!estimator_get_latest(&estimator_state) || estimator_state.timestamp_us != sample.timestamp_us) {
+            estimator_update_from_imu(&sample, &estimator_state);
+        }
+        if (params_get()->ground_tune_use_kalman_attitude && !estimator_state.kalman_valid) {
+            ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
+            return CMD_STATUS_IMU_NOT_READY;
+        }
+        if (req->arg_f32 > 0.0f) {
+            param_value_t value = {.f32 = req->arg_f32};
+            if (!params_try_set("ground_test_base_duty", value, PARAM_TYPE_FLOAT)) {
+                return CMD_STATUS_INVALID_ARGUMENT;
+            }
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        ground_tune_reset_status();
+        controller_reset();
+        runtime_state_set_control_mode(CONTROL_MODE_ATTITUDE_GROUND_TUNE);
+        console_send_event_text("ground tune started");
+        return CMD_STATUS_OK;
+    }
+    case CMD_GROUND_TEST_STOP:
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+        ground_tune_set_trip_reason(GROUND_TUNE_TRIP_STOP_NORMAL);
+        motor_stop_all();
+        console_send_event_text("ground tune stopped normally");
+        return CMD_STATUS_OK;
     default:
         return CMD_STATUS_UNSUPPORTED;
     }
@@ -339,7 +422,7 @@ static void udp_handle_message(int sock,
         }
         console_cmd_req_t req = {0};
         memcpy(&req, payload, sizeof(req));
-        const console_cmd_status_t status = udp_handle_command(req.cmd_id);
+        const console_cmd_status_t status = udp_handle_command(&req);
         udp_send_cmd_resp_to(sock, addr, addr_len, req.cmd_id, status);
         if (req.cmd_id == CMD_REBOOT && status == CMD_STATUS_OK) {
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -475,6 +558,7 @@ void udp_protocol_task(void *arg)
 }
 
 void udp_protocol_send_telemetry(const imu_sample_t *imu_sample,
+                                 uint32_t sample_seq,
                                  const barometer_state_t *baro_state,
                                  float battery_voltage,
                                  int battery_raw)
@@ -508,7 +592,23 @@ void udp_protocol_send_telemetry(const imu_sample_t *imu_sample,
     const axis3f_t rate_setpoint_request = runtime_state_get_rate_setpoint_request();
     const rate_controller_status_t rate_status = controller_get_last_rate_status();
     const control_mode_t control_mode = runtime_state_get_control_mode();
-    const attitude_hang_state_t attitude_state = runtime_state_get_attitude_hang_state();
+    const attitude_hang_state_t hang_state = runtime_state_get_attitude_hang_state();
+    const ground_tune_state_t ground_state = runtime_state_get_ground_tune_state();
+    estimator_state_t estimator_state = {0};
+    if (!estimator_get_latest(&estimator_state) || estimator_state.timestamp_us != imu_sample->timestamp_us) {
+        estimator_state.timestamp_us = imu_sample->timestamp_us;
+        estimator_state.raw_gyro_body_xyz_dps = imu_sample->gyro_xyz_dps;
+        estimator_state.filtered_gyro_body_xyz_dps = imu_sample->gyro_xyz_dps;
+        estimator_state.raw_acc_body_xyz_g = imu_sample->acc_xyz_g;
+        estimator_state.filtered_acc_body_xyz_g = imu_sample->acc_xyz_g;
+        estimator_state.raw_rate_rpy_dps = estimator_project_rates_from_body_gyro(imu_sample->gyro_xyz_dps);
+        estimator_state.filtered_rate_rpy_dps = estimator_state.raw_rate_rpy_dps;
+        estimator_state.raw_attitude_rpy_deg = imu_sample->roll_pitch_yaw_deg;
+        estimator_state.raw_quat_body_to_world = imu_sample->quat_wxyz;
+        estimator_state.attitude_valid = imu_sample->has_attitude && imu_sample->has_quaternion;
+    }
+    const bool ground_active = control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE;
+    const bool reference_valid = ground_active ? ground_state.ref_valid : hang_state.ref_valid;
 
     const console_telemetry_sample_t sample = {
         .timestamp_us = imu_sample->timestamp_us,
@@ -565,17 +665,43 @@ void udp_protocol_send_telemetry(const imu_sample_t *imu_sample,
         .baro_valid = (baro_state != NULL && baro_state->valid) ? 1u : 0u,
         .baro_health = (baro_state != NULL) ? (uint8_t)baro_state->health : (uint8_t)BARO_HEALTH_INIT,
         .baro_reserved = {0, 0},
-        .attitude_err_roll_deg = attitude_state.err_roll_deg,
-        .attitude_err_pitch_deg = attitude_state.err_pitch_deg,
-        .attitude_rate_sp_roll = attitude_state.rate_sp_roll_dps,
-        .attitude_rate_sp_pitch = attitude_state.rate_sp_pitch_dps,
-        .attitude_ref_qw = attitude_state.ref_q_body_to_world.w,
-        .attitude_ref_qx = attitude_state.ref_q_body_to_world.x,
-        .attitude_ref_qy = attitude_state.ref_q_body_to_world.y,
-        .attitude_ref_qz = attitude_state.ref_q_body_to_world.z,
-        .base_duty_active = attitude_state.base_duty_active,
-        .attitude_ref_valid = attitude_state.ref_valid ? 1u : 0u,
+        .attitude_err_roll_deg = ground_active ? ground_state.err_roll_deg : hang_state.err_roll_deg,
+        .attitude_err_pitch_deg = ground_active ? ground_state.err_pitch_deg : hang_state.err_pitch_deg,
+        .attitude_rate_sp_roll = ground_active ? ground_state.rate_sp_roll_dps : hang_state.rate_sp_roll_dps,
+        .attitude_rate_sp_pitch = ground_active ? ground_state.rate_sp_pitch_dps : hang_state.rate_sp_pitch_dps,
+        .attitude_ref_qw = ground_active ? ground_state.ref_q_body_to_world.w : hang_state.ref_q_body_to_world.w,
+        .attitude_ref_qx = ground_active ? ground_state.ref_q_body_to_world.x : hang_state.ref_q_body_to_world.x,
+        .attitude_ref_qy = ground_active ? ground_state.ref_q_body_to_world.y : hang_state.ref_q_body_to_world.y,
+        .attitude_ref_qz = ground_active ? ground_state.ref_q_body_to_world.z : hang_state.ref_q_body_to_world.z,
+        .base_duty_active = ground_active ? ground_state.base_duty_active : hang_state.base_duty_active,
+        .attitude_ref_valid = reference_valid ? 1u : 0u,
         .attitude_reserved = {0, 0, 0},
+        .filtered_gyro_x = estimator_state.filtered_gyro_body_xyz_dps.x,
+        .filtered_gyro_y = estimator_state.filtered_gyro_body_xyz_dps.y,
+        .filtered_gyro_z = estimator_state.filtered_gyro_body_xyz_dps.z,
+        .filtered_acc_x = estimator_state.filtered_acc_body_xyz_g.x,
+        .filtered_acc_y = estimator_state.filtered_acc_body_xyz_g.y,
+        .filtered_acc_z = estimator_state.filtered_acc_body_xyz_g.z,
+        .kalman_roll_deg = estimator_state.kalman_roll_deg,
+        .kalman_pitch_deg = estimator_state.kalman_pitch_deg,
+        .rate_meas_roll_raw = estimator_state.raw_rate_rpy_dps.roll,
+        .rate_meas_pitch_raw = estimator_state.raw_rate_rpy_dps.pitch,
+        .rate_meas_yaw_raw = estimator_state.raw_rate_rpy_dps.yaw,
+        .rate_meas_roll_filtered = estimator_state.filtered_rate_rpy_dps.roll,
+        .rate_meas_pitch_filtered = estimator_state.filtered_rate_rpy_dps.pitch,
+        .rate_meas_yaw_filtered = estimator_state.filtered_rate_rpy_dps.yaw,
+        .rate_err_roll = rate_status.error.roll,
+        .rate_err_pitch = rate_status.error.pitch,
+        .rate_err_yaw = rate_status.error.yaw,
+        .sample_seq = sample_seq,
+        .attitude_valid = estimator_state.attitude_valid ? 1u : 0u,
+        .kalman_valid = estimator_state.kalman_valid ? 1u : 0u,
+        .motor_saturation_flag = rate_status.motor_saturation ? 1u : 0u,
+        .integrator_freeze_flag = rate_status.integrator_freeze ? 1u : 0u,
+        .ground_ref_valid = ground_state.ref_valid ? 1u : 0u,
+        .reference_valid = reference_valid ? 1u : 0u,
+        .ground_trip_reason = (uint8_t)ground_state.trip_reason,
+        .telemetry_reserved = 0u,
     };
 
     if (!udp_send_frame_to(sock, &target, target_len, MSG_TELEMETRY_SAMPLE, &sample, sizeof(sample))) {

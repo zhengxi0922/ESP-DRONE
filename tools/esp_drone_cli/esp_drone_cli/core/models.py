@@ -14,6 +14,8 @@ HELLO_RESP_STRUCT_V2 = struct.Struct("<BBBBI16s24s")
 TELEMETRY_STRUCT_V1 = struct.Struct("<Q" + "f" * 36 + "III8B")
 TELEMETRY_STRUCT_V2 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B")
 TELEMETRY_STRUCT_V3 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B" + "f" * 9 + "4B")
+TELEMETRY_STRUCT_V4 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B" + "f" * 9 + "4B" + "f" * 17 + "I8B")
+TELEMETRY_STRUCT_CURRENT = TELEMETRY_STRUCT_V4
 TELEMETRY_STRUCT = TELEMETRY_STRUCT_V3
 
 TELEMETRY_CSV_FIELDS = [
@@ -37,6 +39,20 @@ TELEMETRY_CSV_FIELDS = [
     "attitude_rate_sp_roll", "attitude_rate_sp_pitch",
     "attitude_ref_qw", "attitude_ref_qx", "attitude_ref_qy", "attitude_ref_qz",
     "base_duty_active", "attitude_ref_valid",
+    "filtered_gyro_x", "filtered_gyro_y", "filtered_gyro_z",
+    "filtered_acc_x", "filtered_acc_y", "filtered_acc_z",
+    "kalman_roll_deg", "kalman_pitch_deg",
+    "rate_meas_roll_raw", "rate_meas_pitch_raw", "rate_meas_yaw_raw",
+    "rate_meas_roll_filtered", "rate_meas_pitch_filtered", "rate_meas_yaw_filtered",
+    "rate_err_roll", "rate_err_pitch", "rate_err_yaw",
+    "sample_seq", "attitude_valid", "kalman_valid",
+    "motor_saturation_flag", "integrator_freeze_flag",
+    "ground_ref_valid", "reference_valid", "ground_trip_reason",
+    "battery_v",
+    "raw_gyro_x", "raw_gyro_y", "raw_gyro_z",
+    "raw_acc_x", "raw_acc_y", "raw_acc_z",
+    "raw_roll_deg", "raw_pitch_deg", "raw_yaw_deg",
+    "raw_quat_w", "raw_quat_x", "raw_quat_y", "raw_quat_z",
 ]
 
 RATE_AXIS_SOURCES = {
@@ -57,8 +73,10 @@ FEATURE_RATE_TEST = 1 << 3
 FEATURE_BARO_TELEMETRY = 1 << 4
 FEATURE_ATTITUDE_HANG_BENCH = 1 << 5
 FEATURE_UDP_MANUAL_CONTROL = 1 << 6
+FEATURE_GROUND_TUNE = 1 << 7
 MIN_ATTITUDE_HANG_PROTOCOL_VERSION = 3
 MIN_UDP_MANUAL_PROTOCOL_VERSION = 5
+MIN_GROUND_TUNE_PROTOCOL_VERSION = 6
 
 FEATURE_NAMES = {
     FEATURE_PARAMS: "params",
@@ -68,6 +86,7 @@ FEATURE_NAMES = {
     FEATURE_BARO_TELEMETRY: "baro_telemetry",
     FEATURE_ATTITUDE_HANG_BENCH: "attitude_hang_bench",
     FEATURE_UDP_MANUAL_CONTROL: "udp_manual_control",
+    FEATURE_GROUND_TUNE: "ground_tune",
 }
 
 
@@ -124,6 +143,20 @@ class DeviceInfo:
             f"build_git_hash={self.build_git_hash or 'unknown'}, "
             f"build_time_utc={self.build_time_utc or 'unknown'}). "
             "Rebuild and flash the current main firmware before using UDP Control."
+        )
+
+    def require_ground_tune(self) -> None:
+        if self.protocol_version >= MIN_GROUND_TUNE_PROTOCOL_VERSION and self.supports_feature(FEATURE_GROUND_TUNE):
+            return
+        raise CapabilityError(
+            "device firmware does not advertise flat-ground tune support "
+            f"(need protocol_version>={MIN_GROUND_TUNE_PROTOCOL_VERSION} and "
+            f"feature ground_tune/0x{FEATURE_GROUND_TUNE:02x}; "
+            f"got protocol_version={self.protocol_version}, "
+            f"feature_bitmap=0x{self.feature_bitmap:08x}, "
+            f"build_git_hash={self.build_git_hash or 'unknown'}, "
+            f"build_time_utc={self.build_time_utc or 'unknown'}). "
+            "Rebuild and flash the current main firmware before running ground tune commands."
         )
 
 
@@ -201,6 +234,31 @@ class TelemetrySample:
     attitude_ref_qz: float
     base_duty_active: float
     attitude_ref_valid: int
+    filtered_gyro_x: float
+    filtered_gyro_y: float
+    filtered_gyro_z: float
+    filtered_acc_x: float
+    filtered_acc_y: float
+    filtered_acc_z: float
+    kalman_roll_deg: float
+    kalman_pitch_deg: float
+    rate_meas_roll_raw: float
+    rate_meas_pitch_raw: float
+    rate_meas_yaw_raw: float
+    rate_meas_roll_filtered: float
+    rate_meas_pitch_filtered: float
+    rate_meas_yaw_filtered: float
+    rate_err_roll: float
+    rate_err_pitch: float
+    rate_err_yaw: float
+    sample_seq: int
+    attitude_valid: int
+    kalman_valid: int
+    motor_saturation_flag: int
+    integrator_freeze_flag: int
+    ground_ref_valid: int
+    reference_valid: int
+    ground_trip_reason: int
 
     def axis_rate_feedback_dps(self, axis_name: str) -> float:
         try:
@@ -338,6 +396,31 @@ class TelemetrySample:
             attitude_ref_qz=0.0,
             base_duty_active=0.0,
             attitude_ref_valid=0,
+            filtered_gyro_x=float(values[1]),
+            filtered_gyro_y=float(values[2]),
+            filtered_gyro_z=float(values[3]),
+            filtered_acc_x=float(values[4]),
+            filtered_acc_y=float(values[5]),
+            filtered_acc_z=float(values[6]),
+            kalman_roll_deg=0.0,
+            kalman_pitch_deg=0.0,
+            rate_meas_roll_raw=-float(values[2]),
+            rate_meas_pitch_raw=float(values[1]),
+            rate_meas_yaw_raw=-float(values[3]),
+            rate_meas_roll_filtered=-float(values[2]),
+            rate_meas_pitch_filtered=float(values[1]),
+            rate_meas_yaw_filtered=-float(values[3]),
+            rate_err_roll=0.0,
+            rate_err_pitch=0.0,
+            rate_err_yaw=0.0,
+            sample_seq=0,
+            attitude_valid=1 if (abs(float(values[7])) + abs(float(values[8])) + abs(float(values[9])) + abs(float(values[10]))) > 0.0 else 0,
+            kalman_valid=0,
+            motor_saturation_flag=0,
+            integrator_freeze_flag=0,
+            ground_ref_valid=0,
+            reference_valid=0,
+            ground_trip_reason=0,
         )
 
     @classmethod
@@ -368,7 +451,39 @@ class TelemetrySample:
         return sample
 
     @classmethod
+    def _from_v4_values(cls, values: list[object]) -> "TelemetrySample":
+        sample = cls._from_v3_values(values[:67])
+        sample.filtered_gyro_x = float(values[67])
+        sample.filtered_gyro_y = float(values[68])
+        sample.filtered_gyro_z = float(values[69])
+        sample.filtered_acc_x = float(values[70])
+        sample.filtered_acc_y = float(values[71])
+        sample.filtered_acc_z = float(values[72])
+        sample.kalman_roll_deg = float(values[73])
+        sample.kalman_pitch_deg = float(values[74])
+        sample.rate_meas_roll_raw = float(values[75])
+        sample.rate_meas_pitch_raw = float(values[76])
+        sample.rate_meas_yaw_raw = float(values[77])
+        sample.rate_meas_roll_filtered = float(values[78])
+        sample.rate_meas_pitch_filtered = float(values[79])
+        sample.rate_meas_yaw_filtered = float(values[80])
+        sample.rate_err_roll = float(values[81])
+        sample.rate_err_pitch = float(values[82])
+        sample.rate_err_yaw = float(values[83])
+        sample.sample_seq = int(values[84])
+        sample.attitude_valid = int(values[85])
+        sample.kalman_valid = int(values[86])
+        sample.motor_saturation_flag = int(values[87])
+        sample.integrator_freeze_flag = int(values[88])
+        sample.ground_ref_valid = int(values[89])
+        sample.reference_valid = int(values[90])
+        sample.ground_trip_reason = int(values[91])
+        return sample
+
+    @classmethod
     def from_payload(cls, payload: bytes) -> "TelemetrySample":
+        if len(payload) == TELEMETRY_STRUCT_V4.size:
+            return cls._from_v4_values(list(TELEMETRY_STRUCT_V4.unpack(payload)))
         if len(payload) == TELEMETRY_STRUCT_V3.size:
             return cls._from_v3_values(list(TELEMETRY_STRUCT_V3.unpack(payload)))
         if len(payload) == TELEMETRY_STRUCT_V2.size:
@@ -377,14 +492,35 @@ class TelemetrySample:
             return cls._from_v1_values(list(TELEMETRY_STRUCT_V1.unpack(payload)))
         raise ValueError(
             f"unsupported telemetry payload length {len(payload)}, "
-            f"expected {TELEMETRY_STRUCT_V1.size}, {TELEMETRY_STRUCT_V2.size}, or {TELEMETRY_STRUCT_V3.size}"
+            f"expected {TELEMETRY_STRUCT_V1.size}, {TELEMETRY_STRUCT_V2.size}, "
+            f"{TELEMETRY_STRUCT_V3.size}, or {TELEMETRY_STRUCT_V4.size}"
         )
 
     def to_csv_row(self) -> list[object]:
-        return [getattr(self, name) for name in TELEMETRY_CSV_FIELDS]
+        display = self.to_display_map()
+        return [display[name] for name in TELEMETRY_CSV_FIELDS]
 
     def to_display_map(self) -> dict[str, object]:
-        return {name: getattr(self, name) for name in TELEMETRY_CSV_FIELDS}
+        data = {field: getattr(self, field) for field in self.__dataclass_fields__}
+        data.update(
+            {
+                "battery_v": self.battery_voltage,
+                "raw_gyro_x": self.gyro_x,
+                "raw_gyro_y": self.gyro_y,
+                "raw_gyro_z": self.gyro_z,
+                "raw_acc_x": self.acc_x,
+                "raw_acc_y": self.acc_y,
+                "raw_acc_z": self.acc_z,
+                "raw_roll_deg": self.roll_deg,
+                "raw_pitch_deg": self.pitch_deg,
+                "raw_yaw_deg": self.yaw_deg,
+                "raw_quat_w": self.quat_w,
+                "raw_quat_x": self.quat_x,
+                "raw_quat_y": self.quat_y,
+                "raw_quat_z": self.quat_z,
+            }
+        )
+        return data
 
 
 def decode_param_value(payload: bytes) -> ParamValue:

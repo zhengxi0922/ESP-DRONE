@@ -531,6 +531,12 @@ class DeviceSession:
         info = self._device_info or self.hello()
         info.require_udp_manual_control()
 
+    def require_ground_tune(self) -> None:
+        """Fail before sending flat-ground tune commands to unsupported firmware."""
+
+        info = self._device_info or self.hello()
+        info.require_ground_tune()
+
     def arm(self) -> int:
         """请求设备解锁。"""
 
@@ -610,6 +616,24 @@ class DeviceSession:
 
         self.require_attitude_hang_bench()
         return self.command(CmdId.ATTITUDE_TEST_STOP)
+
+    def ground_capture_ref(self) -> int:
+        """Capture the current flat-ground attitude as the ground tune reference."""
+
+        self.require_ground_tune()
+        return self.command(CmdId.GROUND_CAPTURE_REF)
+
+    def ground_test_start(self, base_duty: float | None = None) -> int:
+        """Start the flat-ground low-throttle tune loop."""
+
+        self.require_ground_tune()
+        return self.command(CmdId.GROUND_TEST_START, arg_f32=0.0 if base_duty is None else float(base_duty))
+
+    def ground_test_stop(self) -> int:
+        """Stop the flat-ground low-throttle tune loop."""
+
+        self.require_ground_tune()
+        return self.command(CmdId.GROUND_TEST_STOP)
 
     def udp_manual_enable(self) -> int:
         """Enter experimental UDP manual mode."""

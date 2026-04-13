@@ -37,6 +37,7 @@ static params_store_t s_params;
 #define PARAMS_RATE_KI_YAW_DEFAULT 0.0f
 #define PARAMS_RATE_KD_YAW_DEFAULT 0.0f
 #define PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_REMAP 4u
+#define PARAMS_SCHEMA_VERSION_BEFORE_GROUND_TUNE 5u
 
 /* 参数系统采用“单 blob + schema_version + CRC32”保存策略。
  * 运行时所有参数写入都必须先过 params_try_set() 的合法性校验。 */
@@ -116,13 +117,33 @@ static const param_descriptor_t s_param_descs[] = {
     {"attitude_error_deadband_deg", PARAM_TYPE_FLOAT, offsetof(params_store_t, attitude_error_deadband_deg)},
     {"attitude_trip_deg", PARAM_TYPE_FLOAT, offsetof(params_store_t, attitude_trip_deg)},
     {"attitude_test_base_duty", PARAM_TYPE_FLOAT, offsetof(params_store_t, attitude_test_base_duty)},
+    {"gyro_lpf_hz", PARAM_TYPE_FLOAT, offsetof(params_store_t, gyro_lpf_hz)},
+    {"accel_lpf_hz", PARAM_TYPE_FLOAT, offsetof(params_store_t, accel_lpf_hz)},
+    {"rate_lpf_hz", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_lpf_hz)},
+    {"kalman_enable", PARAM_TYPE_BOOL, offsetof(params_store_t, kalman_enable)},
+    {"kalman_q_angle", PARAM_TYPE_FLOAT, offsetof(params_store_t, kalman_q_angle)},
+    {"kalman_q_bias", PARAM_TYPE_FLOAT, offsetof(params_store_t, kalman_q_bias)},
+    {"kalman_r_measure", PARAM_TYPE_FLOAT, offsetof(params_store_t, kalman_r_measure)},
+    {"ground_tune_use_kalman_attitude", PARAM_TYPE_BOOL, offsetof(params_store_t, ground_tune_use_kalman_attitude)},
+    {"ground_tune_use_filtered_rate", PARAM_TYPE_BOOL, offsetof(params_store_t, ground_tune_use_filtered_rate)},
+    {"ground_att_kp_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_kp_roll)},
+    {"ground_att_kp_pitch", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_kp_pitch)},
+    {"ground_att_rate_limit_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_rate_limit_roll)},
+    {"ground_att_rate_limit_pitch", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_rate_limit_pitch)},
+    {"ground_att_error_deadband_deg", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_error_deadband_deg)},
+    {"ground_att_trip_deg", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_trip_deg)},
+    {"ground_test_base_duty", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_test_base_duty)},
+    {"ground_test_max_extra_duty", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_test_max_extra_duty)},
+    {"ground_test_motor_balance_limit", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_test_motor_balance_limit)},
+    {"ground_test_auto_disarm_ms", PARAM_TYPE_U32, offsetof(params_store_t, ground_test_auto_disarm_ms)},
 };
 
 static const param_descriptor_t s_runtime_param_descs[] = {
     {"attitude_ref_valid", PARAM_TYPE_BOOL, 0u},
+    {"ground_ref_valid", PARAM_TYPE_BOOL, 0u},
 };
 
-/* Rate PID gains are tied to firmware defaults and are not restored from NVS. */
+/* Defaults are used only for factory reset and schema migration gaps. Saved rate PID values are preserved. */
 static void params_apply_rate_pid_defaults(params_store_t *store)
 {
     store->rate_kp_roll = PARAMS_RATE_KP_ROLL_DEFAULT;
@@ -202,6 +223,28 @@ static void params_apply_defaults(params_store_t *store)
     store->attitude_error_deadband_deg = 1.0f;
     store->attitude_trip_deg = 30.0f;
     store->attitude_test_base_duty = 0.05f;
+
+    store->gyro_lpf_hz = 40.0f;
+    store->accel_lpf_hz = 20.0f;
+    store->rate_lpf_hz = 30.0f;
+    store->kalman_enable = true;
+    /* Gentle 1D angle Kalman defaults for low-throttle ground tuning. */
+    store->kalman_q_angle = 0.0025f;
+    store->kalman_q_bias = 0.0030f;
+    store->kalman_r_measure = 0.0800f;
+    store->ground_tune_use_kalman_attitude = true;
+    store->ground_tune_use_filtered_rate = true;
+
+    store->ground_att_kp_roll = 1.2f;
+    store->ground_att_kp_pitch = 1.2f;
+    store->ground_att_rate_limit_roll = 12.0f;
+    store->ground_att_rate_limit_pitch = 12.0f;
+    store->ground_att_error_deadband_deg = 0.8f;
+    store->ground_att_trip_deg = 12.0f;
+    store->ground_test_base_duty = 0.08f;
+    store->ground_test_max_extra_duty = 0.05f;
+    store->ground_test_motor_balance_limit = 0.08f;
+    store->ground_test_auto_disarm_ms = 15000u;
 
     store->log_event_text_enabled = true;
 }
@@ -341,6 +384,8 @@ static bool params_validate_motor_duty_limits(const params_store_t *store)
            store->udp_land_min_pwm <= 1.0f &&
            store->attitude_test_base_duty >= 0.0f &&
            store->attitude_test_base_duty <= 1.0f &&
+           store->ground_test_base_duty >= 0.0f &&
+           store->ground_test_base_duty <= 1.0f &&
            store->motor_idle_duty <= store->motor_max_duty &&
            store->motor_startup_boost_duty >= store->motor_idle_duty &&
            store->motor_startup_boost_duty <= store->motor_max_duty &&
@@ -351,7 +396,9 @@ static bool params_validate_motor_duty_limits(const params_store_t *store)
            store->udp_land_min_pwm <= store->udp_takeoff_pwm &&
            store->udp_takeoff_pwm <= store->udp_manual_max_pwm &&
            store->attitude_test_base_duty >= store->motor_idle_duty &&
-           store->attitude_test_base_duty <= store->motor_max_duty;
+           store->attitude_test_base_duty <= store->motor_max_duty &&
+           store->ground_test_base_duty >= store->motor_idle_duty &&
+           store->ground_test_base_duty <= store->motor_max_duty;
 }
 
 static bool params_float_in_range(float value, float min_value, float max_value)
@@ -407,6 +454,39 @@ static bool params_validate_udp_manual_limits(const params_store_t *store)
            params_float_in_range(store->udp_manual_axis_limit, 0.0f, 0.15f);
 }
 
+static bool params_validate_filter_kalman_limits(const params_store_t *store)
+{
+    return params_float_in_range(store->gyro_lpf_hz, 0.0f, 250.0f) &&
+           params_float_in_range(store->accel_lpf_hz, 0.0f, 120.0f) &&
+           params_float_in_range(store->rate_lpf_hz, 0.0f, 250.0f) &&
+           params_float_in_range(store->kalman_q_angle, 0.000001f, 1.0f) &&
+           params_float_in_range(store->kalman_q_bias, 0.0000001f, 0.1f) &&
+           params_float_in_range(store->kalman_r_measure, 0.00001f, 10.0f);
+}
+
+static bool params_validate_ground_tune_limits(const params_store_t *store)
+{
+    if (!params_float_in_range(store->ground_att_kp_roll, 0.0f, 10.0f) ||
+        !params_float_in_range(store->ground_att_kp_pitch, 0.0f, 10.0f) ||
+        !params_float_in_range(store->ground_att_rate_limit_roll, 0.0f, 60.0f) ||
+        !params_float_in_range(store->ground_att_rate_limit_pitch, 0.0f, 60.0f) ||
+        !params_float_in_range(store->ground_att_error_deadband_deg, 0.0f, 5.0f) ||
+        !params_float_in_range(store->ground_att_trip_deg, 5.0f, 30.0f) ||
+        !params_float_in_range(store->ground_test_max_extra_duty, 0.0f, 0.20f) ||
+        !params_float_in_range(store->ground_test_motor_balance_limit, 0.0f, 0.30f) ||
+        store->ground_test_auto_disarm_ms < 1000u ||
+        store->ground_test_auto_disarm_ms > 120000u) {
+        return false;
+    }
+
+    if (store->ground_att_error_deadband_deg > store->ground_att_trip_deg) {
+        return false;
+    }
+
+    return (store->ground_test_base_duty + store->ground_test_max_extra_duty) <= store->motor_max_duty &&
+           (store->ground_test_base_duty + store->rate_output_limit) <= store->motor_max_duty;
+}
+
 static bool params_validate_store(const params_store_t *store)
 {
     if (store == NULL) {
@@ -422,39 +502,51 @@ static bool params_validate_store(const params_store_t *store)
            params_validate_motor_duty_limits(store) &&
            params_validate_rate_pid_limits(store) &&
            params_validate_attitude_bench_limits(store) &&
-           params_validate_udp_manual_limits(store);
+           params_validate_udp_manual_limits(store) &&
+           params_validate_filter_kalman_limits(store) &&
+           params_validate_ground_tune_limits(store);
 }
 
 static bool params_try_load_from_nvs(params_store_t *store)
 {
     nvs_handle_t handle;
-    params_blob_t blob = {0};
-    size_t len = sizeof(blob);
+    uint8_t blob_buf[sizeof(params_blob_t)] = {0};
+    size_t len = sizeof(blob_buf);
 
     if (nvs_open(PARAMS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) {
         return false;
     }
 
-    esp_err_t err = nvs_get_blob(handle, PARAMS_BLOB_KEY, &blob, &len);
+    esp_err_t err = nvs_get_blob(handle, PARAMS_BLOB_KEY, blob_buf, &len);
     nvs_close(handle);
-    if (err != ESP_OK || len != sizeof(blob)) {
+    if (err != ESP_OK || len < sizeof(params_blob_header_t)) {
         return false;
     }
 
-    const bool current_schema = blob.header.schema_version == PARAMS_SCHEMA_VERSION;
-    const bool pre_motor_remap_schema = blob.header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_REMAP;
-    if (blob.header.magic != PARAMS_BLOB_MAGIC ||
-        (!current_schema && !pre_motor_remap_schema) ||
-        blob.header.payload_len != sizeof(blob.payload)) {
+    params_blob_header_t header = {0};
+    memcpy(&header, blob_buf, sizeof(header));
+
+    const bool current_schema = header.schema_version == PARAMS_SCHEMA_VERSION;
+    const bool pre_motor_remap_schema = header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_REMAP;
+    const bool pre_ground_tune_schema = header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_GROUND_TUNE;
+    const size_t payload_len = len - sizeof(header);
+    if (header.magic != PARAMS_BLOB_MAGIC ||
+        (!current_schema && !pre_motor_remap_schema && !pre_ground_tune_schema) ||
+        header.payload_len != payload_len ||
+        header.payload_len > sizeof(params_store_t)) {
         return false;
     }
 
-    const uint32_t crc = params_crc32(&blob.payload, sizeof(blob.payload));
-    if (crc != blob.header.crc32) {
+    const uint8_t *payload_bytes = blob_buf + sizeof(header);
+    const uint32_t crc = params_crc32(payload_bytes, header.payload_len);
+    if (crc != header.crc32) {
         return false;
     }
-    params_store_t payload = blob.payload;
-    params_apply_rate_pid_defaults(&payload);
+
+    params_store_t payload = {0};
+    params_apply_defaults(&payload);
+    memcpy(&payload, payload_bytes, header.payload_len);
+
     if (pre_motor_remap_schema) {
         params_apply_motor_output_map_defaults(&payload);
     }
@@ -492,7 +584,6 @@ esp_err_t params_save(void)
 {
     nvs_handle_t handle;
     params_store_t payload = s_params;
-    params_apply_rate_pid_defaults(&payload);
 
     params_blob_t blob = {
         .header = {
@@ -555,6 +646,11 @@ bool params_try_get(const char *name, param_value_t *out_value, param_type_t *ou
         out_value->b = runtime_state_get_attitude_hang_state().ref_valid;
         return true;
     }
+    if (strcmp(name, "ground_ref_valid") == 0) {
+        *out_type = PARAM_TYPE_BOOL;
+        out_value->b = runtime_state_get_ground_tune_state().ref_valid;
+        return true;
+    }
 
     const size_t store_count = sizeof(s_param_descs) / sizeof(s_param_descs[0]);
     for (size_t i = 0; i < store_count; ++i) {
@@ -594,6 +690,11 @@ bool params_try_set(const char *name, param_value_t value, param_type_t type)
     }
 
     if (strcmp(name, "attitude_ref_valid") == 0) {
+        (void)value;
+        (void)type;
+        return false;
+    }
+    if (strcmp(name, "ground_ref_valid") == 0) {
         (void)value;
         (void)type;
         return false;

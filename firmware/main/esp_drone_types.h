@@ -129,6 +129,7 @@ typedef enum {
     CONTROL_MODE_HEIGHT_HOLD_RESERVED = 3, /**< 预留定高模式。 */
     CONTROL_MODE_ATTITUDE_HANG_TEST = 4,   /**< 鍦嗘/鍚婃灦/鍙楅檺鍙版灦涓撶敤 attitude 澶栫幆 bring-up銆?*/
     CONTROL_MODE_UDP_MANUAL = 5,           /**< Experimental UDP manual control with attitude roll/pitch and rate-PID yaw. */
+    CONTROL_MODE_ATTITUDE_GROUND_TUNE = 6, /**< Low-throttle flat-ground attitude tune mode. */
 } control_mode_t;
 
 /**
@@ -204,3 +205,29 @@ typedef struct {
     float rate_sp_pitch_dps;
     float base_duty_active;
 } attitude_hang_state_t;
+
+typedef enum {
+    GROUND_TUNE_TRIP_NONE = 0,
+    GROUND_TUNE_TRIP_REF_MISSING = 1,
+    GROUND_TUNE_TRIP_KALMAN_INVALID = 2,
+    GROUND_TUNE_TRIP_ANGLE = 3,
+    GROUND_TUNE_TRIP_SATURATION = 4,
+    GROUND_TUNE_TRIP_IMU_STALE = 5,
+    GROUND_TUNE_TRIP_WATCHDOG = 6,
+    GROUND_TUNE_TRIP_RATE_JITTER = 7,
+    GROUND_TUNE_TRIP_FAILSAFE = 8,
+    GROUND_TUNE_TRIP_STOP_NORMAL = 9,
+} ground_tune_trip_reason_t;
+
+typedef struct {
+    bool ref_valid;
+    quatf_t ref_q_body_to_world;
+    float ref_kalman_roll_deg;
+    float ref_kalman_pitch_deg;
+    float err_roll_deg;
+    float err_pitch_deg;
+    float rate_sp_roll_dps;
+    float rate_sp_pitch_dps;
+    float base_duty_active;
+    ground_tune_trip_reason_t trip_reason;
+} ground_tune_state_t;

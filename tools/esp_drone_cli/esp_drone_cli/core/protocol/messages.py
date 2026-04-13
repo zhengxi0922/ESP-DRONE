@@ -45,6 +45,9 @@ class CmdId:
     UDP_TAKEOFF = 16
     UDP_LAND = 17
     UDP_MANUAL_STOP = 18
+    GROUND_CAPTURE_REF = 19
+    GROUND_TEST_START = 20
+    GROUND_TEST_STOP = 21
 
 
 class CmdStatus:
@@ -79,6 +82,9 @@ CMD_NAMES = {
     CmdId.UDP_TAKEOFF: "udp takeoff",
     CmdId.UDP_LAND: "udp land",
     CmdId.UDP_MANUAL_STOP: "udp-manual stop",
+    CmdId.GROUND_CAPTURE_REF: "ground-capture-ref",
+    CmdId.GROUND_TEST_START: "ground-test start",
+    CmdId.GROUND_TEST_STOP: "ground-test stop",
 }
 
 CMD_STATUS_TEXT = {
