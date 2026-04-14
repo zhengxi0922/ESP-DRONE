@@ -3426,7 +3426,6 @@ class MainWindow(QMainWindow):
         path = output_dir / f"{time.strftime('%Y%m%d_%H%M%S')}_ground_record.csv"
 
         def action():
-            self._apply_ground_params()
             rows = self._session.dump_csv(path, duration_s=seconds)
             return {"path": str(path), "rows": rows}
 

@@ -29,6 +29,7 @@ Run this before low-throttle ground tests. Keep motors stopped and leave the air
    - `filtered_acc_x`, `filtered_acc_y`, `filtered_acc_z` stay on the same axes as `raw_acc_x`, `raw_acc_y`, `raw_acc_z`.
    - `kalman_roll_deg` and `kalman_pitch_deg` change with roll/pitch motion.
    - `kalman_valid=1` and `attitude_valid=1` remain set while the aircraft is flat and moved gently.
+5. The GUI Record buttons are telemetry-only; they should not write PID, filter, or Kalman params.
 
 ## Phase B: Low-throttle Motor Split Check
 

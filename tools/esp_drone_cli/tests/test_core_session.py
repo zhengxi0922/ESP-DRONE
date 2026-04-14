@@ -985,6 +985,40 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
 
 
 @pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
+def test_gui_ground_record_only_dumps_csv_without_applying_params(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+
+    from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
+
+    class SyncBridge(QtSessionBridge):
+        def run_async(self, label: str, callback) -> None:
+            result = callback()
+            self.command_finished.emit(label, result)
+
+    app = QApplication.instance() or QApplication([])
+    session = FakeSession()
+    settings = QSettings(str(tmp_path / "gui-ground-record.ini"), QSettings.IniFormat)
+    window = MainWindow(session=session, bridge_cls=SyncBridge, serial_port_provider=lambda: ["COM9"], settings=settings)
+
+    window.serial_port_combo.setCurrentText("COM9")
+    window.connect_button.click()
+    app.processEvents()
+    session.calls.clear()
+    window.ground_record_10_button.click()
+    app.processEvents()
+
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert call_names == ["dump_csv"]
+    assert "set_param" not in call_names
+
+    window.close()
+    app.processEvents()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
 def test_gui_connect_failure_shows_error_and_restores_inputs(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
