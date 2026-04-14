@@ -381,6 +381,18 @@ class FakeSession:
         self._record("attitude_test_stop")
         return 0
 
+    def ground_capture_ref(self) -> int:
+        self._record("ground_capture_ref")
+        return 0
+
+    def ground_test_start(self, base_duty: float | None = None) -> int:
+        self._record("ground_test_start", base_duty)
+        return 0
+
+    def ground_test_stop(self) -> int:
+        self._record("ground_test_stop")
+        return 0
+
     def require_udp_manual_control(self) -> None:
         self._record("require_udp_manual_control")
 
@@ -590,6 +602,42 @@ def test_attitude_capture_ref_rejects_old_firmware_before_opcode():
         session.attitude_capture_ref()
 
     assert [msg_type for msg_type, _payload in transport.sent].count(MsgType.CMD_REQ) == 0
+    session.disconnect()
+
+
+def test_device_session_ground_capture_ref_waits_for_cmd_resp_not_param_value():
+    class GroundTuneTransport(MockTransport):
+        def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
+            if msg_type == MsgType.HELLO_REQ:
+                self.sent.append((msg_type, payload))
+                hello = HELLO_RESP_STRUCT_V2.pack(
+                    6,
+                    1,
+                    0,
+                    0,
+                    0xFF,
+                    b"unit-test".ljust(16, b"\x00"),
+                    b"2026-04-14T00:00:00Z".ljust(24, b"\x00"),
+                )
+                self.inject(Frame(MsgType.HELLO_RESP, flags, seq, hello))
+                return
+            super().send_message(msg_type, payload, flags=flags, seq=seq)
+
+    session = DeviceSession()
+    transport = GroundTuneTransport()
+    session.connect_transport(transport)
+    transport.sent.clear()
+
+    assert session.ground_capture_ref() == 0
+
+    cmd_frames = [payload for msg_type, payload in transport.sent if msg_type == MsgType.CMD_REQ]
+    assert len(cmd_frames) == 1
+    cmd_id, arg_u8, _reserved, arg_f32 = CMD_REQ_STRUCT.unpack(cmd_frames[0])
+    assert cmd_id == CmdId.GROUND_CAPTURE_REF
+    assert arg_u8 == 0
+    assert arg_f32 == pytest.approx(0.0)
+    assert MsgType.PARAM_GET not in [msg_type for msg_type, _payload in transport.sent]
+    assert MsgType.PARAM_SET not in [msg_type for msg_type, _payload in transport.sent]
     session.disconnect()
 
 
@@ -979,6 +1027,42 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert ("connect_udp", ("192.168.4.1", 2391, 1.0), {}) in session.calls
     assert "disconnect" in call_names
     assert window.last_log_path_label.text().endswith("telemetry.csv")
+
+    window.close()
+    app.processEvents()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
+def test_gui_ground_capture_ref_only_sends_command_without_applying_params(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+
+    from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
+
+    class SyncBridge(QtSessionBridge):
+        def run_async(self, label: str, callback) -> None:
+            result = callback()
+            self.command_finished.emit(label, result)
+
+    app = QApplication.instance() or QApplication([])
+    session = FakeSession()
+    settings = QSettings(str(tmp_path / "gui-ground-capture.ini"), QSettings.IniFormat)
+    window = MainWindow(session=session, bridge_cls=SyncBridge, serial_port_provider=lambda: ["COM9"], settings=settings)
+
+    window.serial_port_combo.setCurrentText("COM9")
+    window.connect_button.click()
+    app.processEvents()
+    session.calls.clear()
+    window.ground_capture_button.click()
+    app.processEvents()
+
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert call_names == ["ground_capture_ref"]
+    assert "set_param" not in call_names
+    assert "get_param" not in call_names
+    assert "list_params" not in call_names
 
     window.close()
     app.processEvents()

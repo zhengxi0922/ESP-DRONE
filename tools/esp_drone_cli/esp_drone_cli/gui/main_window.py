@@ -3403,7 +3403,6 @@ class MainWindow(QMainWindow):
 
     def _capture_ground_ref(self) -> None:
         def action():
-            self._apply_ground_params()
             return ensure_command_ok(CmdId.GROUND_CAPTURE_REF, int(self._session.ground_capture_ref()))
 
         self._run_session_action("ground_capture_ref", action)

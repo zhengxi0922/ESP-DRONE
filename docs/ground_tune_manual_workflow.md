@@ -35,6 +35,7 @@ Run this before low-throttle ground tests. Keep motors stopped and leave the air
 
 1. Place the aircraft flat on the ground.
 2. Run `ground-capture-ref`.
+   This captures runtime reference state only; it should not write PID, filter, Kalman, or runtime status params.
 3. Arm only when the area is safe.
 4. Run `ground-test start --base-duty <low_value>`.
 5. Gently push:
