@@ -16,6 +16,20 @@ Use this workflow in order. Do not skip a failed stage.
    - `kalman_roll_deg` and `kalman_pitch_deg` have the same sign as the physical motion.
 5. If any sign is wrong, do not continue. Fix IMU mapping or estimator signs first.
 
+## Minimum Estimator Telemetry Smoke Check
+
+Run this before low-throttle ground tests. Keep motors stopped and leave the aircraft disarmed.
+
+1. Start GUI streaming or run `dump-csv logs/estimator_smoke.csv --duration 10`.
+2. Hold the aircraft flat and still. Confirm `raw_acc_z` is near +1g, `kalman_valid=1`, and `attitude_valid=1`.
+3. Move by hand through about +/-10 degrees roll, +/-10 degrees pitch, and a small yaw twist.
+4. Confirm GUI and CSV fields:
+   - `raw_gyro_x`, `raw_gyro_y`, `raw_gyro_z` respond to motion.
+   - `filtered_gyro_x`, `filtered_gyro_y`, `filtered_gyro_z` follow the raw gyro response.
+   - `filtered_acc_x`, `filtered_acc_y`, `filtered_acc_z` stay on the same axes as `raw_acc_x`, `raw_acc_y`, `raw_acc_z`.
+   - `kalman_roll_deg` and `kalman_pitch_deg` change with roll/pitch motion.
+   - `kalman_valid=1` and `attitude_valid=1` remain set while the aircraft is flat and moved gently.
+
 ## Phase B: Low-throttle Motor Split Check
 
 1. Place the aircraft flat on the ground.

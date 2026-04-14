@@ -33,9 +33,11 @@ from esp_drone_cli.core.models import (
     HELLO_RESP_STRUCT_V2,
     ParamSnapshot,
     ParamValue,
+    TELEMETRY_CSV_FIELDS,
     TELEMETRY_STRUCT,
     TELEMETRY_STRUCT_V1,
     TELEMETRY_STRUCT_V3,
+    TELEMETRY_STRUCT_V4,
     TelemetrySample,
     UDP_MANUAL_SETPOINT_STRUCT,
     decode_device_info,
@@ -97,6 +99,43 @@ def build_telemetry_payload_v1() -> bytes:
         1, 1, 0, 0, 2, 0, 0, 0,
     ]
     return TELEMETRY_STRUCT_V1.pack(*values)
+
+
+def build_telemetry_payload_v4() -> bytes:
+    values = [
+        123456789,
+        1.0, 2.0, 3.0,
+        0.1, 0.2, 0.3,
+        1.0, 0.0, 0.0, 0.0,
+        4.0, 5.0, 6.0,
+        0.0, 0.0, 0.0,
+        10.0, 11.0, 12.0,
+        0.5, 0.6, 0.7,
+        0.1, 0.2, 0.3,
+        0.01, 0.02, 0.03,
+        0.9, 1.0, 1.1,
+        0.20, 0.21, 0.22, 0.23,
+        3.8,
+        2048, 1000, 500,
+        1, 1, 0, 0, 2, 0, 0, 0,
+        100845.0, 26.5, 1.25, -0.10,
+        15000,
+        1, 1, 0, 0,
+        2.5, -3.5,
+        -5.0, 7.0,
+        0.7, 0.1, -0.2, 0.3,
+        0.05,
+        1, 0, 0, 0,
+        1.25, -2.5, 3.75,
+        0.12, -0.34, 0.98,
+        9.5, -8.25,
+        -21.0, 22.0, -23.0,
+        -11.0, 12.0, -13.0,
+        0.31, -0.32, 0.33,
+        4242,
+        1, 1, 0, 1, 1, 1, 3, 0,
+    ]
+    return TELEMETRY_STRUCT_V4.pack(*values)
 
 
 class MockTransport:
@@ -700,6 +739,37 @@ def test_telemetry_sample_v1_payload_keeps_baro_defaults():
     assert sample.gyro_x == 1.0
     assert sample.baro_valid == 0
     assert sample.baro_pressure_pa == 0.0
+
+
+def test_telemetry_sample_v4_decodes_estimator_fields_after_reserved_bytes():
+    sample = TelemetrySample.from_payload(build_telemetry_payload_v4())
+    row = dict(zip(TELEMETRY_CSV_FIELDS, sample.to_csv_row()))
+
+    assert sample.attitude_ref_valid == 1
+    assert sample.filtered_gyro_x == pytest.approx(1.25)
+    assert sample.filtered_gyro_y == pytest.approx(-2.5)
+    assert sample.filtered_gyro_z == pytest.approx(3.75)
+    assert sample.filtered_acc_x == pytest.approx(0.12)
+    assert sample.filtered_acc_y == pytest.approx(-0.34)
+    assert sample.filtered_acc_z == pytest.approx(0.98)
+    assert sample.kalman_roll_deg == pytest.approx(9.5)
+    assert sample.kalman_pitch_deg == pytest.approx(-8.25)
+    assert sample.rate_meas_roll_raw == pytest.approx(-21.0)
+    assert sample.rate_meas_pitch_filtered == pytest.approx(12.0)
+    assert sample.rate_err_yaw == pytest.approx(0.33)
+    assert sample.sample_seq == 4242
+    assert sample.attitude_valid == 1
+    assert sample.kalman_valid == 1
+    assert sample.integrator_freeze_flag == 1
+    assert sample.ground_ref_valid == 1
+    assert sample.reference_valid == 1
+    assert sample.ground_trip_reason == 3
+
+    assert row["raw_gyro_x"] == pytest.approx(1.0)
+    assert row["filtered_gyro_x"] == pytest.approx(1.25)
+    assert row["filtered_acc_z"] == pytest.approx(0.98)
+    assert row["kalman_valid"] == 1
+    assert row["attitude_valid"] == 1
 
 
 def test_gui_startup_without_device_or_missing_pyqt5(monkeypatch):
