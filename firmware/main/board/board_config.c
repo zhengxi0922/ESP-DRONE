@@ -8,9 +8,12 @@
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "esp_adc/adc_oneshot.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static adc_oneshot_unit_handle_t s_adc_handle;
 static adc_cali_handle_t s_adc_cali_handle;
+static SemaphoreHandle_t s_battery_adc_mutex;
 static bool s_battery_adc_ready;
 static bool s_battery_last_nonzero_valid;
 static int s_battery_last_raw;
@@ -81,6 +84,21 @@ static void board_battery_set_outputs(int *out_raw, int *out_mv, float *out_volt
     }
 }
 
+static esp_err_t board_battery_return_last_valid(int *out_raw, int *out_mv, float *out_voltage)
+{
+    if (!s_battery_last_nonzero_valid) {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    board_battery_set_outputs(out_raw,
+                              out_mv,
+                              out_voltage,
+                              s_battery_last_raw,
+                              s_battery_last_mv,
+                              s_battery_last_voltage);
+    return ESP_OK;
+}
+
 const board_motor_config_t *board_get_motor_config(board_motor_id_t logical_id)
 {
     if ((unsigned)logical_id >= BOARD_MOTOR_COUNT) {
@@ -94,6 +112,13 @@ esp_err_t board_battery_init(void)
 {
     if (s_battery_adc_ready) {
         return ESP_OK;
+    }
+
+    if (s_battery_adc_mutex == NULL) {
+        s_battery_adc_mutex = xSemaphoreCreateMutex();
+        if (s_battery_adc_mutex == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
     }
 
     const adc_oneshot_unit_init_cfg_t unit_cfg = {
@@ -141,24 +166,28 @@ esp_err_t board_battery_read(int *out_raw, int *out_mv, float *out_voltage)
         return ESP_ERR_INVALID_STATE;
     }
 
+    if (s_battery_adc_mutex != NULL) {
+        xSemaphoreTake(s_battery_adc_mutex, portMAX_DELAY);
+    }
+
     adc_channel_t channel = ADC_CHANNEL_1;
     adc_unit_t unit = ADC_UNIT_1;
     esp_err_t err = adc_oneshot_io_to_channel(s_board.bat_adc, &unit, &channel);
     if (err != ESP_OK) {
-        return err;
+        goto fail;
     }
 
     int raw = 0;
     err = adc_oneshot_read(s_adc_handle, channel, &raw);
     if (err != ESP_OK) {
-        return err;
+        goto fail;
     }
 
     int mv = 0;
     if (s_adc_cali_handle != NULL) {
         err = adc_cali_raw_to_voltage(s_adc_cali_handle, raw, &mv);
         if (err != ESP_OK) {
-            return err;
+            goto fail;
         }
     } else {
         mv = (raw * 2800) / 4095;
@@ -166,13 +195,8 @@ esp_err_t board_battery_read(int *out_raw, int *out_mv, float *out_voltage)
 
     const float voltage = ((float)mv / 1000.0f) * s_board.bat_divider_ratio;
     if (!(voltage > 0.0f)) {
-        if (!s_battery_last_nonzero_valid) {
-            return ESP_ERR_INVALID_RESPONSE;
-        }
-
-        board_battery_set_outputs(out_raw, out_mv, out_voltage,
-                                  s_battery_last_raw, s_battery_last_mv, s_battery_last_voltage);
-        return ESP_OK;
+        err = board_battery_return_last_valid(out_raw, out_mv, out_voltage);
+        goto done;
     }
 
     s_battery_last_nonzero_valid = true;
@@ -181,5 +205,17 @@ esp_err_t board_battery_read(int *out_raw, int *out_mv, float *out_voltage)
     s_battery_last_voltage = voltage;
 
     board_battery_set_outputs(out_raw, out_mv, out_voltage, raw, mv, voltage);
-    return ESP_OK;
+    err = ESP_OK;
+
+done:
+    if (s_battery_adc_mutex != NULL) {
+        xSemaphoreGive(s_battery_adc_mutex);
+    }
+    return err;
+
+fail:
+    if (board_battery_return_last_valid(out_raw, out_mv, out_voltage) == ESP_OK) {
+        err = ESP_OK;
+    }
+    goto done;
 }

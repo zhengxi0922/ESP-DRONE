@@ -1455,6 +1455,20 @@ def test_firmware_registers_softap_udp_transport():
     assert "params_get()->wifi_udp_port" in udp_protocol
 
 
+def test_firmware_telemetry_battery_read_does_not_emit_transient_zero():
+    repo_root = Path(__file__).resolve().parents[3]
+    app_main = (repo_root / "firmware" / "main" / "app_main.c").read_text(encoding="utf-8")
+    board_config = (repo_root / "firmware" / "main" / "board" / "board_config.c").read_text(encoding="utf-8")
+
+    assert "s_battery_adc_mutex = xSemaphoreCreateMutex();" in board_config
+    assert "xSemaphoreTake(s_battery_adc_mutex, portMAX_DELAY);" in board_config
+    assert "board_battery_return_last_valid" in board_config
+    assert "if (board_battery_read(&battery_raw, &battery_mv, &battery_v) == ESP_OK)" in app_main
+    assert "last_battery_valid = true;" in app_main
+    assert "battery_raw = last_battery_raw;" in app_main
+    assert "float battery_v = last_battery_v;" in app_main
+
+
 def test_set_param_detects_device_rejection():
     class RejectingTransport(MockTransport):
         def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:

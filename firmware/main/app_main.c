@@ -702,6 +702,9 @@ static void telemetry_task(void *arg)
     (void)arg;
 
     uint64_t last_send_us = 0;
+    bool last_battery_valid = false;
+    int last_battery_raw = 0;
+    float last_battery_v = 0.0f;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(5));
 
@@ -720,10 +723,17 @@ static void telemetry_task(void *arg)
         barometer_state_t baro_state = {0};
         barometer_get_latest(&baro_state);
 
-        int battery_raw = 0;
+        int battery_raw = last_battery_raw;
         int battery_mv = 0;
-        float battery_v = 0.0f;
-        board_battery_read(&battery_raw, &battery_mv, &battery_v);
+        float battery_v = last_battery_v;
+        if (board_battery_read(&battery_raw, &battery_mv, &battery_v) == ESP_OK) {
+            last_battery_valid = true;
+            last_battery_raw = battery_raw;
+            last_battery_v = battery_v;
+        } else if (!last_battery_valid) {
+            battery_raw = 0;
+            battery_v = 0.0f;
+        }
         console_send_telemetry(&sample, sample_seq, &baro_state, battery_v, battery_raw);
         udp_protocol_send_telemetry(&sample, sample_seq, &baro_state, battery_v, battery_raw);
     }
