@@ -119,6 +119,7 @@ static bool console_send_frame(uint8_t msg_type, const void *payload, uint16_t p
 {
     uint8_t raw_buf[CONSOLE_FRAME_BUF_SIZE];
     uint8_t encoded_buf[CONSOLE_FRAME_BUF_SIZE + 8];
+    const bool telemetry_frame = msg_type == MSG_TELEMETRY_SAMPLE;
 
     if (payload_len + sizeof(console_frame_header_t) + sizeof(uint16_t) > sizeof(raw_buf)) {
         return false;
@@ -144,13 +145,14 @@ static bool console_send_frame(uint8_t msg_type, const void *payload, uint16_t p
     const size_t raw_len = sizeof(header) + payload_len + sizeof(crc);
     const size_t encoded_len = console_cobs_encode(raw_buf, raw_len, encoded_buf);
 
-    if (s_console_tx_mutex != NULL) {
-        xSemaphoreTake(s_console_tx_mutex, portMAX_DELAY);
+    if (s_console_tx_mutex != NULL &&
+        xSemaphoreTake(s_console_tx_mutex, telemetry_frame ? 0 : portMAX_DELAY) != pdTRUE) {
+        return false;
     }
     fwrite(encoded_buf, 1, encoded_len, stdout);
     fputc(0, stdout);
-    fflush(stdout);
-    if (msg_type != MSG_TELEMETRY_SAMPLE) {
+    if (!telemetry_frame) {
+        fflush(stdout);
         fsync(fileno(stdout));
     }
     if (s_console_tx_mutex != NULL) {

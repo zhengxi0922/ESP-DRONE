@@ -642,6 +642,50 @@ def test_device_session_ground_capture_ref_waits_for_cmd_resp_not_param_value():
     session.disconnect()
 
 
+def test_device_session_stream_ack_must_match_requested_state():
+    session = DeviceSession()
+    transport = MockTransport()
+    session.connect_transport(transport)
+    transport.sent.clear()
+
+    transport.inject(Frame(MsgType.STREAM_CTRL, 0, 99, b"\x01"))
+    session.stop_stream()
+
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline and not transport._frames.empty():
+        time.sleep(0.01)
+
+    leftovers: list[Frame] = []
+    while not session._response_queue.empty():
+        leftovers.append(session._response_queue.get_nowait())
+    leftovers.extend(session._pending_response_frames)
+
+    assert [payload for msg_type, payload in transport.sent if msg_type == MsgType.STREAM_CTRL] == [b"\x00"]
+    assert not [frame for frame in leftovers if frame.msg_type == MsgType.STREAM_CTRL]
+    session.disconnect()
+
+
+def test_device_session_param_value_must_match_requested_name():
+    class StaleParamTransport(MockTransport):
+        def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
+            if msg_type == MsgType.PARAM_GET:
+                self.sent.append((msg_type, payload))
+                self.inject(Frame(MsgType.PARAM_VALUE, flags, seq, encode_param_payload("other", 4, b"\x00\x00\x00@")))
+                self.inject(Frame(MsgType.PARAM_VALUE, flags, seq, encode_param_payload("target", 4, b"\x00\x00\x80@")))
+                return
+            super().send_message(msg_type, payload, flags=flags, seq=seq)
+
+    session = DeviceSession()
+    transport = StaleParamTransport()
+    session.connect_transport(transport)
+
+    result = session.get_param("target")
+
+    assert result.name == "target"
+    assert result.value == pytest.approx(4.0)
+    session.disconnect()
+
+
 def test_udp_manual_setpoint_encodes_expected_payload():
     session = DeviceSession()
     transport = MockTransport()
@@ -1483,7 +1527,9 @@ def test_firmware_console_ack_path_is_not_starved_by_telemetry():
     assert defines["SERVICE_TASK_PRIO"] > defines["TELEMETRY_TASK_PRIO"]
     assert defines["SERVICE_TASK_PRIO"] > defines["RC_UDP_TASK_PRIO"]
     assert defines["SERVICE_TASK_PRIO"] < defines["FLIGHT_CONTROL_TASK_PRIO"]
-    assert "if (msg_type != MSG_TELEMETRY_SAMPLE)" in console_c
+    assert re.search(r"xSemaphoreTake\(\s*s_console_tx_mutex,\s*telemetry_frame \? 0 : portMAX_DELAY\s*\)", console_c)
+    assert "if (!telemetry_frame)" in console_c
+    assert "fflush(stdout);" in console_c
     assert "fsync(fileno(stdout));" in console_c
 
 

@@ -12,6 +12,7 @@ import math
 import queue
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Callable
 
@@ -34,6 +35,8 @@ from .protocol.messages import CmdId, Frame, MsgType
 from .transport.base import Transport
 from .transport.serial_link import SerialTransport
 from .transport.udp_link import UdpTransport
+
+DEFAULT_RESPONSE_TIMEOUT_S = 2.5
 
 
 TelemetryCallback = Callable[[TelemetrySample], None]
@@ -70,6 +73,7 @@ class DeviceSession:
         self._seq = 0
         self._command_lock = threading.Lock()
         self._response_queue: queue.Queue[Frame] = queue.Queue()
+        self._pending_response_frames: deque[Frame] = deque()
         self._event_queue: queue.Queue[str] = queue.Queue()
         self._stop_event = threading.Event()
         self._reader_thread: threading.Thread | None = None
@@ -189,34 +193,112 @@ class DeviceSession:
             raise RuntimeError("device session is not connected")
         self._transport.send_message(msg_type, payload, flags=flags, seq=self._next_seq())
 
-    def _recv_until(self, *msg_types: int, timeout: float = 1.0) -> Frame:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            remaining = max(0.01, deadline - time.monotonic())
-            try:
-                frame = self._response_queue.get(timeout=remaining)
-            except queue.Empty:
-                continue
-            if frame.msg_type in msg_types:
-                return frame
-        raise TimeoutError(f"timed out waiting for {msg_types}")
+    def _restore_deferred_response_frames(self, frames: list[Frame]) -> None:
+        for frame in reversed(frames):
+            self._pending_response_frames.appendleft(frame)
 
-    def _recv_command_response(self, cmd_id: int, timeout: float = 1.0) -> int:
+    def _recv_matching_response(
+        self,
+        predicate: Callable[[Frame], bool],
+        *,
+        timeout: float,
+        timeout_message: str,
+        drop_unmatched: Callable[[Frame], bool] | None = None,
+    ) -> Frame:
         deadline = time.monotonic() + timeout
+        deferred: list[Frame] = []
         while time.monotonic() < deadline:
+            while self._pending_response_frames:
+                frame = self._pending_response_frames.popleft()
+                if predicate(frame):
+                    self._restore_deferred_response_frames(deferred)
+                    return frame
+                if drop_unmatched is not None and drop_unmatched(frame):
+                    continue
+                deferred.append(frame)
+
             remaining = max(0.01, deadline - time.monotonic())
             try:
                 frame = self._response_queue.get(timeout=remaining)
             except queue.Empty:
                 continue
-            if frame.msg_type != MsgType.CMD_RESP:
+            if predicate(frame):
+                self._restore_deferred_response_frames(deferred)
+                return frame
+            if drop_unmatched is not None and drop_unmatched(frame):
                 continue
+            deferred.append(frame)
+        self._restore_deferred_response_frames(deferred)
+        raise TimeoutError(timeout_message)
+
+    def _recv_until(self, *msg_types: int, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> Frame:
+        return self._recv_matching_response(
+            lambda frame: frame.msg_type in msg_types,
+            timeout=timeout,
+            timeout_message=f"timed out waiting for {msg_types}",
+        )
+
+    def _recv_command_response(self, cmd_id: int, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> int:
+        def matches(frame: Frame) -> bool:
+            if frame.msg_type != MsgType.CMD_RESP:
+                return False
             if len(frame.payload) != CMD_RESP_STRUCT.size:
                 raise ValueError("CMD_RESP payload has unexpected length")
             response_cmd_id, status, _ = CMD_RESP_STRUCT.unpack(frame.payload)
-            if response_cmd_id == cmd_id:
-                return status
-        raise TimeoutError(f"timed out waiting for command response {cmd_id}")
+            return response_cmd_id == cmd_id
+
+        def drop_stale(frame: Frame) -> bool:
+            return frame.msg_type == MsgType.CMD_RESP
+
+        frame = self._recv_matching_response(
+            matches,
+            timeout=timeout,
+            timeout_message=f"timed out waiting for command response {cmd_id}",
+            drop_unmatched=drop_stale,
+        )
+        _response_cmd_id, status, _ = CMD_RESP_STRUCT.unpack(frame.payload)
+        return status
+
+    def _recv_stream_ack(self, enabled: bool, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> None:
+        expected_value = 1 if enabled else 0
+
+        def matches(frame: Frame) -> bool:
+            return frame.msg_type == MsgType.STREAM_CTRL and len(frame.payload) > 0 and frame.payload[0] == expected_value
+
+        def drop_stale(frame: Frame) -> bool:
+            return frame.msg_type == MsgType.STREAM_CTRL
+
+        self._recv_matching_response(
+            matches,
+            timeout=timeout,
+            timeout_message=f"timed out waiting for stream {'on' if enabled else 'off'} acknowledgement",
+            drop_unmatched=drop_stale,
+        )
+
+    def _recv_param_value(self, name: str, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> ParamValue:
+        decoded_match: ParamValue | None = None
+
+        def matches(frame: Frame) -> bool:
+            nonlocal decoded_match
+            if frame.msg_type != MsgType.PARAM_VALUE:
+                return False
+            value = decode_param_value(frame.payload)
+            if value.name != name:
+                return False
+            decoded_match = value
+            return True
+
+        def drop_stale(frame: Frame) -> bool:
+            return frame.msg_type == MsgType.PARAM_VALUE
+
+        self._recv_matching_response(
+            matches,
+            timeout=timeout,
+            timeout_message=f"timed out waiting for parameter value {name!r}",
+            drop_unmatched=drop_stale,
+        )
+        assert decoded_match is not None
+        return decoded_match
 
     def _reader_loop(self) -> None:
         assert self._transport is not None
@@ -241,6 +323,7 @@ class DeviceSession:
                 self._response_queue.put(frame)
 
     def _clear_queues(self) -> None:
+        self._pending_response_frames.clear()
         while not self._response_queue.empty():
             try:
                 self._response_queue.get_nowait()
@@ -475,7 +558,7 @@ class DeviceSession:
             except queue.Empty:
                 continue
 
-    def hello(self, timeout: float = 1.0) -> DeviceInfo:
+    def hello(self, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> DeviceInfo:
         """发送握手请求并刷新 `device_info`。
 
         Args:
@@ -496,7 +579,7 @@ class DeviceSession:
             self._device_info = decode_device_info(frame.payload)
             return self._device_info
 
-    def command(self, cmd_id: int, arg_u8: int = 0, arg_f32: float = 0.0, timeout: float = 1.0) -> int:
+    def command(self, cmd_id: int, arg_u8: int = 0, arg_f32: float = 0.0, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> int:
         """发送通用命令请求并返回设备状态码。
 
         Args:
@@ -708,7 +791,7 @@ class DeviceSession:
 
         raise NotImplementedError("send_rc is reserved in core but not implemented by the current firmware protocol")
 
-    def start_stream(self, timeout: float = 1.0) -> None:
+    def start_stream(self, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> None:
         """请求设备开始推送遥测流。
 
         Args:
@@ -721,9 +804,9 @@ class DeviceSession:
 
         with self._command_lock:
             self._send_message(MsgType.STREAM_CTRL, b"\x01")
-            self._recv_until(MsgType.STREAM_CTRL, timeout=timeout)
+            self._recv_stream_ack(True, timeout=timeout)
 
-    def stop_stream(self, timeout: float = 1.0) -> None:
+    def stop_stream(self, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> None:
         """请求设备停止推送遥测流。
 
         Args:
@@ -736,9 +819,9 @@ class DeviceSession:
 
         with self._command_lock:
             self._send_message(MsgType.STREAM_CTRL, b"\x00")
-            self._recv_until(MsgType.STREAM_CTRL, timeout=timeout)
+            self._recv_stream_ack(False, timeout=timeout)
 
-    def get_param(self, name: str, timeout: float = 1.0) -> ParamValue:
+    def get_param(self, name: str, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> ParamValue:
         """读取单个参数。
 
         Args:
@@ -758,10 +841,9 @@ class DeviceSession:
         with self._command_lock:
             name_bytes = name.encode("ascii")
             self._send_message(MsgType.PARAM_GET, bytes([len(name_bytes)]) + name_bytes)
-            frame = self._recv_until(MsgType.PARAM_VALUE, timeout=timeout)
-            return decode_param_value(frame.payload)
+            return self._recv_param_value(name, timeout=timeout)
 
-    def set_param_raw(self, name: str, type_id: int, value_bytes: bytes, timeout: float = 1.0) -> ParamValue:
+    def set_param_raw(self, name: str, type_id: int, value_bytes: bytes, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> ParamValue:
         """按原始字节写入参数。
 
         Args:
@@ -784,8 +866,7 @@ class DeviceSession:
             name_bytes = name.encode("ascii")
             payload = bytes([type_id, len(name_bytes)]) + name_bytes + value_bytes
             self._send_message(MsgType.PARAM_SET, payload)
-            frame = self._recv_until(MsgType.PARAM_VALUE, timeout=timeout)
-            return decode_param_value(frame.payload)
+            return self._recv_param_value(name, timeout=timeout)
 
     def set_param(self, name: str, type_id: int, value: object) -> ParamValue:
         """将文本值编码后写入参数。
@@ -816,7 +897,7 @@ class DeviceSession:
             )
         return result
 
-    def list_params(self, timeout: float = 1.0) -> list[ParamValue]:
+    def list_params(self, timeout: float = 3.0) -> list[ParamValue]:
         """读取设备当前全部参数。
 
         Args:
@@ -842,7 +923,7 @@ class DeviceSession:
                 items.append(decode_param_value(frame.payload))
         raise TimeoutError("timed out waiting for parameter list end")
 
-    def save_params(self, timeout: float = 1.0) -> None:
+    def save_params(self, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> None:
         """请求设备持久化当前参数。
 
         Args:
@@ -857,7 +938,7 @@ class DeviceSession:
             self._send_message(MsgType.PARAM_SAVE)
             self._recv_until(MsgType.PARAM_SAVE, timeout=timeout)
 
-    def reset_params(self, timeout: float = 1.0) -> None:
+    def reset_params(self, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> None:
         """请求设备恢复默认参数。
 
         Args:
