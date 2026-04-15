@@ -14,6 +14,7 @@ import importlib
 import importlib.util
 import json
 import queue
+import re
 import socket
 import sys
 import threading
@@ -1467,6 +1468,23 @@ def test_firmware_telemetry_battery_read_does_not_emit_transient_zero():
     assert "last_battery_valid = true;" in app_main
     assert "battery_raw = last_battery_raw;" in app_main
     assert "float battery_v = last_battery_v;" in app_main
+
+
+def test_firmware_console_ack_path_is_not_starved_by_telemetry():
+    repo_root = Path(__file__).resolve().parents[3]
+    app_main = (repo_root / "firmware" / "main" / "app_main.c").read_text(encoding="utf-8")
+    console_c = (repo_root / "firmware" / "main" / "console" / "console.c").read_text(encoding="utf-8")
+
+    defines = {
+        match.group(1): int(match.group(2))
+        for match in re.finditer(r"^#define\s+([A-Z_]+_TASK_PRIO)\s+(\d+)\s*$", app_main, re.MULTILINE)
+    }
+
+    assert defines["SERVICE_TASK_PRIO"] > defines["TELEMETRY_TASK_PRIO"]
+    assert defines["SERVICE_TASK_PRIO"] > defines["RC_UDP_TASK_PRIO"]
+    assert defines["SERVICE_TASK_PRIO"] < defines["FLIGHT_CONTROL_TASK_PRIO"]
+    assert "if (msg_type != MSG_TELEMETRY_SAMPLE)" in console_c
+    assert "fsync(fileno(stdout));" in console_c
 
 
 def test_set_param_detects_device_rejection():

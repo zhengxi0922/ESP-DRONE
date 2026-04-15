@@ -150,7 +150,9 @@ static bool console_send_frame(uint8_t msg_type, const void *payload, uint16_t p
     fwrite(encoded_buf, 1, encoded_len, stdout);
     fputc(0, stdout);
     fflush(stdout);
-    fsync(fileno(stdout));
+    if (msg_type != MSG_TELEMETRY_SAMPLE) {
+        fsync(fileno(stdout));
+    }
     if (s_console_tx_mutex != NULL) {
         xSemaphoreGive(s_console_tx_mutex);
     }
