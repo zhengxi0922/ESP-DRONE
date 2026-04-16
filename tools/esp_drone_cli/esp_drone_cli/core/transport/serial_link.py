@@ -63,6 +63,7 @@ class SerialTransport:
             time.sleep(settle_delay_s)
         self._serial.reset_input_buffer()
         self._serial.reset_output_buffer()
+        self._rx_packet = bytearray()
 
     def send(self, data: bytes) -> None:
         """发送原始串口字节流。
@@ -100,20 +101,21 @@ class SerialTransport:
         """
 
         deadline = time.monotonic() + timeout
-        packet = bytearray()
         while time.monotonic() < deadline:
             chunk = self._serial.read(1)
             if not chunk:
                 continue
-            packet.extend(chunk)
-            if len(packet) > 4096:
-                packet.clear()
+            self._rx_packet.extend(chunk)
+            if len(self._rx_packet) > 4096:
+                self._rx_packet.clear()
                 continue
             if chunk == b"\x00":
+                packet = bytes(self._rx_packet)
+                self._rx_packet.clear()
                 try:
-                    return decode_serial_packet(bytes(packet))
+                    return decode_serial_packet(packet)
                 except ValueError:
-                    packet.clear()
+                    continue
         raise TimeoutError("serial frame timeout")
 
     def close(self) -> None:

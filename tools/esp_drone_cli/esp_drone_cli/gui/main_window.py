@@ -3179,7 +3179,7 @@ class MainWindow(QMainWindow):
                 lambda: self._session.connect_serial(
                     port,
                     baudrate=baudrate,
-                    timeout=0.2,
+                    timeout=0.05,
                     open_retry_timeout_s=0.75,
                 ),
             )

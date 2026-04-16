@@ -920,7 +920,7 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     window.serial_port_combo.setCurrentText("COM9")
     window.connect_button.click()
     app.processEvents()
-    assert ("connect_serial", ("COM9", 115200, 0.2, 0.75), {}) in session.calls
+    assert ("connect_serial", ("COM9", 115200, 0.05, 0.75), {}) in session.calls
     assert window.connection_status_chip.text() == window._t("status.connected")
     assert window.right_tabs.currentIndex() == 0
     assert window.right_tabs.tabText(0) == window._t("tab.params")
@@ -1192,7 +1192,7 @@ def test_gui_connect_failure_shows_error_and_restores_inputs(monkeypatch, tmp_pa
     window.connect_button.click()
     app.processEvents()
 
-    assert ("connect_serial", ("COM404", 115200, 0.2, 0.75), {}) in session.calls
+    assert ("connect_serial", ("COM404", 115200, 0.05, 0.75), {}) in session.calls
     assert window.connection_status_chip.text() == window._t("status.disconnected")
     assert window.connect_button.isEnabled()
     assert window.serial_port_combo.currentText() == "COM404"
@@ -1677,3 +1677,45 @@ def test_serial_transport_recv_frame_skips_invalid_packets(monkeypatch):
 
     assert frame.msg_type == MsgType.HELLO_RESP
     assert frame.payload == hello_payload
+
+
+def test_serial_transport_preserves_partial_packet_across_timeouts(monkeypatch):
+    from esp_drone_cli.core.transport import serial_link
+
+    class FakeSerial:
+        def __init__(self, *args, **kwargs) -> None:
+            self.chunks: list[bytes] = []
+
+        def reset_input_buffer(self) -> None:
+            return None
+
+        def reset_output_buffer(self) -> None:
+            return None
+
+        def read(self, _size: int) -> bytes:
+            if not self.chunks:
+                return b""
+            chunk = self.chunks.pop(0)
+            if chunk == b"":
+                time.sleep(0.01)
+                return b""
+            if len(chunk) > 1:
+                self.chunks.insert(0, chunk[1:])
+            return chunk[:1]
+
+    fake_serial = FakeSerial()
+    monkeypatch.setattr(serial_link.serial, "Serial", lambda *args, **kwargs: fake_serial)
+    monkeypatch.setattr(serial_link.time, "sleep", lambda _seconds: None)
+
+    transport = serial_link.SerialTransport("COM7", settle_delay_s=0.0)
+    packet = encode_serial_packet(MsgType.STREAM_CTRL, b"\x01", seq=7)
+    fake_serial.chunks.extend([packet[:4], b""])
+
+    with pytest.raises(TimeoutError):
+        transport.recv_frame(timeout=0.001)
+
+    fake_serial.chunks.append(packet[4:])
+    frame = transport.recv_frame(timeout=0.2)
+
+    assert frame.msg_type == MsgType.STREAM_CTRL
+    assert frame.payload == b"\x01"
