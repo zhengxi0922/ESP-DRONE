@@ -1691,6 +1691,15 @@ class MainWindow(QMainWindow):
         value = combo.currentData()
         return combo.currentText() if value is None else value
 
+    def _apply_compact_button(self, btn, width=112):
+        btn.setFixedWidth(width)
+        btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+    def _apply_compact_field(self, widget, width=128):
+        widget.setMinimumWidth(width)
+        widget.setMaximumWidth(width)
+        widget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
     def _apply_workbench_style(self) -> None:
         self.setStyleSheet(
             """
@@ -1938,7 +1947,7 @@ class MainWindow(QMainWindow):
         return panel
 
     def _apply_default_main_splitter_sizes(self) -> None:
-        self.main_splitter.setSizes([480, 980, 380])
+        self.main_splitter.setSizes([380, 1080, 380])
 
     def _normalize_main_splitter_sizes(self) -> None:
         sizes = self.main_splitter.sizes()
@@ -2358,7 +2367,9 @@ class MainWindow(QMainWindow):
         hang_layout = QGridLayout(hang_box)
         hang_layout.setHorizontalSpacing(6)
         hang_layout.setVerticalSpacing(6)
-        hang_layout.setColumnStretch(1, 1)
+        hang_layout.setColumnStretch(0, 0)
+        hang_layout.setColumnStretch(1, 0)
+        hang_layout.setColumnStretch(2, 1)
         hang_layout.setRowStretch(10, 1)
         self.hang_note_label = QLabel()
         self.hang_note_label.setWordWrap(True)
@@ -2408,24 +2419,37 @@ class MainWindow(QMainWindow):
         self.hang_trip_spin.setSingleStep(1.0)
         self.hang_trip_spin.setValue(30.0)
         self.hang_group = hang_box
-        hang_layout.addWidget(self.hang_note_label, 0, 0, 1, 2)
-        hang_layout.addWidget(self.hang_capture_button, 1, 0)
-        hang_layout.addWidget(self.hang_start_button, 1, 1)
-        hang_layout.addWidget(self.hang_stop_button, 2, 0, 1, 2)
+        self._apply_compact_button(self.hang_capture_button)
+        self._apply_compact_button(self.hang_start_button, 124)
+        self._apply_compact_button(self.hang_stop_button, 124)
+        for spin in (
+            self.hang_base_duty_spin,
+            self.hang_kp_roll_spin,
+            self.hang_kp_pitch_spin,
+            self.hang_rate_limit_roll_spin,
+            self.hang_rate_limit_pitch_spin,
+            self.hang_deadband_spin,
+            self.hang_trip_spin,
+        ):
+            self._apply_compact_field(spin, 118)
+        hang_layout.addWidget(self.hang_note_label, 0, 0, 1, 3)
+        hang_layout.addWidget(self.hang_capture_button, 1, 0, Qt.AlignLeft)
+        hang_layout.addWidget(self.hang_start_button, 1, 1, Qt.AlignLeft)
+        hang_layout.addWidget(self.hang_stop_button, 2, 0, 1, 2, Qt.AlignLeft)
         hang_layout.addWidget(self.hang_base_duty_label, 3, 0)
-        hang_layout.addWidget(self.hang_base_duty_spin, 3, 1)
+        hang_layout.addWidget(self.hang_base_duty_spin, 3, 1, Qt.AlignLeft)
         hang_layout.addWidget(self.hang_kp_roll_label, 4, 0)
-        hang_layout.addWidget(self.hang_kp_roll_spin, 4, 1)
+        hang_layout.addWidget(self.hang_kp_roll_spin, 4, 1, Qt.AlignLeft)
         hang_layout.addWidget(self.hang_kp_pitch_label, 5, 0)
-        hang_layout.addWidget(self.hang_kp_pitch_spin, 5, 1)
+        hang_layout.addWidget(self.hang_kp_pitch_spin, 5, 1, Qt.AlignLeft)
         hang_layout.addWidget(self.hang_rate_limit_roll_label, 6, 0)
-        hang_layout.addWidget(self.hang_rate_limit_roll_spin, 6, 1)
+        hang_layout.addWidget(self.hang_rate_limit_roll_spin, 6, 1, Qt.AlignLeft)
         hang_layout.addWidget(self.hang_rate_limit_pitch_label, 7, 0)
-        hang_layout.addWidget(self.hang_rate_limit_pitch_spin, 7, 1)
+        hang_layout.addWidget(self.hang_rate_limit_pitch_spin, 7, 1, Qt.AlignLeft)
         hang_layout.addWidget(self.hang_deadband_label, 8, 0)
-        hang_layout.addWidget(self.hang_deadband_spin, 8, 1)
+        hang_layout.addWidget(self.hang_deadband_spin, 8, 1, Qt.AlignLeft)
         hang_layout.addWidget(self.hang_trip_label, 9, 0)
-        hang_layout.addWidget(self.hang_trip_spin, 9, 1)
+        hang_layout.addWidget(self.hang_trip_spin, 9, 1, Qt.AlignLeft)
 
         ground_box = QWidget()
         self.ground_group = ground_box
@@ -2508,7 +2532,9 @@ class MainWindow(QMainWindow):
         udp_layout = QGridLayout(udp_box)
         udp_layout.setHorizontalSpacing(6)
         udp_layout.setVerticalSpacing(6)
-        udp_layout.setColumnStretch(1, 1)
+        udp_layout.setColumnStretch(0, 0)
+        udp_layout.setColumnStretch(1, 0)
+        udp_layout.setColumnStretch(2, 1)
         udp_layout.setRowStretch(18, 1)
         self.udp_warning_label = QLabel()
         self.udp_warning_label.setWordWrap(True)
@@ -2563,31 +2589,56 @@ class MainWindow(QMainWindow):
         self.udp_armed_title_label = QLabel()
         self.udp_battery_title_label = QLabel()
 
-        udp_layout.addWidget(self.udp_warning_label, 0, 0, 1, 2)
-        udp_layout.addWidget(self.udp_enable_button, 1, 0)
-        udp_layout.addWidget(self.udp_disable_button, 1, 1)
-        udp_layout.addWidget(self.udp_stop_button, 2, 0, 1, 2)
-        udp_layout.addWidget(self.udp_takeoff_button, 3, 0)
-        udp_layout.addWidget(self.udp_land_button, 3, 1)
+        for button in (
+            self.udp_disable_button,
+            self.udp_stop_button,
+            self.udp_takeoff_button,
+            self.udp_land_button,
+            self.udp_forward_button,
+            self.udp_backward_button,
+            self.udp_yaw_left_button,
+            self.udp_yaw_right_button,
+            self.udp_up_button,
+            self.udp_down_button,
+            self.udp_send_button,
+        ):
+            self._apply_compact_button(button)
+        self._apply_compact_button(self.udp_enable_button, 124)
+        for spin in (
+            self.udp_max_pwm_spin,
+            self.udp_throttle_spin,
+            self.udp_axis_step_spin,
+            self.udp_pitch_spin,
+            self.udp_roll_spin,
+            self.udp_yaw_spin,
+        ):
+            self._apply_compact_field(spin, 118)
+
+        udp_layout.addWidget(self.udp_warning_label, 0, 0, 1, 3)
+        udp_layout.addWidget(self.udp_enable_button, 1, 0, Qt.AlignLeft)
+        udp_layout.addWidget(self.udp_disable_button, 1, 1, Qt.AlignLeft)
+        udp_layout.addWidget(self.udp_stop_button, 2, 0, 1, 2, Qt.AlignLeft)
+        udp_layout.addWidget(self.udp_takeoff_button, 3, 0, Qt.AlignLeft)
+        udp_layout.addWidget(self.udp_land_button, 3, 1, Qt.AlignLeft)
         udp_layout.addWidget(self.udp_max_pwm_label, 4, 0)
-        udp_layout.addWidget(self.udp_max_pwm_spin, 4, 1)
+        udp_layout.addWidget(self.udp_max_pwm_spin, 4, 1, Qt.AlignLeft)
         udp_layout.addWidget(self.udp_throttle_label, 5, 0)
-        udp_layout.addWidget(self.udp_throttle_spin, 5, 1)
+        udp_layout.addWidget(self.udp_throttle_spin, 5, 1, Qt.AlignLeft)
         udp_layout.addWidget(self.udp_axis_step_label, 6, 0)
-        udp_layout.addWidget(self.udp_axis_step_spin, 6, 1)
+        udp_layout.addWidget(self.udp_axis_step_spin, 6, 1, Qt.AlignLeft)
         udp_layout.addWidget(self.udp_pitch_label, 7, 0)
-        udp_layout.addWidget(self.udp_pitch_spin, 7, 1)
+        udp_layout.addWidget(self.udp_pitch_spin, 7, 1, Qt.AlignLeft)
         udp_layout.addWidget(self.udp_roll_label, 8, 0)
-        udp_layout.addWidget(self.udp_roll_spin, 8, 1)
+        udp_layout.addWidget(self.udp_roll_spin, 8, 1, Qt.AlignLeft)
         udp_layout.addWidget(self.udp_yaw_label, 9, 0)
-        udp_layout.addWidget(self.udp_yaw_spin, 9, 1)
-        udp_layout.addWidget(self.udp_forward_button, 10, 0)
-        udp_layout.addWidget(self.udp_backward_button, 10, 1)
-        udp_layout.addWidget(self.udp_yaw_left_button, 11, 0)
-        udp_layout.addWidget(self.udp_yaw_right_button, 11, 1)
-        udp_layout.addWidget(self.udp_up_button, 12, 0)
-        udp_layout.addWidget(self.udp_down_button, 12, 1)
-        udp_layout.addWidget(self.udp_send_button, 13, 0, 1, 2)
+        udp_layout.addWidget(self.udp_yaw_spin, 9, 1, Qt.AlignLeft)
+        udp_layout.addWidget(self.udp_forward_button, 10, 0, Qt.AlignLeft)
+        udp_layout.addWidget(self.udp_backward_button, 10, 1, Qt.AlignLeft)
+        udp_layout.addWidget(self.udp_yaw_left_button, 11, 0, Qt.AlignLeft)
+        udp_layout.addWidget(self.udp_yaw_right_button, 11, 1, Qt.AlignLeft)
+        udp_layout.addWidget(self.udp_up_button, 12, 0, Qt.AlignLeft)
+        udp_layout.addWidget(self.udp_down_button, 12, 1, Qt.AlignLeft)
+        udp_layout.addWidget(self.udp_send_button, 13, 0, 1, 2, Qt.AlignLeft)
         udp_layout.addWidget(self.udp_watchdog_title_label, 14, 0)
         udp_layout.addWidget(self.udp_watchdog_status_label, 14, 1)
         udp_layout.addWidget(self.udp_mode_title_label, 15, 0)
