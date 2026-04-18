@@ -39,7 +39,7 @@
  *
  * @note 参数布局发生不兼容变化时应递增。
  */
-#define PARAMS_SCHEMA_VERSION 7u
+#define PARAMS_SCHEMA_VERSION 8u
 
 /**
  * @brief 参数值类型编号。
@@ -156,6 +156,7 @@ typedef struct {
     float ground_att_kp_pitch;
     float ground_att_rate_limit_roll;
     float ground_att_rate_limit_pitch;
+    float ground_att_target_limit_deg;
     float ground_att_error_deadband_deg;
     float ground_att_trip_deg;
     float ground_test_base_duty;
@@ -163,6 +164,11 @@ typedef struct {
     float ground_test_motor_balance_limit;
     uint32_t ground_test_auto_disarm_ms;
     float ground_test_ramp_duty_per_s;
+    float liftoff_verify_base_duty;
+    float liftoff_verify_max_extra_duty;
+    uint32_t liftoff_verify_auto_disarm_ms;
+    float liftoff_verify_ramp_duty_per_s;
+    float liftoff_verify_att_trip_deg;
 } params_store_t;
 
 /**

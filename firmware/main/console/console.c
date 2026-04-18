@@ -213,6 +213,7 @@ static void console_stop_active_control(bool clear_attitude_reference)
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
     console_reset_attitude_state(clear_attitude_reference);
     console_reset_ground_state(false);
+    ground_tune_set_submode(GROUND_TUNE_SUBMODE_RATE_ONLY);
     udp_manual_reset();
 }
 
@@ -532,6 +533,7 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         runtime_state_set_axis_test_request((axis3f_t){0});
         runtime_state_set_rate_setpoint_request((axis3f_t){0});
         ground_tune_reset_status();
+        ground_tune_set_submode(GROUND_TUNE_SUBMODE_RATE_ONLY);
         controller_reset();
         runtime_state_set_control_mode(CONTROL_MODE_ATTITUDE_GROUND_TUNE);
         console_send_event_text("ground tune started");
@@ -543,9 +545,135 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         runtime_state_set_control_mode(CONTROL_MODE_IDLE);
         runtime_state_set_axis_test_request((axis3f_t){0});
         runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        ground_tune_set_submode(GROUND_TUNE_SUBMODE_RATE_ONLY);
         ground_tune_set_trip_reason(GROUND_TUNE_TRIP_STOP_NORMAL);
         motor_stop_all();
         console_send_event_text("ground tune stopped normally");
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
+    case CMD_ATTITUDE_GROUND_VERIFY_START: {
+        imu_sample_t sample = {0};
+        estimator_state_t estimator_state = {0};
+
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || console_has_active_motor_test()) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_CONFLICT);
+            break;
+        }
+        if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_ARM_REQUIRED);
+            break;
+        }
+        if (!runtime_state_get_ground_tune_state().ref_valid) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_REF_REQUIRED);
+            break;
+        }
+        if (!imu_get_latest(&sample, NULL) || !console_sample_supports_attitude_ref(&sample)) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_IMU_NOT_READY);
+            break;
+        }
+        if (!estimator_get_latest(&estimator_state) || estimator_state.timestamp_us != sample.timestamp_us) {
+            estimator_update_from_imu(&sample, &estimator_state);
+        }
+        if (params_get()->ground_tune_use_kalman_attitude && !estimator_state.kalman_valid) {
+            ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_IMU_NOT_READY);
+            break;
+        }
+        if (req.arg_f32 > 0.0f) {
+            param_value_t value = {.f32 = req.arg_f32};
+            if (!params_try_set("ground_test_base_duty", value, PARAM_TYPE_FLOAT)) {
+                console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
+                break;
+            }
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        ground_tune_reset_status();
+        ground_tune_set_submode(GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY);
+        controller_reset();
+        runtime_state_set_control_mode(CONTROL_MODE_ATTITUDE_GROUND_TUNE);
+        console_send_event_text("attitude ground verify started");
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
+    }
+    case CMD_ATTITUDE_GROUND_VERIFY_STOP:
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        ground_tune_set_submode(GROUND_TUNE_SUBMODE_RATE_ONLY);
+        ground_tune_set_trip_reason(GROUND_TUNE_TRIP_STOP_NORMAL);
+        motor_stop_all();
+        console_send_event_text("attitude ground verify stopped normally");
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
+    case CMD_LIFTOFF_VERIFY_START: {
+        imu_sample_t sample = {0};
+        estimator_state_t estimator_state = {0};
+
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || console_has_active_motor_test()) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_CONFLICT);
+            break;
+        }
+        if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_ARM_REQUIRED);
+            break;
+        }
+        if (!runtime_state_get_ground_tune_state().ref_valid) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_REF_REQUIRED);
+            break;
+        }
+        if (!imu_get_latest(&sample, NULL) || !console_sample_supports_attitude_ref(&sample)) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_IMU_NOT_READY);
+            break;
+        }
+        if (!estimator_get_latest(&estimator_state) || estimator_state.timestamp_us != sample.timestamp_us) {
+            estimator_update_from_imu(&sample, &estimator_state);
+        }
+        if (params_get()->ground_tune_use_kalman_attitude && !estimator_state.kalman_valid) {
+            ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_IMU_NOT_READY);
+            break;
+        }
+        if (req.arg_f32 > 0.0f) {
+            param_value_t value = {.f32 = req.arg_f32};
+            if (!params_try_set("liftoff_verify_base_duty", value, PARAM_TYPE_FLOAT)) {
+                console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
+                break;
+            }
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        ground_tune_reset_status();
+        ground_tune_set_submode(GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF);
+        controller_reset();
+        runtime_state_set_control_mode(CONTROL_MODE_ATTITUDE_GROUND_TUNE);
+        console_send_event_text("low-risk liftoff verify started");
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
+    }
+    case CMD_LIFTOFF_VERIFY_STOP:
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        ground_tune_set_submode(GROUND_TUNE_SUBMODE_RATE_ONLY);
+        ground_tune_set_trip_reason(GROUND_TUNE_TRIP_STOP_NORMAL);
+        motor_stop_all();
+        console_send_event_text("low-risk liftoff verify stopped normally");
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
+    case CMD_ATTITUDE_GROUND_SET_TARGET:
+        if (runtime_state_get_control_mode() != CONTROL_MODE_ATTITUDE_GROUND_TUNE) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_CONFLICT);
+            break;
+        }
+        if (req.arg_u8 > 2u || !ground_tune_set_angle_target(req.arg_u8, req.arg_f32)) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
+            break;
+        }
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
     case CMD_UDP_MANUAL_ENABLE:
@@ -844,12 +972,13 @@ void console_send_telemetry(const imu_sample_t *imu_sample,
         estimator_state.raw_quat_body_to_world = imu_sample->quat_wxyz;
         estimator_state.attitude_valid = imu_sample->has_attitude && imu_sample->has_quaternion;
     }
-    const bool ground_active = control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE;
+    const bool ground_active =
+        control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE ||
+        control_mode == CONTROL_MODE_UDP_MANUAL;
     const bool reference_valid = ground_active ? ground_state.ref_valid : hang_state.ref_valid;
     axis3f_t rate_measured_for_error = estimator_state.filtered_rate_rpy_dps;
     if (control_mode == CONTROL_MODE_RATE_TEST ||
         control_mode == CONTROL_MODE_ATTITUDE_HANG_TEST ||
-        control_mode == CONTROL_MODE_UDP_MANUAL ||
         (ground_active && !params_get()->ground_tune_use_filtered_rate)) {
         rate_measured_for_error = estimator_state.raw_rate_rpy_dps;
     }
@@ -951,6 +1080,22 @@ void console_send_telemetry(const imu_sample_t *imu_sample,
         .reference_valid = reference_valid ? 1u : 0u,
         .ground_trip_reason = (uint8_t)ground_state.trip_reason,
         .battery_valid = (battery_raw > 0 && battery_voltage > 0.1f) ? 1u : 0u,
+        .angle_target_roll = ground_state.target_roll_deg,
+        .angle_target_pitch = ground_state.target_pitch_deg,
+        .angle_target_yaw = ground_state.target_yaw_deg,
+        .angle_measured_roll = ground_state.measured_roll_deg,
+        .angle_measured_pitch = ground_state.measured_pitch_deg,
+        .angle_measured_yaw = ground_state.measured_yaw_deg,
+        .angle_error_roll = ground_state.error_roll_deg,
+        .angle_error_pitch = ground_state.error_pitch_deg,
+        .angle_error_yaw = ground_state.error_yaw_deg,
+        .outer_loop_rate_target_roll = ground_state.rate_sp_roll_dps,
+        .outer_loop_rate_target_pitch = ground_state.rate_sp_pitch_dps,
+        .outer_loop_rate_target_yaw = ground_state.rate_sp_yaw_dps,
+        .outer_loop_clamp_flag = ground_state.outer_clamp_flags,
+        .inner_loop_clamp_flag = ground_state.inner_clamp_flags,
+        .control_submode = (uint8_t)ground_state.submode,
+        .telemetry_reserved_v5 = 0u,
     };
 
     console_send_frame(MSG_TELEMETRY_SAMPLE, &sample, sizeof(sample));

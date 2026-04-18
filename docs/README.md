@@ -17,6 +17,7 @@ This directory contains the repository's locked conventions, bring-up notes, and
 - [ESP-IDF Environment](./esp_idf_env.md)
 - [Bring-Up Checklist](./bringup_checklist.md)
 - [Hang Attitude Bring-Up Plan](./hang_attitude_bringup_plan.md)
+- [Attitude Ground Verify And Low-Risk Liftoff Plan](./attitude_ground_verify_liftoff_plan.md)
 - [Roll Rate Bench Workflow](./roll_rate_bench_workflow.md)
 - [Roll Bench Summary Sample](./roll_bench_summary_sample.md)
 - [Rate Bring-Up Results](./rate_bringup_results.md)

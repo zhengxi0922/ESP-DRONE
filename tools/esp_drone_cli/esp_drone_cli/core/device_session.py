@@ -620,6 +620,18 @@ class DeviceSession:
         info = self._device_info or self.hello()
         info.require_ground_tune()
 
+    def require_attitude_ground_verify(self) -> None:
+        """Fail before sending flat-ground attitude verify commands to unsupported firmware."""
+
+        info = self._device_info or self.hello()
+        info.require_attitude_ground_verify()
+
+    def require_low_risk_liftoff_verify(self) -> None:
+        """Fail before sending low-risk liftoff verify commands to unsupported firmware."""
+
+        info = self._device_info or self.hello()
+        info.require_low_risk_liftoff_verify()
+
     def arm(self) -> int:
         """请求设备解锁。"""
 
@@ -717,6 +729,36 @@ class DeviceSession:
 
         self.require_ground_tune()
         return self.command(CmdId.GROUND_TEST_STOP)
+
+    def attitude_ground_verify_start(self, base_duty: float | None = None) -> int:
+        """Start the flat-ground attitude outer-loop verification path."""
+
+        self.require_attitude_ground_verify()
+        return self.command(CmdId.ATTITUDE_GROUND_VERIFY_START, arg_f32=0.0 if base_duty is None else float(base_duty))
+
+    def attitude_ground_verify_stop(self) -> int:
+        """Stop the flat-ground attitude outer-loop verification path."""
+
+        self.require_attitude_ground_verify()
+        return self.command(CmdId.ATTITUDE_GROUND_VERIFY_STOP)
+
+    def attitude_ground_set_target(self, axis_index: int, target_deg: float) -> int:
+        """Set one small flat-ground attitude verification angle target."""
+
+        self.require_attitude_ground_verify()
+        return self.command(CmdId.ATTITUDE_GROUND_SET_TARGET, arg_u8=axis_index, arg_f32=float(target_deg))
+
+    def liftoff_verify_start(self, base_duty: float | None = None) -> int:
+        """Start the explicit low-risk liftoff verification path."""
+
+        self.require_low_risk_liftoff_verify()
+        return self.command(CmdId.LIFTOFF_VERIFY_START, arg_f32=0.0 if base_duty is None else float(base_duty))
+
+    def liftoff_verify_stop(self) -> int:
+        """Stop the explicit low-risk liftoff verification path."""
+
+        self.require_low_risk_liftoff_verify()
+        return self.command(CmdId.LIFTOFF_VERIFY_STOP)
 
     def udp_manual_enable(self) -> int:
         """Enter experimental UDP manual mode."""

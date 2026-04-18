@@ -22,6 +22,7 @@ The one-shot recorder creates a simpler CSV:
 
 ```text
 logs/YYYYMMDD_HHMMSS_ground_tune_log.csv
+logs/YYYYMMDD_HHMMSS_attitude_ground_verify_log.csv
 ```
 
 ## Required Telemetry Columns
@@ -46,6 +47,13 @@ logs/YYYYMMDD_HHMMSS_ground_tune_log.csv
 - `kalman_pitch_deg`
 - `attitude_err_roll_deg`
 - `attitude_err_pitch_deg`
+- `angle_target_roll`, `angle_target_pitch`, `angle_target_yaw`
+- `angle_measured_roll`, `angle_measured_pitch`, `angle_measured_yaw`
+- `angle_error_roll`, `angle_error_pitch`, `angle_error_yaw`
+- `outer_loop_rate_target_roll`, `outer_loop_rate_target_pitch`, `outer_loop_rate_target_yaw`
+- `outer_loop_clamp_flag`
+- `inner_loop_clamp_flag`
+- `control_submode`
 - `rate_setpoint_roll`, `rate_setpoint_pitch`, `rate_setpoint_yaw`
 - `rate_meas_roll_raw`, `rate_meas_pitch_raw`, `rate_meas_yaw_raw`
 - `rate_meas_roll_filtered`, `rate_meas_pitch_filtered`, `rate_meas_yaw_filtered`

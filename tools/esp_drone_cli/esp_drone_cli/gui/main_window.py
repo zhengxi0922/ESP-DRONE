@@ -880,7 +880,7 @@ EXTRA_TRANSLATIONS = {
         "hang.rate_limit_pitch": "Rate Limit Pitch",
         "hang.deadband_deg": "Deadband Deg",
         "hang.trip_deg": "Trip Deg",
-        "udp.warn": "Experimental UDP manual control. Throttle is the base duty target; roll/pitch use attitude hold and yaw uses rate PID. Respect Max PWM and keep prop safety in mind. Not free-flight ready.",
+        "udp.warn": "Experimental UDP manual control. Throttle is the base duty target; roll/pitch use the flat-ground reference outer loop and yaw uses rate PID. Respect Max PWM and keep prop safety in mind. Not free-flight ready.",
         "udp.max_pwm": "Max PWM (%)",
         "udp.throttle": "Throttle (%)",
         "udp.axis_step": "Axis Step (%)",
@@ -976,6 +976,21 @@ TELEMETRY_FIELD_KEYS = {
     "ground_ref_valid": "ground_ref_valid",
     "reference_valid": "reference_valid",
     "ground_trip_reason": "ground_trip_reason",
+    "angle_target_roll": "angle_target_roll",
+    "angle_target_pitch": "angle_target_pitch",
+    "angle_target_yaw": "angle_target_yaw",
+    "angle_measured_roll": "angle_measured_roll",
+    "angle_measured_pitch": "angle_measured_pitch",
+    "angle_measured_yaw": "angle_measured_yaw",
+    "angle_error_roll": "angle_error_roll",
+    "angle_error_pitch": "angle_error_pitch",
+    "angle_error_yaw": "angle_error_yaw",
+    "outer_loop_rate_target_roll": "outer_loop_rate_target_roll",
+    "outer_loop_rate_target_pitch": "outer_loop_rate_target_pitch",
+    "outer_loop_rate_target_yaw": "outer_loop_rate_target_yaw",
+    "outer_loop_clamp_flag": "outer_loop_clamp_flag",
+    "inner_loop_clamp_flag": "inner_loop_clamp_flag",
+    "control_submode": "control_submode",
 }
 
 STATUS_STYLE = {
@@ -1382,6 +1397,11 @@ class MainWindow(QMainWindow):
         "attitude_ref_valid",
         "attitude_err_roll_deg", "attitude_err_pitch_deg",
         "attitude_rate_sp_roll", "attitude_rate_sp_pitch",
+        "angle_target_roll", "angle_target_pitch", "angle_target_yaw",
+        "angle_measured_roll", "angle_measured_pitch", "angle_measured_yaw",
+        "angle_error_roll", "angle_error_pitch", "angle_error_yaw",
+        "outer_loop_rate_target_roll", "outer_loop_rate_target_pitch", "outer_loop_rate_target_yaw",
+        "outer_loop_clamp_flag", "inner_loop_clamp_flag", "control_submode",
         "attitude_ref_qw", "attitude_ref_qx", "attitude_ref_qy", "attitude_ref_qz",
         "base_duty_active",
         "filtered_gyro_x", "filtered_gyro_y", "filtered_gyro_z",
@@ -2498,6 +2518,11 @@ class MainWindow(QMainWindow):
         self.ground_bench_pitch_button = QPushButton("Run Ground Bench Pitch")
         self.ground_bench_yaw_button = QPushButton("Run Ground Bench Yaw")
         self.ground_bench_all_button = QPushButton("Run Ground Bench All")
+        self.att_ground_start_button = QPushButton("Att Verify Start")
+        self.att_ground_stop_button = QPushButton("Att Verify Stop")
+        self.att_ground_log_button = QPushButton("Att Verify Log 10s")
+        self.liftoff_verify_start_button = QPushButton("Liftoff Verify Start")
+        self.liftoff_verify_stop_button = QPushButton("Liftoff Verify Stop")
         ground_layout.addWidget(self.ground_capture_button, 0, 0)
         ground_layout.addWidget(self.ground_start_button, 0, 1)
         ground_layout.addWidget(self.ground_stop_button, 1, 0)
@@ -2507,17 +2532,22 @@ class MainWindow(QMainWindow):
         ground_layout.addWidget(self.ground_bench_pitch_button, 3, 1)
         ground_layout.addWidget(self.ground_bench_yaw_button, 4, 0)
         ground_layout.addWidget(self.ground_bench_all_button, 4, 1)
+        ground_layout.addWidget(self.att_ground_start_button, 5, 0)
+        ground_layout.addWidget(self.att_ground_stop_button, 5, 1)
+        ground_layout.addWidget(self.att_ground_log_button, 6, 0)
+        ground_layout.addWidget(self.liftoff_verify_start_button, 6, 1)
+        ground_layout.addWidget(self.liftoff_verify_stop_button, 7, 0)
         self.ground_ref_status_label = QLabel("-")
         self.ground_kalman_status_label = QLabel("-")
         self.ground_trip_status_label = QLabel("-")
-        ground_layout.addWidget(QLabel("Current Ref"), 5, 0)
-        ground_layout.addWidget(self.ground_ref_status_label, 5, 1)
-        ground_layout.addWidget(QLabel("Kalman"), 5, 2)
-        ground_layout.addWidget(self.ground_kalman_status_label, 5, 3)
-        ground_layout.addWidget(QLabel("Trip"), 6, 0)
-        ground_layout.addWidget(self.ground_trip_status_label, 6, 1, 1, 3)
+        ground_layout.addWidget(QLabel("Current Ref"), 8, 0)
+        ground_layout.addWidget(self.ground_ref_status_label, 8, 1)
+        ground_layout.addWidget(QLabel("Kalman"), 8, 2)
+        ground_layout.addWidget(self.ground_kalman_status_label, 8, 3)
+        ground_layout.addWidget(QLabel("Trip"), 9, 0)
+        ground_layout.addWidget(self.ground_trip_status_label, 9, 1, 1, 3)
         self.ground_outer_checkbox = QCheckBox("Enable attitude outer loop")
-        ground_layout.addWidget(self.ground_outer_checkbox, 7, 0, 1, 4)
+        ground_layout.addWidget(self.ground_outer_checkbox, 10, 0, 1, 4)
         self.ground_param_spins: dict[str, QDoubleSpinBox] = {}
 
         def add_ground_param(row: int, col: int, name: str, label: str, minimum: float, maximum: float, decimals: int, step: float, value: float) -> None:
@@ -2530,15 +2560,15 @@ class MainWindow(QMainWindow):
             ground_layout.addWidget(QLabel(label), row, col)
             ground_layout.addWidget(spin, row, col + 1)
 
-        ground_row = 8
+        ground_row = 11
         ground_params = [
-            ("rate_kp_roll", "rate_kp_roll", 0.0, 0.05, 5, 0.0005, 0.0026),
+            ("rate_kp_roll", "rate_kp_roll", 0.0, 0.05, 5, 0.0001, 0.0007),
             ("rate_ki_roll", "rate_ki_roll", 0.0, 0.02, 5, 0.0001, 0.0),
             ("rate_kd_roll", "rate_kd_roll", 0.0, 0.01, 5, 0.0001, 0.0),
-            ("rate_kp_pitch", "rate_kp_pitch", 0.0, 0.05, 5, 0.0005, 0.0024),
+            ("rate_kp_pitch", "rate_kp_pitch", 0.0, 0.05, 5, 0.0001, 0.0007),
             ("rate_ki_pitch", "rate_ki_pitch", 0.0, 0.02, 5, 0.0001, 0.0),
             ("rate_kd_pitch", "rate_kd_pitch", 0.0, 0.01, 5, 0.0001, 0.0),
-            ("rate_kp_yaw", "rate_kp_yaw", 0.0, 0.05, 5, 0.0005, 0.0026),
+            ("rate_kp_yaw", "rate_kp_yaw", 0.0, 0.05, 5, 0.0001, 0.0005),
             ("rate_ki_yaw", "rate_ki_yaw", 0.0, 0.02, 5, 0.0001, 0.0),
             ("rate_kd_yaw", "rate_kd_yaw", 0.0, 0.01, 5, 0.0001, 0.0),
             ("rate_integral_limit", "rate_integral_limit", 0.0, 300.0, 1, 1.0, 100.0),
@@ -2547,6 +2577,7 @@ class MainWindow(QMainWindow):
             ("ground_att_kp_pitch", "ground_att_kp_pitch", 0.0, 10.0, 2, 0.1, 1.2),
             ("ground_att_rate_limit_roll", "ground_att_rate_limit_roll", 0.0, 60.0, 1, 1.0, 12.0),
             ("ground_att_rate_limit_pitch", "ground_att_rate_limit_pitch", 0.0, 60.0, 1, 1.0, 12.0),
+            ("ground_att_target_limit_deg", "ground_target_limit", 0.5, 10.0, 1, 0.5, 3.0),
             ("ground_att_error_deadband_deg", "ground_deadband", 0.0, 5.0, 1, 0.1, 0.8),
             ("ground_att_trip_deg", "ground_trip", 5.0, 30.0, 1, 1.0, 12.0),
             ("ground_test_base_duty", "ground_base_duty", 0.0, 1.0, 3, 0.01, 0.08),
@@ -2559,6 +2590,10 @@ class MainWindow(QMainWindow):
             ("kalman_q_angle", "kalman_q_angle", 0.000001, 1.0, 6, 0.0005, 0.0025),
             ("kalman_q_bias", "kalman_q_bias", 0.0000001, 0.1, 6, 0.0005, 0.003),
             ("kalman_r_measure", "kalman_r_measure", 0.00001, 10.0, 5, 0.01, 0.08),
+            ("liftoff_verify_base_duty", "liftoff_base_duty", 0.0, 1.0, 3, 0.01, 0.10),
+            ("liftoff_verify_max_extra_duty", "liftoff_max_extra", 0.0, 0.20, 3, 0.01, 0.04),
+            ("liftoff_verify_ramp_duty_per_s", "liftoff_ramp", 0.01, 1.0, 2, 0.05, 0.10),
+            ("liftoff_verify_att_trip_deg", "liftoff_trip", 5.0, 20.0, 1, 1.0, 8.0),
         ]
         for idx, spec in enumerate(ground_params):
             col = 0 if idx % 2 == 0 else 2
@@ -2839,6 +2874,11 @@ class MainWindow(QMainWindow):
         self.ground_bench_pitch_button.clicked.connect(lambda: self._run_ground_bench("pitch"))
         self.ground_bench_yaw_button.clicked.connect(lambda: self._run_ground_bench("yaw"))
         self.ground_bench_all_button.clicked.connect(lambda: self._run_ground_bench("all"))
+        self.att_ground_start_button.clicked.connect(self._start_attitude_ground_verify)
+        self.att_ground_stop_button.clicked.connect(self._stop_attitude_ground_verify)
+        self.att_ground_log_button.clicked.connect(lambda: self._record_attitude_ground_verify(10.0))
+        self.liftoff_verify_start_button.clicked.connect(self._start_liftoff_verify)
+        self.liftoff_verify_stop_button.clicked.connect(self._stop_liftoff_verify)
         self.udp_enable_button.clicked.connect(self._enable_udp_manual)
         self.udp_disable_button.clicked.connect(self._disable_udp_manual)
         self.udp_stop_button.clicked.connect(self._stop_udp_manual)
@@ -3055,6 +3095,11 @@ class MainWindow(QMainWindow):
         self.ground_bench_pitch_button.setText("Run Ground Bench Pitch")
         self.ground_bench_yaw_button.setText("Run Ground Bench Yaw")
         self.ground_bench_all_button.setText("Run Ground Bench All")
+        self.att_ground_start_button.setText("Att Verify Start")
+        self.att_ground_stop_button.setText("Att Verify Stop")
+        self.att_ground_log_button.setText("Att Verify Log 10s")
+        self.liftoff_verify_start_button.setText("Liftoff Verify Start")
+        self.liftoff_verify_stop_button.setText("Liftoff Verify Stop")
         self.udp_warning_label.setText(self._t("udp.warn"))
         self.udp_enable_button.setText(self._t("udp.enable"))
         self.udp_disable_button.setText(self._t("udp.disable"))
@@ -3545,6 +3590,55 @@ class MainWindow(QMainWindow):
 
         self._run_session_action(f"ground_bench_{axis}", action)
 
+    def _start_attitude_ground_verify(self) -> None:
+        def action():
+            self._apply_ground_params()
+            base_spin = self.ground_param_spins.get("ground_test_base_duty")
+            base_duty = None if base_spin is None else float(base_spin.value())
+            return ensure_command_ok(
+                CmdId.ATTITUDE_GROUND_VERIFY_START,
+                int(self._session.attitude_ground_verify_start(base_duty=base_duty)),
+            )
+
+        self._run_session_action("attitude_ground_verify_start", action)
+
+    def _stop_attitude_ground_verify(self) -> None:
+        self._run_checked_command_action(
+            "attitude_ground_verify_stop",
+            CmdId.ATTITUDE_GROUND_VERIFY_STOP,
+            self._session.attitude_ground_verify_stop,
+        )
+
+    def _record_attitude_ground_verify(self, seconds: float) -> None:
+        output_dir = Path.cwd() / "logs"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"{time.strftime('%Y%m%d_%H%M%S')}_attitude_ground_verify_log_{int(seconds)}s.csv"
+
+        def action():
+            rows = self._session.dump_csv(path, duration_s=seconds)
+            return {"path": str(path), "rows": rows}
+
+        self._run_session_action("dump_csv", action)
+
+    def _start_liftoff_verify(self) -> None:
+        def action():
+            self._apply_ground_params()
+            base_spin = self.ground_param_spins.get("liftoff_verify_base_duty")
+            base_duty = None if base_spin is None else float(base_spin.value())
+            return ensure_command_ok(
+                CmdId.LIFTOFF_VERIFY_START,
+                int(self._session.liftoff_verify_start(base_duty=base_duty)),
+            )
+
+        self._run_session_action("liftoff_verify_start", action)
+
+    def _stop_liftoff_verify(self) -> None:
+        self._run_checked_command_action(
+            "liftoff_verify_stop",
+            CmdId.LIFTOFF_VERIFY_STOP,
+            self._session.liftoff_verify_stop,
+        )
+
     def _sync_udp_param_spins(self) -> None:
         if not getattr(self, "_params", None):
             return
@@ -3770,6 +3864,11 @@ class MainWindow(QMainWindow):
             self.ground_bench_pitch_button,
             self.ground_bench_yaw_button,
             self.ground_bench_all_button,
+            self.att_ground_start_button,
+            self.att_ground_stop_button,
+            self.att_ground_log_button,
+            self.liftoff_verify_start_button,
+            self.liftoff_verify_stop_button,
             self.udp_enable_button,
             self.udp_disable_button,
             self.udp_stop_button,
@@ -4015,7 +4114,7 @@ class MainWindow(QMainWindow):
             if label == "udp_manual_setpoint":
                 self._set_last_result(self._t("msg.command_ok", label=self._t("udp.send")))
             return
-        if label in {"connect_serial", "connect_udp", "disconnect", "arm", "disarm", "kill", "reboot", "save_params", "reset_params", "motor_test_start", "motor_test_stop", "calib_gyro", "calib_level", "rate_test_start", "rate_test_stop", "attitude_capture_ref", "attitude_test_start", "attitude_test_stop", "ground_capture_ref", "ground_test_start", "ground_test_stop"}:
+        if label in {"connect_serial", "connect_udp", "disconnect", "arm", "disarm", "kill", "reboot", "save_params", "reset_params", "motor_test_start", "motor_test_stop", "calib_gyro", "calib_level", "rate_test_start", "rate_test_stop", "attitude_capture_ref", "attitude_test_start", "attitude_test_stop", "ground_capture_ref", "ground_test_start", "ground_test_stop", "attitude_ground_verify_start", "attitude_ground_verify_stop", "liftoff_verify_start", "liftoff_verify_stop"}:
             summary = label.replace("_", " ")
             if label == "connect_serial":
                 summary = f"serial: {_device_info_text(result)}"
@@ -4059,6 +4158,14 @@ class MainWindow(QMainWindow):
                 summary = self._t("msg.command_ok", label=self.ground_start_button.text())
             elif label == "ground_test_stop":
                 summary = self._t("msg.command_ok", label=self.ground_stop_button.text())
+            elif label == "attitude_ground_verify_start":
+                summary = self._t("msg.command_ok", label=self.att_ground_start_button.text())
+            elif label == "attitude_ground_verify_stop":
+                summary = self._t("msg.command_ok", label=self.att_ground_stop_button.text())
+            elif label == "liftoff_verify_start":
+                summary = self._t("msg.command_ok", label=self.liftoff_verify_start_button.text())
+            elif label == "liftoff_verify_stop":
+                summary = self._t("msg.command_ok", label=self.liftoff_verify_stop_button.text())
             self._set_last_result(summary)
             self._append_log(summary)
             return

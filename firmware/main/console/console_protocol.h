@@ -4,7 +4,7 @@
 
 #define CONSOLE_FRAME_MAGIC 0xA5u
 #define CONSOLE_FRAME_VERSION 0x01u
-#define CONSOLE_PROTOCOL_VERSION 0x07u
+#define CONSOLE_PROTOCOL_VERSION 0x08u
 #define CONSOLE_BUILD_GIT_HASH_LEN 16u
 #define CONSOLE_BUILD_TIME_LEN 24u
 
@@ -16,6 +16,8 @@
 #define CONSOLE_FEATURE_ATTITUDE_HANG_BENCH (1u << 5)
 #define CONSOLE_FEATURE_UDP_MANUAL_CONTROL (1u << 6)
 #define CONSOLE_FEATURE_GROUND_TUNE (1u << 7)
+#define CONSOLE_FEATURE_ATTITUDE_GROUND_VERIFY (1u << 8)
+#define CONSOLE_FEATURE_LOW_RISK_LIFTOFF_VERIFY (1u << 9)
 #define CONSOLE_FEATURE_BITMAP_CURRENT \
     (CONSOLE_FEATURE_PARAMS | \
      CONSOLE_FEATURE_STREAMING | \
@@ -24,7 +26,9 @@
      CONSOLE_FEATURE_BARO_TELEMETRY | \
      CONSOLE_FEATURE_ATTITUDE_HANG_BENCH | \
      CONSOLE_FEATURE_UDP_MANUAL_CONTROL | \
-     CONSOLE_FEATURE_GROUND_TUNE)
+     CONSOLE_FEATURE_GROUND_TUNE | \
+     CONSOLE_FEATURE_ATTITUDE_GROUND_VERIFY | \
+     CONSOLE_FEATURE_LOW_RISK_LIFTOFF_VERIFY)
 
 typedef enum {
     MSG_HELLO_REQ = 0x01,
@@ -67,6 +71,11 @@ typedef enum {
     CMD_GROUND_CAPTURE_REF = 19,
     CMD_GROUND_TEST_START = 20,
     CMD_GROUND_TEST_STOP = 21,
+    CMD_ATTITUDE_GROUND_VERIFY_START = 22,
+    CMD_ATTITUDE_GROUND_VERIFY_STOP = 23,
+    CMD_LIFTOFF_VERIFY_START = 24,
+    CMD_LIFTOFF_VERIFY_STOP = 25,
+    CMD_ATTITUDE_GROUND_SET_TARGET = 26,
 } console_cmd_id_t;
 
 typedef enum {
@@ -213,4 +222,20 @@ typedef struct __attribute__((packed)) {
     uint8_t reference_valid;
     uint8_t ground_trip_reason;
     uint8_t battery_valid;
+    float angle_target_roll;
+    float angle_target_pitch;
+    float angle_target_yaw;
+    float angle_measured_roll;
+    float angle_measured_pitch;
+    float angle_measured_yaw;
+    float angle_error_roll;
+    float angle_error_pitch;
+    float angle_error_yaw;
+    float outer_loop_rate_target_roll;
+    float outer_loop_rate_target_pitch;
+    float outer_loop_rate_target_yaw;
+    uint8_t outer_loop_clamp_flag;
+    uint8_t inner_loop_clamp_flag;
+    uint8_t control_submode;
+    uint8_t telemetry_reserved_v5;
 } console_telemetry_sample_t;

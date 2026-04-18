@@ -119,7 +119,7 @@ Typical serial connection:
 
 ## Debug Actions
 
-The left-side `Debug Actions` area now covers both the original rate-test path and the new bench-only hang-attitude path.
+The left-side `Debug Actions` area covers rate-test, constrained-rig hang-attitude, flat-ground tune, attitude ground verify, low-risk liftoff verify, and UDP manual paths.
 
 Rate-test controls:
 
@@ -143,6 +143,21 @@ Hang-attitude controls:
   - `attitude_trip_deg`
 
 The GUI explicitly labels this area as a constrained-rig bench path and not a free-flight mode.
+
+Ground tune and attitude verification controls:
+
+- `Capture Ground Ref`
+- `Ground Test Start`
+- `Ground Test Stop`
+- `Ground Log 5s`
+- `Ground Log 10s`
+- `Att Verify Start`
+- `Att Verify Stop`
+- `Att Verify Log 10s`
+- `Liftoff Verify Start`
+- `Liftoff Verify Stop`
+
+`Att Verify` is only for +Z-up flat-ground outer-loop sign, clamp, telemetry, and failsafe checks. `Liftoff Verify` is only a bounded short-entry mode using the same flat-ground outer loop and tuned rate PID path.
 
 Command results and command failures are pushed into the bottom log.
 
@@ -177,6 +192,13 @@ The telemetry table also includes:
 - `attitude_ref_qy`
 - `attitude_ref_qz`
 - `base_duty_active`
+- `angle_target_roll`, `angle_target_pitch`, `angle_target_yaw`
+- `angle_measured_roll`, `angle_measured_pitch`, `angle_measured_yaw`
+- `angle_error_roll`, `angle_error_pitch`, `angle_error_yaw`
+- `outer_loop_rate_target_roll`, `outer_loop_rate_target_pitch`, `outer_loop_rate_target_yaw`
+- `outer_loop_clamp_flag`
+- `inner_loop_clamp_flag`
+- `control_submode`
 - existing `pid_out_*`, `imu_age_us`, and `loop_dt_us`
 
 Use the chart chain to verify:

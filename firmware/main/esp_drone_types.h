@@ -132,6 +132,24 @@ typedef enum {
     CONTROL_MODE_ATTITUDE_GROUND_TUNE = 6, /**< Low-throttle flat-ground attitude tune mode. */
 } control_mode_t;
 
+typedef enum {
+    GROUND_TUNE_SUBMODE_RATE_ONLY = 0,
+    GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY = 1,
+    GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF = 2,
+    GROUND_TUNE_SUBMODE_UDP_MANUAL = 3,
+} ground_tune_submode_t;
+
+typedef enum {
+    GROUND_TUNE_OUTER_CLAMP_ROLL = (1u << 0),
+    GROUND_TUNE_OUTER_CLAMP_PITCH = (1u << 1),
+    GROUND_TUNE_OUTER_CLAMP_YAW = (1u << 2),
+} ground_tune_outer_clamp_flag_t;
+
+typedef enum {
+    GROUND_TUNE_INNER_CLAMP_MOTOR = (1u << 0),
+    GROUND_TUNE_INNER_CLAMP_INTEGRATOR = (1u << 1),
+} ground_tune_inner_clamp_flag_t;
+
 /**
  * @brief 气压计健康状态。
  */
@@ -225,10 +243,23 @@ typedef struct {
     quatf_t ref_q_body_to_world;
     float ref_kalman_roll_deg;
     float ref_kalman_pitch_deg;
+    float target_roll_deg;
+    float target_pitch_deg;
+    float target_yaw_deg;
+    float measured_roll_deg;
+    float measured_pitch_deg;
+    float measured_yaw_deg;
+    float error_roll_deg;
+    float error_pitch_deg;
+    float error_yaw_deg;
     float err_roll_deg;
     float err_pitch_deg;
     float rate_sp_roll_dps;
     float rate_sp_pitch_dps;
+    float rate_sp_yaw_dps;
     float base_duty_active;
+    uint8_t outer_clamp_flags;
+    uint8_t inner_clamp_flags;
+    ground_tune_submode_t submode;
     ground_tune_trip_reason_t trip_reason;
 } ground_tune_state_t;

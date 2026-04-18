@@ -15,7 +15,8 @@ TELEMETRY_STRUCT_V1 = struct.Struct("<Q" + "f" * 36 + "III8B")
 TELEMETRY_STRUCT_V2 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B")
 TELEMETRY_STRUCT_V3 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B" + "f" * 9 + "4B")
 TELEMETRY_STRUCT_V4 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B" + "f" * 9 + "4B" + "f" * 17 + "I8B")
-TELEMETRY_STRUCT_CURRENT = TELEMETRY_STRUCT_V4
+TELEMETRY_STRUCT_V5 = struct.Struct("<Q" + "f" * 36 + "III8B" + "ffffI4B" + "f" * 9 + "4B" + "f" * 17 + "I8B" + "f" * 12 + "4B")
+TELEMETRY_STRUCT_CURRENT = TELEMETRY_STRUCT_V5
 TELEMETRY_STRUCT = TELEMETRY_STRUCT_V3
 
 TELEMETRY_CSV_FIELDS = [
@@ -37,6 +38,11 @@ TELEMETRY_CSV_FIELDS = [
     "baro_update_age_us", "baro_valid", "baro_health",
     "attitude_err_roll_deg", "attitude_err_pitch_deg",
     "attitude_rate_sp_roll", "attitude_rate_sp_pitch",
+    "angle_target_roll", "angle_target_pitch", "angle_target_yaw",
+    "angle_measured_roll", "angle_measured_pitch", "angle_measured_yaw",
+    "angle_error_roll", "angle_error_pitch", "angle_error_yaw",
+    "outer_loop_rate_target_roll", "outer_loop_rate_target_pitch", "outer_loop_rate_target_yaw",
+    "outer_loop_clamp_flag", "inner_loop_clamp_flag", "control_submode",
     "attitude_ref_qw", "attitude_ref_qx", "attitude_ref_qy", "attitude_ref_qz",
     "base_duty_active", "attitude_ref_valid",
     "filtered_gyro_x", "filtered_gyro_y", "filtered_gyro_z",
@@ -75,9 +81,13 @@ FEATURE_BARO_TELEMETRY = 1 << 4
 FEATURE_ATTITUDE_HANG_BENCH = 1 << 5
 FEATURE_UDP_MANUAL_CONTROL = 1 << 6
 FEATURE_GROUND_TUNE = 1 << 7
+FEATURE_ATTITUDE_GROUND_VERIFY = 1 << 8
+FEATURE_LOW_RISK_LIFTOFF_VERIFY = 1 << 9
 MIN_ATTITUDE_HANG_PROTOCOL_VERSION = 3
 MIN_UDP_MANUAL_PROTOCOL_VERSION = 5
 MIN_GROUND_TUNE_PROTOCOL_VERSION = 6
+MIN_ATTITUDE_GROUND_VERIFY_PROTOCOL_VERSION = 8
+MIN_LOW_RISK_LIFTOFF_PROTOCOL_VERSION = 8
 
 FEATURE_NAMES = {
     FEATURE_PARAMS: "params",
@@ -88,6 +98,8 @@ FEATURE_NAMES = {
     FEATURE_ATTITUDE_HANG_BENCH: "attitude_hang_bench",
     FEATURE_UDP_MANUAL_CONTROL: "udp_manual_control",
     FEATURE_GROUND_TUNE: "ground_tune",
+    FEATURE_ATTITUDE_GROUND_VERIFY: "attitude_ground_verify",
+    FEATURE_LOW_RISK_LIFTOFF_VERIFY: "low_risk_liftoff_verify",
 }
 
 
@@ -160,6 +172,40 @@ class DeviceInfo:
             "Rebuild and flash the current main firmware before running ground tune commands."
         )
 
+    def require_attitude_ground_verify(self) -> None:
+        if (
+            self.protocol_version >= MIN_ATTITUDE_GROUND_VERIFY_PROTOCOL_VERSION
+            and self.supports_feature(FEATURE_ATTITUDE_GROUND_VERIFY)
+        ):
+            return
+        raise CapabilityError(
+            "device firmware does not advertise flat-ground attitude verification support "
+            f"(need protocol_version>={MIN_ATTITUDE_GROUND_VERIFY_PROTOCOL_VERSION} and "
+            f"feature attitude_ground_verify/0x{FEATURE_ATTITUDE_GROUND_VERIFY:02x}; "
+            f"got protocol_version={self.protocol_version}, "
+            f"feature_bitmap=0x{self.feature_bitmap:08x}, "
+            f"build_git_hash={self.build_git_hash or 'unknown'}, "
+            f"build_time_utc={self.build_time_utc or 'unknown'}). "
+            "Rebuild and flash the current main firmware before running attitude ground verify commands."
+        )
+
+    def require_low_risk_liftoff_verify(self) -> None:
+        if (
+            self.protocol_version >= MIN_LOW_RISK_LIFTOFF_PROTOCOL_VERSION
+            and self.supports_feature(FEATURE_LOW_RISK_LIFTOFF_VERIFY)
+        ):
+            return
+        raise CapabilityError(
+            "device firmware does not advertise low-risk liftoff verification support "
+            f"(need protocol_version>={MIN_LOW_RISK_LIFTOFF_PROTOCOL_VERSION} and "
+            f"feature low_risk_liftoff_verify/0x{FEATURE_LOW_RISK_LIFTOFF_VERIFY:02x}; "
+            f"got protocol_version={self.protocol_version}, "
+            f"feature_bitmap=0x{self.feature_bitmap:08x}, "
+            f"build_git_hash={self.build_git_hash or 'unknown'}, "
+            f"build_time_utc={self.build_time_utc or 'unknown'}). "
+            "Rebuild and flash the current main firmware before running liftoff verify commands."
+        )
+
 
 @dataclass(slots=True)
 class ParamSnapshot:
@@ -230,6 +276,21 @@ class TelemetrySample:
     attitude_err_pitch_deg: float
     attitude_rate_sp_roll: float
     attitude_rate_sp_pitch: float
+    angle_target_roll: float
+    angle_target_pitch: float
+    angle_target_yaw: float
+    angle_measured_roll: float
+    angle_measured_pitch: float
+    angle_measured_yaw: float
+    angle_error_roll: float
+    angle_error_pitch: float
+    angle_error_yaw: float
+    outer_loop_rate_target_roll: float
+    outer_loop_rate_target_pitch: float
+    outer_loop_rate_target_yaw: float
+    outer_loop_clamp_flag: int
+    inner_loop_clamp_flag: int
+    control_submode: int
     attitude_ref_qw: float
     attitude_ref_qx: float
     attitude_ref_qy: float
@@ -393,6 +454,21 @@ class TelemetrySample:
             attitude_err_pitch_deg=0.0,
             attitude_rate_sp_roll=0.0,
             attitude_rate_sp_pitch=0.0,
+            angle_target_roll=0.0,
+            angle_target_pitch=0.0,
+            angle_target_yaw=0.0,
+            angle_measured_roll=0.0,
+            angle_measured_pitch=0.0,
+            angle_measured_yaw=0.0,
+            angle_error_roll=0.0,
+            angle_error_pitch=0.0,
+            angle_error_yaw=0.0,
+            outer_loop_rate_target_roll=0.0,
+            outer_loop_rate_target_pitch=0.0,
+            outer_loop_rate_target_yaw=0.0,
+            outer_loop_clamp_flag=0,
+            inner_loop_clamp_flag=0,
+            control_submode=0,
             attitude_ref_qw=0.0,
             attitude_ref_qx=0.0,
             attitude_ref_qy=0.0,
@@ -445,6 +521,12 @@ class TelemetrySample:
         sample.attitude_err_pitch_deg = float(values[58])
         sample.attitude_rate_sp_roll = float(values[59])
         sample.attitude_rate_sp_pitch = float(values[60])
+        sample.angle_measured_roll = sample.attitude_err_roll_deg
+        sample.angle_measured_pitch = sample.attitude_err_pitch_deg
+        sample.angle_error_roll = -sample.attitude_err_roll_deg
+        sample.angle_error_pitch = -sample.attitude_err_pitch_deg
+        sample.outer_loop_rate_target_roll = sample.attitude_rate_sp_roll
+        sample.outer_loop_rate_target_pitch = sample.attitude_rate_sp_pitch
         sample.attitude_ref_qw = float(values[61])
         sample.attitude_ref_qx = float(values[62])
         sample.attitude_ref_qy = float(values[63])
@@ -486,7 +568,30 @@ class TelemetrySample:
         return sample
 
     @classmethod
+    def _from_v5_values(cls, values: list[object]) -> "TelemetrySample":
+        sample = cls._from_v4_values(values[:96])
+        v5_offset = 96
+        sample.angle_target_roll = float(values[v5_offset + 0])
+        sample.angle_target_pitch = float(values[v5_offset + 1])
+        sample.angle_target_yaw = float(values[v5_offset + 2])
+        sample.angle_measured_roll = float(values[v5_offset + 3])
+        sample.angle_measured_pitch = float(values[v5_offset + 4])
+        sample.angle_measured_yaw = float(values[v5_offset + 5])
+        sample.angle_error_roll = float(values[v5_offset + 6])
+        sample.angle_error_pitch = float(values[v5_offset + 7])
+        sample.angle_error_yaw = float(values[v5_offset + 8])
+        sample.outer_loop_rate_target_roll = float(values[v5_offset + 9])
+        sample.outer_loop_rate_target_pitch = float(values[v5_offset + 10])
+        sample.outer_loop_rate_target_yaw = float(values[v5_offset + 11])
+        sample.outer_loop_clamp_flag = int(values[v5_offset + 12])
+        sample.inner_loop_clamp_flag = int(values[v5_offset + 13])
+        sample.control_submode = int(values[v5_offset + 14])
+        return sample
+
+    @classmethod
     def from_payload(cls, payload: bytes) -> "TelemetrySample":
+        if len(payload) == TELEMETRY_STRUCT_V5.size:
+            return cls._from_v5_values(list(TELEMETRY_STRUCT_V5.unpack(payload)))
         if len(payload) == TELEMETRY_STRUCT_V4.size:
             return cls._from_v4_values(list(TELEMETRY_STRUCT_V4.unpack(payload)))
         if len(payload) == TELEMETRY_STRUCT_V3.size:
@@ -498,7 +603,7 @@ class TelemetrySample:
         raise ValueError(
             f"unsupported telemetry payload length {len(payload)}, "
             f"expected {TELEMETRY_STRUCT_V1.size}, {TELEMETRY_STRUCT_V2.size}, "
-            f"{TELEMETRY_STRUCT_V3.size}, or {TELEMETRY_STRUCT_V4.size}"
+            f"{TELEMETRY_STRUCT_V3.size}, {TELEMETRY_STRUCT_V4.size}, or {TELEMETRY_STRUCT_V5.size}"
         )
 
     def to_csv_row(self) -> list[object]:

@@ -29,7 +29,9 @@ from esp_drone_cli.core.models import (
     CMD_REQ_STRUCT,
     CapabilityError,
     DeviceInfo,
+    FEATURE_ATTITUDE_GROUND_VERIFY,
     FEATURE_ATTITUDE_HANG_BENCH,
+    FEATURE_LOW_RISK_LIFTOFF_VERIFY,
     HELLO_RESP_STRUCT,
     HELLO_RESP_STRUCT_V2,
     ParamSnapshot,
@@ -39,6 +41,7 @@ from esp_drone_cli.core.models import (
     TELEMETRY_STRUCT_V1,
     TELEMETRY_STRUCT_V3,
     TELEMETRY_STRUCT_V4,
+    TELEMETRY_STRUCT_V5,
     TelemetrySample,
     UDP_MANUAL_SETPOINT_STRUCT,
     decode_device_info,
@@ -137,6 +140,20 @@ def build_telemetry_payload_v4() -> bytes:
         1, 1, 0, 1, 1, 1, 3, 1,
     ]
     return TELEMETRY_STRUCT_V4.pack(*values)
+
+
+def build_telemetry_payload_v5() -> bytes:
+    values = list(TELEMETRY_STRUCT_V4.unpack(build_telemetry_payload_v4()))
+    values.extend(
+        [
+            1.0, -2.0, 0.0,
+            0.4, -0.6, 0.0,
+            0.6, -1.4, 0.0,
+            0.72, -1.68, 0.0,
+            1, 3, 1, 0,
+        ]
+    )
+    return TELEMETRY_STRUCT_V5.pack(*values)
 
 
 class MockTransport:
@@ -394,6 +411,35 @@ class FakeSession:
         self._record("ground_test_stop")
         return 0
 
+    def require_ground_tune(self) -> None:
+        self._record("require_ground_tune")
+
+    def require_attitude_ground_verify(self) -> None:
+        self._record("require_attitude_ground_verify")
+
+    def require_low_risk_liftoff_verify(self) -> None:
+        self._record("require_low_risk_liftoff_verify")
+
+    def attitude_ground_verify_start(self, base_duty: float | None = None) -> int:
+        self._record("attitude_ground_verify_start", base_duty)
+        return 0
+
+    def attitude_ground_verify_stop(self) -> int:
+        self._record("attitude_ground_verify_stop")
+        return 0
+
+    def attitude_ground_set_target(self, axis_index: int, target_deg: float) -> int:
+        self._record("attitude_ground_set_target", axis_index, target_deg)
+        return 0
+
+    def liftoff_verify_start(self, base_duty: float | None = None) -> int:
+        self._record("liftoff_verify_start", base_duty)
+        return 0
+
+    def liftoff_verify_stop(self) -> int:
+        self._record("liftoff_verify_stop")
+        return 0
+
     def require_udp_manual_control(self) -> None:
         self._record("require_udp_manual_control")
 
@@ -566,6 +612,28 @@ def test_hello_resp_v2_decodes_build_identity_and_capabilities():
     assert "attitude_hang_bench" in info.feature_names()
 
 
+def test_hello_resp_v2_decodes_attitude_ground_verify_capabilities():
+    payload = HELLO_RESP_STRUCT_V2.pack(
+        8,
+        1,
+        0,
+        0,
+        0x3FF,
+        b"att-v8".ljust(16, b"\x00"),
+        b"2026-04-18T00:00:00Z".ljust(24, b"\x00"),
+    )
+
+    info = decode_device_info(payload)
+
+    assert info.protocol_version == 8
+    assert info.supports_feature(FEATURE_ATTITUDE_GROUND_VERIFY)
+    assert info.supports_feature(FEATURE_LOW_RISK_LIFTOFF_VERIFY)
+    assert "attitude_ground_verify" in info.feature_names()
+    assert "low_risk_liftoff_verify" in info.feature_names()
+    info.require_attitude_ground_verify()
+    info.require_low_risk_liftoff_verify()
+
+
 def test_attitude_capture_ref_encodes_expected_opcode():
     session = DeviceSession()
     transport = MockTransport()
@@ -639,6 +707,51 @@ def test_device_session_ground_capture_ref_waits_for_cmd_resp_not_param_value():
     assert arg_f32 == pytest.approx(0.0)
     assert MsgType.PARAM_GET not in [msg_type for msg_type, _payload in transport.sent]
     assert MsgType.PARAM_SET not in [msg_type for msg_type, _payload in transport.sent]
+    session.disconnect()
+
+
+def test_device_session_attitude_ground_and_liftoff_commands_encode_expected_opcodes():
+    class AttitudeGroundTransport(MockTransport):
+        def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
+            if msg_type == MsgType.HELLO_REQ:
+                self.sent.append((msg_type, payload))
+                hello = HELLO_RESP_STRUCT_V2.pack(
+                    8,
+                    1,
+                    0,
+                    0,
+                    0x3FF,
+                    b"unit-test".ljust(16, b"\x00"),
+                    b"2026-04-18T00:00:00Z".ljust(24, b"\x00"),
+                )
+                self.inject(Frame(MsgType.HELLO_RESP, flags, seq, hello))
+                return
+            super().send_message(msg_type, payload, flags=flags, seq=seq)
+
+    session = DeviceSession()
+    transport = AttitudeGroundTransport()
+    session.connect_transport(transport)
+    transport.sent.clear()
+
+    assert session.attitude_ground_verify_start(base_duty=0.08) == 0
+    assert session.attitude_ground_set_target(0, 1.5) == 0
+    assert session.attitude_ground_verify_stop() == 0
+    assert session.liftoff_verify_start(base_duty=0.10) == 0
+    assert session.liftoff_verify_stop() == 0
+
+    cmd_frames = [payload for msg_type, payload in transport.sent if msg_type == MsgType.CMD_REQ]
+    decoded = [CMD_REQ_STRUCT.unpack(payload) for payload in cmd_frames]
+    assert [item[0] for item in decoded] == [
+        CmdId.ATTITUDE_GROUND_VERIFY_START,
+        CmdId.ATTITUDE_GROUND_SET_TARGET,
+        CmdId.ATTITUDE_GROUND_VERIFY_STOP,
+        CmdId.LIFTOFF_VERIFY_START,
+        CmdId.LIFTOFF_VERIFY_STOP,
+    ]
+    assert decoded[0][3] == pytest.approx(0.08)
+    assert decoded[1][1] == 0
+    assert decoded[1][3] == pytest.approx(1.5)
+    assert decoded[3][3] == pytest.approx(0.10)
     session.disconnect()
 
 
@@ -867,6 +980,26 @@ def test_telemetry_sample_v4_decodes_estimator_fields_after_reserved_bytes():
     assert row["kalman_valid"] == 1
     assert row["attitude_valid"] == 1
     assert row["battery_valid"] == 1
+
+
+def test_telemetry_sample_v5_decodes_attitude_ground_verify_fields():
+    sample = TelemetrySample.from_payload(build_telemetry_payload_v5())
+    row = dict(zip(TELEMETRY_CSV_FIELDS, sample.to_csv_row()))
+
+    assert sample.angle_target_roll == pytest.approx(1.0)
+    assert sample.angle_target_pitch == pytest.approx(-2.0)
+    assert sample.angle_measured_roll == pytest.approx(0.4)
+    assert sample.angle_measured_pitch == pytest.approx(-0.6)
+    assert sample.angle_error_roll == pytest.approx(0.6)
+    assert sample.angle_error_pitch == pytest.approx(-1.4)
+    assert sample.outer_loop_rate_target_roll == pytest.approx(0.72)
+    assert sample.outer_loop_rate_target_pitch == pytest.approx(-1.68)
+    assert sample.outer_loop_clamp_flag == 1
+    assert sample.inner_loop_clamp_flag == 3
+    assert sample.control_submode == 1
+    assert row["angle_target_roll"] == pytest.approx(1.0)
+    assert row["outer_loop_clamp_flag"] == 1
+    assert row["control_submode"] == 1
 
 
 def test_gui_startup_without_device_or_missing_pyqt5(monkeypatch):
@@ -1152,6 +1285,49 @@ def test_gui_ground_record_only_dumps_csv_without_applying_params(monkeypatch, t
 
 
 @pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
+def test_gui_attitude_ground_and_liftoff_buttons_route_through_session(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.chdir(tmp_path)
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+
+    from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
+
+    class SyncBridge(QtSessionBridge):
+        def run_async(self, label: str, callback) -> None:
+            result = callback()
+            self.command_finished.emit(label, result)
+
+    app = QApplication.instance() or QApplication([])
+    session = FakeSession()
+    settings = QSettings(str(tmp_path / "gui-att-ground.ini"), QSettings.IniFormat)
+    window = MainWindow(session=session, bridge_cls=SyncBridge, serial_port_provider=lambda: ["COM9"], settings=settings)
+
+    window.serial_port_combo.setCurrentText("COM9")
+    window.connect_button.click()
+    app.processEvents()
+    session.calls.clear()
+
+    window.att_ground_start_button.click()
+    window.att_ground_stop_button.click()
+    window.att_ground_log_button.click()
+    window.liftoff_verify_start_button.click()
+    window.liftoff_verify_stop_button.click()
+    app.processEvents()
+
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "attitude_ground_verify_start" in call_names
+    assert "attitude_ground_verify_stop" in call_names
+    assert "liftoff_verify_start" in call_names
+    assert "liftoff_verify_stop" in call_names
+    assert any(name == "dump_csv" and args[0].name.startswith(time.strftime("%Y%m%d")) for name, args, _ in session.calls)
+
+    window.close()
+    app.processEvents()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
 def test_gui_connect_failure_shows_error_and_restores_inputs(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
@@ -1330,6 +1506,30 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert ground_log_args.command == "ground-log"
     assert ground_log_args.duration == pytest.approx(2.0)
 
+    attitude_ground_start_args = build_parser().parse_args(
+        ["--serial", "COM7", "attitude-ground-verify", "start", "--base-duty", "0.08"]
+    )
+    assert attitude_ground_start_args.command == "attitude-ground-verify"
+    assert attitude_ground_start_args.action == "start"
+    assert attitude_ground_start_args.base_duty == pytest.approx(0.08)
+
+    attitude_ground_target_args = build_parser().parse_args(
+        ["--serial", "COM7", "attitude-ground-verify", "target", "roll", "1.5"]
+    )
+    assert attitude_ground_target_args.command == "attitude-ground-verify"
+    assert attitude_ground_target_args.action == "target"
+    assert attitude_ground_target_args.axis == "roll"
+    assert attitude_ground_target_args.deg == pytest.approx(1.5)
+
+    attitude_ground_log_args = build_parser().parse_args(["--serial", "COM7", "attitude-ground-log", "--duration", "2"])
+    assert attitude_ground_log_args.command == "attitude-ground-log"
+    assert attitude_ground_log_args.duration == pytest.approx(2.0)
+
+    liftoff_args = build_parser().parse_args(["--serial", "COM7", "liftoff-verify", "start", "--base-duty", "0.10"])
+    assert liftoff_args.command == "liftoff-verify"
+    assert liftoff_args.action == "start"
+    assert liftoff_args.base_duty == pytest.approx(0.10)
+
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
     real_import = builtins.__import__
@@ -1433,6 +1633,29 @@ def test_cli_rate_test_returns_firmware_status_on_error(monkeypatch, capsys):
     assert "rate-test failed: device must be armed first" in error_text
 
 
+def test_cli_attitude_ground_and_liftoff_commands_use_device_session(monkeypatch, tmp_path: Path):
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+
+    assert cli_main.main(["--serial", "COM7", "attitude-ground-verify", "start", "--base-duty", "0.08"]) == 0
+    assert cli_main.main(["--serial", "COM7", "attitude-ground-verify", "target", "pitch", "-1.25"]) == 0
+    assert cli_main.main(["--serial", "COM7", "attitude-ground-verify", "stop"]) == 0
+    assert cli_main.main(
+        ["--serial", "COM7", "attitude-ground-log", "--duration", "0.01", "--output-dir", str(tmp_path)]
+    ) == 0
+    assert cli_main.main(["--serial", "COM7", "liftoff-verify", "start", "--base-duty", "0.10"]) == 0
+    assert cli_main.main(["--serial", "COM7", "liftoff-verify", "stop"]) == 0
+
+    assert ("attitude_ground_verify_start", (0.08,), {}) in session.calls
+    assert ("attitude_ground_set_target", (1, -1.25), {}) in session.calls
+    assert ("attitude_ground_verify_stop", (), {}) in session.calls
+    assert ("liftoff_verify_start", (0.10,), {}) in session.calls
+    assert ("liftoff_verify_stop", (), {}) in session.calls
+    assert any(name == "dump_csv" and args[0].name.endswith("_attitude_ground_verify_log.csv") for name, args, _ in session.calls)
+
+
 def test_cli_attitude_start_old_firmware_fails_before_param_write(monkeypatch, capsys):
     from esp_drone_cli.cli import main as cli_main
 
@@ -1470,6 +1693,7 @@ def test_firmware_dispatch_registers_udp_manual_control():
     protocol = (repo_root / "firmware" / "main" / "console" / "console_protocol.h").read_text(encoding="utf-8")
     dispatch = (repo_root / "firmware" / "main" / "console" / "console.c").read_text(encoding="utf-8")
     udp_manual = (repo_root / "firmware" / "main" / "udp_manual" / "udp_manual.c").read_text(encoding="utf-8")
+    app_main = (repo_root / "firmware" / "main" / "app_main.c").read_text(encoding="utf-8")
     udp_protocol = (repo_root / "firmware" / "main" / "udp_protocol" / "udp_protocol.c").read_text(encoding="utf-8")
 
     assert "CMD_UDP_MANUAL_ENABLE = 13" in protocol
@@ -1479,8 +1703,47 @@ def test_firmware_dispatch_registers_udp_manual_control():
     assert "case MSG_UDP_MANUAL_SETPOINT:" in dispatch
     assert "CONTROL_MODE_UDP_MANUAL" in udp_manual
     assert "udp manual watchdog timeout" in udp_manual
+    assert "ground_tune_capture_reference(&sample, &estimator_state)" in udp_manual
+    assert "ground_tune_compute(&estimator_state, &rate_setpoint)" in app_main
     assert "udp_protocol_task" in udp_protocol
     assert "MSG_UDP_MANUAL_SETPOINT" in udp_protocol
+
+
+def test_firmware_dispatch_registers_attitude_ground_verify_and_liftoff_paths():
+    repo_root = Path(__file__).resolve().parents[3]
+    protocol = (repo_root / "firmware" / "main" / "console" / "console_protocol.h").read_text(encoding="utf-8")
+    dispatch = (repo_root / "firmware" / "main" / "console" / "console.c").read_text(encoding="utf-8")
+    app_main = (repo_root / "firmware" / "main" / "app_main.c").read_text(encoding="utf-8")
+    ground_tune = (repo_root / "firmware" / "main" / "ground_tune" / "ground_tune.c").read_text(encoding="utf-8")
+    udp_protocol = (repo_root / "firmware" / "main" / "udp_protocol" / "udp_protocol.c").read_text(encoding="utf-8")
+
+    assert "CONSOLE_PROTOCOL_VERSION 0x08u" in protocol
+    assert "CONSOLE_FEATURE_ATTITUDE_GROUND_VERIFY" in protocol
+    assert "CONSOLE_FEATURE_LOW_RISK_LIFTOFF_VERIFY" in protocol
+    assert "CMD_ATTITUDE_GROUND_VERIFY_START = 22" in protocol
+    assert "CMD_LIFTOFF_VERIFY_START = 24" in protocol
+    assert "CMD_ATTITUDE_GROUND_SET_TARGET = 26" in protocol
+    assert "case CMD_ATTITUDE_GROUND_VERIFY_START:" in dispatch
+    assert "case CMD_LIFTOFF_VERIFY_START:" in dispatch
+    assert "case CMD_ATTITUDE_GROUND_SET_TARGET:" in dispatch
+    assert "case CMD_ATTITUDE_GROUND_VERIFY_START:" in udp_protocol
+    assert "case CMD_LIFTOFF_VERIFY_START:" in udp_protocol
+    assert "GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY" in app_main
+    assert "GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF" in app_main
+    assert "liftoff_verify_auto_disarm_ms" in app_main
+    assert "ground_att_target_limit_deg" in ground_tune
+    assert "outer_clamp_flags" in ground_tune
+
+
+def test_gui_ground_defaults_preserve_confirmed_rate_p_only_baseline():
+    repo_root = Path(__file__).resolve().parents[3]
+    gui_main = (repo_root / "tools" / "esp_drone_cli" / "esp_drone_cli" / "gui" / "main_window.py").read_text(encoding="utf-8")
+
+    assert '("rate_kp_roll", "rate_kp_roll", 0.0, 0.05, 5, 0.0001, 0.0007)' in gui_main
+    assert '("rate_kp_pitch", "rate_kp_pitch", 0.0, 0.05, 5, 0.0001, 0.0007)' in gui_main
+    assert '("rate_kp_yaw", "rate_kp_yaw", 0.0, 0.05, 5, 0.0001, 0.0005)' in gui_main
+    assert '("rate_ki_roll", "rate_ki_roll", 0.0, 0.02, 5, 0.0001, 0.0)' in gui_main
+    assert '("rate_kd_roll", "rate_kd_roll", 0.0, 0.01, 5, 0.0001, 0.0)' in gui_main
 
 
 def test_firmware_registers_softap_udp_transport():

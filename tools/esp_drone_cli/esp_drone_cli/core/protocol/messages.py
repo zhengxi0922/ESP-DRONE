@@ -48,6 +48,11 @@ class CmdId:
     GROUND_CAPTURE_REF = 19
     GROUND_TEST_START = 20
     GROUND_TEST_STOP = 21
+    ATTITUDE_GROUND_VERIFY_START = 22
+    ATTITUDE_GROUND_VERIFY_STOP = 23
+    LIFTOFF_VERIFY_START = 24
+    LIFTOFF_VERIFY_STOP = 25
+    ATTITUDE_GROUND_SET_TARGET = 26
 
 
 class CmdStatus:
@@ -85,6 +90,11 @@ CMD_NAMES = {
     CmdId.GROUND_CAPTURE_REF: "ground-capture-ref",
     CmdId.GROUND_TEST_START: "ground-test start",
     CmdId.GROUND_TEST_STOP: "ground-test stop",
+    CmdId.ATTITUDE_GROUND_VERIFY_START: "attitude-ground-verify start",
+    CmdId.ATTITUDE_GROUND_VERIFY_STOP: "attitude-ground-verify stop",
+    CmdId.LIFTOFF_VERIFY_START: "liftoff-verify start",
+    CmdId.LIFTOFF_VERIFY_STOP: "liftoff-verify stop",
+    CmdId.ATTITUDE_GROUND_SET_TARGET: "attitude-ground target",
 }
 
 CMD_STATUS_TEXT = {

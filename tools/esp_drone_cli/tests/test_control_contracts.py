@@ -11,7 +11,13 @@ from __future__ import annotations
 
 
 from esp_drone_cli.client import TELEMETRY_STRUCT
-from esp_drone_cli.core.models import TELEMETRY_STRUCT_V1, TELEMETRY_STRUCT_V2, TELEMETRY_STRUCT_V3, TELEMETRY_STRUCT_V4
+from esp_drone_cli.core.models import (
+    TELEMETRY_STRUCT_V1,
+    TELEMETRY_STRUCT_V2,
+    TELEMETRY_STRUCT_V3,
+    TELEMETRY_STRUCT_V4,
+    TELEMETRY_STRUCT_V5,
+)
 
 
 MOTOR_LAYOUT = (
@@ -80,6 +86,7 @@ def test_telemetry_struct_matches_stage3_rate_bringup_payload():
     assert TELEMETRY_STRUCT_V2.size == 196
     assert TELEMETRY_STRUCT_V3.size == 236
     assert TELEMETRY_STRUCT_V4.size == 316
+    assert TELEMETRY_STRUCT_V5.size == 368
     assert TELEMETRY_STRUCT.size == TELEMETRY_STRUCT_V3.size
 
 

@@ -92,6 +92,29 @@ python -m esp_drone_cli --serial COM7 attitude-test stop
 python -m esp_drone_cli --serial COM7 disarm
 ```
 
+Flat-ground attitude verification commands:
+
+```powershell
+python -m esp_drone_cli --serial COM4 capabilities
+python -m esp_drone_cli --serial COM4 ground-capture-ref
+python -m esp_drone_cli --serial COM4 arm
+python -m esp_drone_cli --serial COM4 attitude-ground-verify start --base-duty 0.08
+python -m esp_drone_cli --serial COM4 attitude-ground-verify target roll 1.0
+python -m esp_drone_cli --serial COM4 attitude-ground-log --duration 10
+python -m esp_drone_cli --serial COM4 attitude-ground-verify stop
+python -m esp_drone_cli --serial COM4 disarm
+```
+
+Low-risk liftoff verification entry commands:
+
+```powershell
+python -m esp_drone_cli --serial COM4 ground-capture-ref
+python -m esp_drone_cli --serial COM4 arm
+python -m esp_drone_cli --serial COM4 liftoff-verify start --base-duty 0.10
+python -m esp_drone_cli --serial COM4 liftoff-verify stop
+python -m esp_drone_cli --serial COM4 disarm
+```
+
 ## Rate-Status Output
 
 `rate-status roll` prints explicit roll bench fields:

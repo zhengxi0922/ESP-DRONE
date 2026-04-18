@@ -39,6 +39,7 @@ static params_store_t s_params;
 #define PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_REMAP 4u
 #define PARAMS_SCHEMA_VERSION_BEFORE_GROUND_TUNE 5u
 #define PARAMS_SCHEMA_VERSION_BEFORE_RATE_FIRST_GROUND_TUNE 6u
+#define PARAMS_SCHEMA_VERSION_BEFORE_ATTITUDE_VERIFY 7u
 
 /* 参数系统采用“单 blob + schema_version + CRC32”保存策略。
  * 运行时所有参数写入都必须先过 params_try_set() 的合法性校验。 */
@@ -132,6 +133,7 @@ static const param_descriptor_t s_param_descs[] = {
     {"ground_att_kp_pitch", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_kp_pitch)},
     {"ground_att_rate_limit_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_rate_limit_roll)},
     {"ground_att_rate_limit_pitch", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_rate_limit_pitch)},
+    {"ground_att_target_limit_deg", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_target_limit_deg)},
     {"ground_att_error_deadband_deg", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_error_deadband_deg)},
     {"ground_att_trip_deg", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_trip_deg)},
     {"ground_test_base_duty", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_test_base_duty)},
@@ -139,6 +141,11 @@ static const param_descriptor_t s_param_descs[] = {
     {"ground_test_motor_balance_limit", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_test_motor_balance_limit)},
     {"ground_test_auto_disarm_ms", PARAM_TYPE_U32, offsetof(params_store_t, ground_test_auto_disarm_ms)},
     {"ground_test_ramp_duty_per_s", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_test_ramp_duty_per_s)},
+    {"liftoff_verify_base_duty", PARAM_TYPE_FLOAT, offsetof(params_store_t, liftoff_verify_base_duty)},
+    {"liftoff_verify_max_extra_duty", PARAM_TYPE_FLOAT, offsetof(params_store_t, liftoff_verify_max_extra_duty)},
+    {"liftoff_verify_auto_disarm_ms", PARAM_TYPE_U32, offsetof(params_store_t, liftoff_verify_auto_disarm_ms)},
+    {"liftoff_verify_ramp_duty_per_s", PARAM_TYPE_FLOAT, offsetof(params_store_t, liftoff_verify_ramp_duty_per_s)},
+    {"liftoff_verify_att_trip_deg", PARAM_TYPE_FLOAT, offsetof(params_store_t, liftoff_verify_att_trip_deg)},
 };
 
 static const param_descriptor_t s_runtime_param_descs[] = {
@@ -243,6 +250,7 @@ static void params_apply_defaults(params_store_t *store)
     store->ground_att_kp_pitch = 1.2f;
     store->ground_att_rate_limit_roll = 12.0f;
     store->ground_att_rate_limit_pitch = 12.0f;
+    store->ground_att_target_limit_deg = 3.0f;
     store->ground_att_error_deadband_deg = 0.8f;
     store->ground_att_trip_deg = 12.0f;
     store->ground_test_base_duty = 0.08f;
@@ -250,6 +258,11 @@ static void params_apply_defaults(params_store_t *store)
     store->ground_test_motor_balance_limit = 0.08f;
     store->ground_test_auto_disarm_ms = 15000u;
     store->ground_test_ramp_duty_per_s = 0.30f;
+    store->liftoff_verify_base_duty = 0.10f;
+    store->liftoff_verify_max_extra_duty = 0.04f;
+    store->liftoff_verify_auto_disarm_ms = 2500u;
+    store->liftoff_verify_ramp_duty_per_s = 0.10f;
+    store->liftoff_verify_att_trip_deg = 8.0f;
 
     store->log_event_text_enabled = true;
 }
@@ -391,6 +404,8 @@ static bool params_validate_motor_duty_limits(const params_store_t *store)
            store->attitude_test_base_duty <= 1.0f &&
            store->ground_test_base_duty >= 0.0f &&
            store->ground_test_base_duty <= 1.0f &&
+           store->liftoff_verify_base_duty >= 0.0f &&
+           store->liftoff_verify_base_duty <= 1.0f &&
            store->motor_idle_duty <= store->motor_max_duty &&
            store->motor_startup_boost_duty >= store->motor_idle_duty &&
            store->motor_startup_boost_duty <= store->motor_max_duty &&
@@ -403,7 +418,9 @@ static bool params_validate_motor_duty_limits(const params_store_t *store)
            store->attitude_test_base_duty >= store->motor_idle_duty &&
            store->attitude_test_base_duty <= store->motor_max_duty &&
            store->ground_test_base_duty >= store->motor_idle_duty &&
-           store->ground_test_base_duty <= store->motor_max_duty;
+           store->ground_test_base_duty <= store->motor_max_duty &&
+           store->liftoff_verify_base_duty >= store->motor_idle_duty &&
+           store->liftoff_verify_base_duty <= store->motor_max_duty;
 }
 
 static bool params_float_in_range(float value, float min_value, float max_value)
@@ -475,13 +492,19 @@ static bool params_validate_ground_tune_limits(const params_store_t *store)
         !params_float_in_range(store->ground_att_kp_pitch, 0.0f, 10.0f) ||
         !params_float_in_range(store->ground_att_rate_limit_roll, 0.0f, 60.0f) ||
         !params_float_in_range(store->ground_att_rate_limit_pitch, 0.0f, 60.0f) ||
+        !params_float_in_range(store->ground_att_target_limit_deg, 0.5f, 10.0f) ||
         !params_float_in_range(store->ground_att_error_deadband_deg, 0.0f, 5.0f) ||
         !params_float_in_range(store->ground_att_trip_deg, 5.0f, 30.0f) ||
         !params_float_in_range(store->ground_test_max_extra_duty, 0.0f, 0.20f) ||
         !params_float_in_range(store->ground_test_motor_balance_limit, 0.0f, 0.30f) ||
         !params_float_in_range(store->ground_test_ramp_duty_per_s, 0.01f, 2.0f) ||
+        !params_float_in_range(store->liftoff_verify_max_extra_duty, 0.0f, 0.20f) ||
+        !params_float_in_range(store->liftoff_verify_ramp_duty_per_s, 0.01f, 1.0f) ||
+        !params_float_in_range(store->liftoff_verify_att_trip_deg, 5.0f, 20.0f) ||
         store->ground_test_auto_disarm_ms < 1000u ||
-        store->ground_test_auto_disarm_ms > 120000u) {
+        store->ground_test_auto_disarm_ms > 120000u ||
+        store->liftoff_verify_auto_disarm_ms < 500u ||
+        store->liftoff_verify_auto_disarm_ms > 10000u) {
         return false;
     }
 
@@ -490,7 +513,9 @@ static bool params_validate_ground_tune_limits(const params_store_t *store)
     }
 
     return (store->ground_test_base_duty + store->ground_test_max_extra_duty) <= store->motor_max_duty &&
-           (store->ground_test_base_duty + store->rate_output_limit) <= store->motor_max_duty;
+           (store->ground_test_base_duty + store->rate_output_limit) <= store->motor_max_duty &&
+           (store->liftoff_verify_base_duty + store->liftoff_verify_max_extra_duty) <= store->motor_max_duty &&
+           (store->liftoff_verify_base_duty + store->rate_output_limit) <= store->motor_max_duty;
 }
 
 static bool params_validate_store(const params_store_t *store)
@@ -537,9 +562,11 @@ static bool params_try_load_from_nvs(params_store_t *store)
     const bool pre_ground_tune_schema = header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_GROUND_TUNE;
     const bool pre_rate_first_ground_tune_schema =
         header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_RATE_FIRST_GROUND_TUNE;
+    const bool pre_attitude_verify_schema =
+        header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_ATTITUDE_VERIFY;
     const size_t payload_len = len - sizeof(header);
     if (header.magic != PARAMS_BLOB_MAGIC ||
-        (!current_schema && !pre_motor_remap_schema && !pre_ground_tune_schema && !pre_rate_first_ground_tune_schema) ||
+        (!current_schema && !pre_motor_remap_schema && !pre_ground_tune_schema && !pre_rate_first_ground_tune_schema && !pre_attitude_verify_schema) ||
         header.payload_len != payload_len ||
         header.payload_len > sizeof(params_store_t)) {
         return false;

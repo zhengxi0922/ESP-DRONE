@@ -40,11 +40,24 @@ static _Atomic uint32_t g_ground_ref_qy_bits;
 static _Atomic uint32_t g_ground_ref_qz_bits;
 static _Atomic uint32_t g_ground_ref_kalman_roll_bits;
 static _Atomic uint32_t g_ground_ref_kalman_pitch_bits;
+static _Atomic uint32_t g_ground_target_roll_bits;
+static _Atomic uint32_t g_ground_target_pitch_bits;
+static _Atomic uint32_t g_ground_target_yaw_bits;
+static _Atomic uint32_t g_ground_measured_roll_bits;
+static _Atomic uint32_t g_ground_measured_pitch_bits;
+static _Atomic uint32_t g_ground_measured_yaw_bits;
+static _Atomic uint32_t g_ground_error_roll_bits;
+static _Atomic uint32_t g_ground_error_pitch_bits;
+static _Atomic uint32_t g_ground_error_yaw_bits;
 static _Atomic uint32_t g_ground_err_roll_bits;
 static _Atomic uint32_t g_ground_err_pitch_bits;
 static _Atomic uint32_t g_ground_rate_sp_roll_bits;
 static _Atomic uint32_t g_ground_rate_sp_pitch_bits;
+static _Atomic uint32_t g_ground_rate_sp_yaw_bits;
 static _Atomic uint32_t g_ground_base_duty_active_bits;
+static _Atomic uint32_t g_ground_outer_clamp_flags;
+static _Atomic uint32_t g_ground_inner_clamp_flags;
+static _Atomic int g_ground_submode;
 static _Atomic int g_ground_trip_reason;
 
 static uint32_t runtime_state_float_bits(float value)
@@ -95,11 +108,24 @@ void runtime_state_init(void)
     atomic_store(&g_ground_ref_qz_bits, 0u);
     atomic_store(&g_ground_ref_kalman_roll_bits, 0u);
     atomic_store(&g_ground_ref_kalman_pitch_bits, 0u);
+    atomic_store(&g_ground_target_roll_bits, 0u);
+    atomic_store(&g_ground_target_pitch_bits, 0u);
+    atomic_store(&g_ground_target_yaw_bits, 0u);
+    atomic_store(&g_ground_measured_roll_bits, 0u);
+    atomic_store(&g_ground_measured_pitch_bits, 0u);
+    atomic_store(&g_ground_measured_yaw_bits, 0u);
+    atomic_store(&g_ground_error_roll_bits, 0u);
+    atomic_store(&g_ground_error_pitch_bits, 0u);
+    atomic_store(&g_ground_error_yaw_bits, 0u);
     atomic_store(&g_ground_err_roll_bits, 0u);
     atomic_store(&g_ground_err_pitch_bits, 0u);
     atomic_store(&g_ground_rate_sp_roll_bits, 0u);
     atomic_store(&g_ground_rate_sp_pitch_bits, 0u);
+    atomic_store(&g_ground_rate_sp_yaw_bits, 0u);
     atomic_store(&g_ground_base_duty_active_bits, 0u);
+    atomic_store(&g_ground_outer_clamp_flags, 0u);
+    atomic_store(&g_ground_inner_clamp_flags, 0u);
+    atomic_store(&g_ground_submode, GROUND_TUNE_SUBMODE_RATE_ONLY);
     atomic_store(&g_ground_trip_reason, GROUND_TUNE_TRIP_NONE);
 }
 
@@ -283,11 +309,24 @@ ground_tune_state_t runtime_state_get_ground_tune_state(void)
             },
         .ref_kalman_roll_deg = runtime_state_bits_float(atomic_load(&g_ground_ref_kalman_roll_bits)),
         .ref_kalman_pitch_deg = runtime_state_bits_float(atomic_load(&g_ground_ref_kalman_pitch_bits)),
+        .target_roll_deg = runtime_state_bits_float(atomic_load(&g_ground_target_roll_bits)),
+        .target_pitch_deg = runtime_state_bits_float(atomic_load(&g_ground_target_pitch_bits)),
+        .target_yaw_deg = runtime_state_bits_float(atomic_load(&g_ground_target_yaw_bits)),
+        .measured_roll_deg = runtime_state_bits_float(atomic_load(&g_ground_measured_roll_bits)),
+        .measured_pitch_deg = runtime_state_bits_float(atomic_load(&g_ground_measured_pitch_bits)),
+        .measured_yaw_deg = runtime_state_bits_float(atomic_load(&g_ground_measured_yaw_bits)),
+        .error_roll_deg = runtime_state_bits_float(atomic_load(&g_ground_error_roll_bits)),
+        .error_pitch_deg = runtime_state_bits_float(atomic_load(&g_ground_error_pitch_bits)),
+        .error_yaw_deg = runtime_state_bits_float(atomic_load(&g_ground_error_yaw_bits)),
         .err_roll_deg = runtime_state_bits_float(atomic_load(&g_ground_err_roll_bits)),
         .err_pitch_deg = runtime_state_bits_float(atomic_load(&g_ground_err_pitch_bits)),
         .rate_sp_roll_dps = runtime_state_bits_float(atomic_load(&g_ground_rate_sp_roll_bits)),
         .rate_sp_pitch_dps = runtime_state_bits_float(atomic_load(&g_ground_rate_sp_pitch_bits)),
+        .rate_sp_yaw_dps = runtime_state_bits_float(atomic_load(&g_ground_rate_sp_yaw_bits)),
         .base_duty_active = runtime_state_bits_float(atomic_load(&g_ground_base_duty_active_bits)),
+        .outer_clamp_flags = (uint8_t)atomic_load(&g_ground_outer_clamp_flags),
+        .inner_clamp_flags = (uint8_t)atomic_load(&g_ground_inner_clamp_flags),
+        .submode = (ground_tune_submode_t)atomic_load(&g_ground_submode),
         .trip_reason = (ground_tune_trip_reason_t)atomic_load(&g_ground_trip_reason),
     };
 }
@@ -298,10 +337,23 @@ void runtime_state_set_ground_tune_state(ground_tune_state_t state)
                                        state.ref_q_body_to_world,
                                        state.ref_kalman_roll_deg,
                                        state.ref_kalman_pitch_deg);
+    atomic_store(&g_ground_target_roll_bits, runtime_state_float_bits(state.target_roll_deg));
+    atomic_store(&g_ground_target_pitch_bits, runtime_state_float_bits(state.target_pitch_deg));
+    atomic_store(&g_ground_target_yaw_bits, runtime_state_float_bits(state.target_yaw_deg));
+    atomic_store(&g_ground_measured_roll_bits, runtime_state_float_bits(state.measured_roll_deg));
+    atomic_store(&g_ground_measured_pitch_bits, runtime_state_float_bits(state.measured_pitch_deg));
+    atomic_store(&g_ground_measured_yaw_bits, runtime_state_float_bits(state.measured_yaw_deg));
+    atomic_store(&g_ground_error_roll_bits, runtime_state_float_bits(state.error_roll_deg));
+    atomic_store(&g_ground_error_pitch_bits, runtime_state_float_bits(state.error_pitch_deg));
+    atomic_store(&g_ground_error_yaw_bits, runtime_state_float_bits(state.error_yaw_deg));
     atomic_store(&g_ground_err_roll_bits, runtime_state_float_bits(state.err_roll_deg));
     atomic_store(&g_ground_err_pitch_bits, runtime_state_float_bits(state.err_pitch_deg));
     atomic_store(&g_ground_rate_sp_roll_bits, runtime_state_float_bits(state.rate_sp_roll_dps));
     atomic_store(&g_ground_rate_sp_pitch_bits, runtime_state_float_bits(state.rate_sp_pitch_dps));
+    atomic_store(&g_ground_rate_sp_yaw_bits, runtime_state_float_bits(state.rate_sp_yaw_dps));
     atomic_store(&g_ground_base_duty_active_bits, runtime_state_float_bits(state.base_duty_active));
+    atomic_store(&g_ground_outer_clamp_flags, state.outer_clamp_flags);
+    atomic_store(&g_ground_inner_clamp_flags, state.inner_clamp_flags);
+    atomic_store(&g_ground_submode, (int)state.submode);
     atomic_store(&g_ground_trip_reason, (int)state.trip_reason);
 }

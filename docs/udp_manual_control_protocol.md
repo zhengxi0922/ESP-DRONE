@@ -7,7 +7,7 @@ This feature is experimental bench/manual control only. It is not a mature free-
 - Transport: binary CLI/GUI UDP protocol on port `2391`, reachable through the ESP32 SoftAP transport described in [softap_udp_transport.md](./softap_udp_transport.md).
 - GUI: `UDP Control` tab in the Python GUI.
 - Firmware mode: `CONTROL_MODE_UDP_MANUAL`.
-- Control style: throttle is a collective/base duty target; roll/pitch use the existing hang-attitude outer loop to generate rate setpoints, and yaw remains mapped through the existing rate PID before mixer output.
+- Control style: throttle is a collective/base duty target; roll/pitch use the flat-ground reference outer loop to generate rate setpoints, and yaw remains mapped through the existing rate PID before mixer output.
 - Legacy UDP compatibility on port `2390` is unchanged.
 
 ## Capability Gate
@@ -78,8 +78,8 @@ The GUI displays max duty as `Max PWM (%)`, but firmware stores normalized duty 
 - After `UDP_LAND` has entered the landing stage, later manual setpoint frames are acknowledged but ignored so they cannot cancel the descent.
 - `UDP_MANUAL_STOP` and `UDP_MANUAL_DISABLE` clear setpoints, stop motors, leave manual mode, and request disarm.
 - Setpoints are finite-checked and clamped by firmware.
-- During `CONTROL_MODE_UDP_MANUAL`, throttle is the collective/base duty target. Roll/pitch rate setpoints come from `attitude_bench_compute()` using the captured attitude reference and then pass through the existing rate PID. Yaw keeps the manual normalized-input-to-rate-setpoint path before the same rate PID.
-- UDP manual enable/takeoff requires a valid attitude reference. If one is not already captured, firmware captures the current IMU quaternion through the existing attitude-bench reference path.
+- During `CONTROL_MODE_UDP_MANUAL`, throttle is the collective/base duty target. Roll/pitch rate setpoints come from `ground_tune_compute()` using the captured flat-ground reference and then pass through the existing rate PID. Yaw keeps the manual normalized-input-to-rate-setpoint path before the same rate PID.
+- UDP manual enable/takeoff requires a valid flat-ground reference. If one is not already captured, firmware captures the current IMU quaternion through the ground-tune reference path.
 - If no setpoint arrives for `udp_manual_timeout_ms`, firmware zeros manual yaw, keeps roll/pitch on the attitude outer loop, and reduces throttle toward `udp_land_min_pwm`.
 - If the timeout persists for `3 * udp_manual_timeout_ms`, firmware requests disarm and stops the manual mode.
 - Kill remains highest priority through the existing `CMD_KILL` path.
@@ -111,7 +111,7 @@ Screenshot: `docs/images/udp_control_tab.png`.
 7. Click `Enable UDP Manual`.
 8. Verify repeated setpoint frames are visible in the event log and that watchdog age stays below the timeout while enabled.
 9. Press and release `Forward`, `Backward`, `Yaw Left`, `Yaw Right`, `Up`, and `Down`; confirm setpoints return to zero when expected.
-10. Click `Takeoff` only on a restrained bench with prop safety handled; confirm ramp behavior, not a step jump.
+10. Click `Takeoff` only for the bounded low-risk verification workflow with prop safety handled; confirm ramp behavior, not a step jump.
 11. Click `Land`; confirm ramp-down and auto-disarm behavior.
 12. Click `Stop / Zero` and then `Kill`; confirm both override any previous setpoint and no high throttle continues after disconnect or timeout.
 

@@ -12,11 +12,15 @@ from pathlib import Path
 from esp_drone_cli.core import DeviceSession, TelemetrySample
 from esp_drone_cli.core.models import (
     FEATURE_ATTITUDE_HANG_BENCH,
+    FEATURE_ATTITUDE_GROUND_VERIFY,
     FEATURE_GROUND_TUNE,
+    FEATURE_LOW_RISK_LIFTOFF_VERIFY,
     FEATURE_NAMES,
     FEATURE_UDP_MANUAL_CONTROL,
     MIN_ATTITUDE_HANG_PROTOCOL_VERSION,
+    MIN_ATTITUDE_GROUND_VERIFY_PROTOCOL_VERSION,
     MIN_GROUND_TUNE_PROTOCOL_VERSION,
+    MIN_LOW_RISK_LIFTOFF_PROTOCOL_VERSION,
     MIN_UDP_MANUAL_PROTOCOL_VERSION,
 )
 from esp_drone_cli.core.ground_bench import run_ground_bench_round
@@ -109,9 +113,13 @@ def format_attitude_status_line_all(sample: TelemetrySample) -> str:
 def format_ground_status_line(sample: TelemetrySample, axis_name: str) -> str:
     motors = ", ".join(f"{value:.3f}" for value in (sample.motor1, sample.motor2, sample.motor3, sample.motor4))
     if axis_name in {"roll", "pitch"}:
-        err = float(getattr(sample, f"attitude_err_{axis_name}_deg"))
-        rate_sp = float(getattr(sample, f"attitude_rate_sp_{axis_name}"))
+        target = float(getattr(sample, f"angle_target_{axis_name}"))
+        measured = float(getattr(sample, f"angle_measured_{axis_name}"))
+        err = float(getattr(sample, f"angle_error_{axis_name}"))
+        rate_sp = float(getattr(sample, f"outer_loop_rate_target_{axis_name}"))
     else:
+        target = 0.0
+        measured = 0.0
         err = 0.0
         rate_sp = float(sample.rate_setpoint_yaw)
     return (
@@ -120,7 +128,9 @@ def format_ground_status_line(sample: TelemetrySample, axis_name: str) -> str:
         f"ground_ref={sample.ground_ref_valid} "
         f"kalman_valid={sample.kalman_valid} "
         f"trip={sample.ground_trip_reason} "
-        f"err={err:.3f}deg "
+        f"target={target:.3f}deg "
+        f"measured={measured:.3f}deg "
+        f"angle_err={err:.3f}deg "
         f"rate_sp={rate_sp:.3f}dps "
         f"raw_rate={float(getattr(sample, f'rate_meas_{axis_name}_raw')):.3f} "
         f"filtered_rate={float(getattr(sample, f'rate_meas_{axis_name}_filtered')):.3f} "
@@ -131,11 +141,13 @@ def format_ground_status_line(sample: TelemetrySample, axis_name: str) -> str:
         f"pid_out={float(getattr(sample, f'pid_out_{axis_name}')):.4f} "
         f"base={sample.base_duty_active:.3f} "
         f"mixer=[thr:{sample.base_duty_active:.3f},r:{sample.pid_out_roll:.4f},p:{sample.pid_out_pitch:.4f},y:{sample.pid_out_yaw:.4f}] "
+        f"outer_clamp={sample.outer_loop_clamp_flag} "
+        f"inner_clamp={sample.inner_loop_clamp_flag} "
         f"sat={sample.motor_saturation_flag} "
         f"i_freeze={sample.integrator_freeze_flag} "
         f"battery_valid={sample.battery_valid} "
         f"motors=[{motors}] "
-        f"arm={sample.arm_state} mode={sample.control_mode} imu_age_us={sample.imu_age_us}"
+        f"arm={sample.arm_state} mode={sample.control_mode} submode={sample.control_submode} imu_age_us={sample.imu_age_us}"
     )
 
 
@@ -308,6 +320,52 @@ def require_ground_tune_capability(session: DeviceSession) -> None:
         f"feature ground_tune/0x{FEATURE_GROUND_TUNE:02x}; "
         f"got protocol_version={protocol_version}, feature_bitmap=0x{feature_bitmap:08x}). "
         "Rebuild and flash the current main firmware before running ground tune commands."
+    )
+
+
+def require_attitude_ground_verify_capability(session: DeviceSession) -> None:
+    """Reject attitude ground verify commands before sending new opcodes."""
+
+    if hasattr(session, "require_attitude_ground_verify"):
+        session.require_attitude_ground_verify()
+        return
+    info = session.device_info or session.hello()
+    if hasattr(info, "require_attitude_ground_verify"):
+        info.require_attitude_ground_verify()
+        return
+    protocol_version = int(getattr(info, "protocol_version", 0))
+    feature_bitmap = int(getattr(info, "feature_bitmap", 0))
+    if protocol_version >= MIN_ATTITUDE_GROUND_VERIFY_PROTOCOL_VERSION and (feature_bitmap & FEATURE_ATTITUDE_GROUND_VERIFY):
+        return
+    raise RuntimeError(
+        "device firmware does not advertise flat-ground attitude verification support "
+        f"(need protocol_version>={MIN_ATTITUDE_GROUND_VERIFY_PROTOCOL_VERSION} and "
+        f"feature attitude_ground_verify/0x{FEATURE_ATTITUDE_GROUND_VERIFY:02x}; "
+        f"got protocol_version={protocol_version}, feature_bitmap=0x{feature_bitmap:08x}). "
+        "Rebuild and flash the current main firmware before running attitude ground verify commands."
+    )
+
+
+def require_low_risk_liftoff_capability(session: DeviceSession) -> None:
+    """Reject low-risk liftoff verify commands before sending new opcodes."""
+
+    if hasattr(session, "require_low_risk_liftoff_verify"):
+        session.require_low_risk_liftoff_verify()
+        return
+    info = session.device_info or session.hello()
+    if hasattr(info, "require_low_risk_liftoff_verify"):
+        info.require_low_risk_liftoff_verify()
+        return
+    protocol_version = int(getattr(info, "protocol_version", 0))
+    feature_bitmap = int(getattr(info, "feature_bitmap", 0))
+    if protocol_version >= MIN_LOW_RISK_LIFTOFF_PROTOCOL_VERSION and (feature_bitmap & FEATURE_LOW_RISK_LIFTOFF_VERIFY):
+        return
+    raise RuntimeError(
+        "device firmware does not advertise low-risk liftoff verification support "
+        f"(need protocol_version>={MIN_LOW_RISK_LIFTOFF_PROTOCOL_VERSION} and "
+        f"feature low_risk_liftoff_verify/0x{FEATURE_LOW_RISK_LIFTOFF_VERIFY:02x}; "
+        f"got protocol_version={protocol_version}, feature_bitmap=0x{feature_bitmap:08x}). "
+        "Rebuild and flash the current main firmware before running liftoff verify commands."
     )
 
 
@@ -752,6 +810,47 @@ def cmd_ground_log(session: DeviceSession, args) -> int:
     return 0 if rows > 0 else 1
 
 
+def cmd_attitude_ground_verify(session: DeviceSession, args) -> int:
+    require_attitude_ground_verify_capability(session)
+    if args.action == "start":
+        ensure_command_ok(
+            CmdId.ATTITUDE_GROUND_VERIFY_START,
+            session.attitude_ground_verify_start(base_duty=args.base_duty),
+        )
+        return 0
+    if args.action == "stop":
+        ensure_command_ok(CmdId.ATTITUDE_GROUND_VERIFY_STOP, session.attitude_ground_verify_stop())
+        return 0
+    if args.action == "target":
+        ensure_command_ok(
+            CmdId.ATTITUDE_GROUND_SET_TARGET,
+            session.attitude_ground_set_target(axis_name_to_index(args.axis), args.deg),
+        )
+        return 0
+    raise SystemExit(f"unsupported attitude-ground-verify action {args.action}")
+
+
+def cmd_attitude_ground_log(session: DeviceSession, args) -> int:
+    require_attitude_ground_verify_capability(session)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+    path = output_dir / f"{stamp}_attitude_ground_verify_log.csv"
+    rows = session.dump_csv(path, duration_s=args.duration)
+    print(f"attitude_ground_verify_log={path}")
+    print(f"rows={rows}")
+    return 0 if rows > 0 else 1
+
+
+def cmd_liftoff_verify(session: DeviceSession, args) -> int:
+    require_low_risk_liftoff_capability(session)
+    if args.action == "start":
+        ensure_command_ok(CmdId.LIFTOFF_VERIFY_START, session.liftoff_verify_start(base_duty=args.base_duty))
+        return 0
+    ensure_command_ok(CmdId.LIFTOFF_VERIFY_STOP, session.liftoff_verify_stop())
+    return 0
+
+
 def cmd_udp_manual(session: DeviceSession, args) -> int:
     """Run experimental UDP manual-control commands."""
 
@@ -1163,10 +1262,41 @@ def build_parser() -> argparse.ArgumentParser:
     ground_log_p.add_argument("--duration", type=float, default=10.0)
     ground_log_p.add_argument("--output-dir", default="logs")
 
+    attitude_ground_verify_p = sub.add_parser(
+        "attitude-ground-verify",
+        help="verify the +Z-up flat-ground attitude outer-loop chain",
+        description="Flat-ground attitude outer-loop verification only. It verifies signs, clamps, telemetry, and failsafes before any low-risk liftoff work.",
+    )
+    attitude_ground_verify_sub = attitude_ground_verify_p.add_subparsers(dest="action", required=True)
+    attitude_ground_verify_start_p = attitude_ground_verify_sub.add_parser("start")
+    attitude_ground_verify_start_p.add_argument("--base-duty", type=float)
+    attitude_ground_verify_sub.add_parser("stop")
+    attitude_ground_verify_target_p = attitude_ground_verify_sub.add_parser("target")
+    attitude_ground_verify_target_p.add_argument("axis", choices=["roll", "pitch", "yaw"])
+    attitude_ground_verify_target_p.add_argument("deg", type=float)
+
+    attitude_ground_log_p = sub.add_parser(
+        "attitude-ground-log",
+        help="record a clearly named attitude ground verification CSV",
+        description="Start telemetry streaming, record an attitude ground verify CSV, then close the file.",
+    )
+    attitude_ground_log_p.add_argument("--duration", type=float, default=10.0)
+    attitude_ground_log_p.add_argument("--output-dir", default="logs")
+
+    liftoff_verify_p = sub.add_parser(
+        "liftoff-verify",
+        help="start or stop the low-risk short liftoff verification mode",
+        description="Explicit low-risk liftoff verification mode. It uses the same ground-reference attitude outer loop and tuned rate PID path with conservative limits.",
+    )
+    liftoff_verify_sub = liftoff_verify_p.add_subparsers(dest="action", required=True)
+    liftoff_verify_start_p = liftoff_verify_sub.add_parser("start")
+    liftoff_verify_start_p.add_argument("--base-duty", type=float)
+    liftoff_verify_sub.add_parser("stop")
+
     udp_manual_p = sub.add_parser(
         "udp-manual",
         help="experimental UDP manual control; not free-flight ready",
-        description="Experimental UDP manual control for restrained testing only. Throttle is the base duty target; roll/pitch use the hang-attitude outer loop and yaw uses the rate PID before mixing. This is not a mature takeoff/land/free-flight mode.",
+        description="Experimental UDP manual control for restrained testing only. Throttle is the base duty target; roll/pitch use the flat-ground reference outer loop and yaw uses the rate PID before mixing. This is not a mature takeoff/land/free-flight mode.",
     )
     udp_manual_sub = udp_manual_p.add_subparsers(dest="action", required=True)
     udp_manual_sub.add_parser("enable")
@@ -1289,6 +1419,9 @@ def main(argv: list[str] | None = None) -> int:
             "watch-ground": cmd_watch_ground,
             "ground-bench": cmd_ground_bench,
             "ground-log": cmd_ground_log,
+            "attitude-ground-verify": cmd_attitude_ground_verify,
+            "attitude-ground-log": cmd_attitude_ground_log,
+            "liftoff-verify": cmd_liftoff_verify,
             "udp-manual": cmd_udp_manual,
             "calib": cmd_calib,
             "axis-bench": cmd_axis_bench,

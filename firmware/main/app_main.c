@@ -80,6 +80,8 @@ static void flight_control_stop_udp_manual(float command_outputs[MOTOR_COUNT], c
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
     attitude_bench_reset_status();
     flight_control_set_base_duty_active(0.0f);
+    ground_tune_set_inner_clamp_flags(0u);
+    flight_control_set_ground_base_duty_active(0.0f);
 
     if (command_outputs != NULL) {
         memset(command_outputs, 0, sizeof(float) * MOTOR_COUNT);
@@ -102,6 +104,7 @@ static void flight_control_stop_ground_tune(float command_outputs[MOTOR_COUNT],
     runtime_state_set_axis_test_request((axis3f_t){0});
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
     ground_tune_set_trip_reason(trip_reason);
+    ground_tune_set_inner_clamp_flags(0u);
     flight_control_set_ground_base_duty_active(0.0f);
     controller_set_runtime_flags(false, 0.0f, false, true);
 
@@ -137,20 +140,24 @@ static bool flight_control_attitude_trip_exceeded(const params_store_t *params)
 static bool flight_control_ground_trip_exceeded(const params_store_t *params)
 {
     const ground_tune_state_t state = runtime_state_get_ground_tune_state();
-    return fabsf(state.err_roll_deg) > params->ground_att_trip_deg ||
-           fabsf(state.err_pitch_deg) > params->ground_att_trip_deg;
+    const float trip_deg =
+        (state.submode == GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF)
+            ? params->liftoff_verify_att_trip_deg
+            : params->ground_att_trip_deg;
+    return fabsf(state.measured_roll_deg) > trip_deg ||
+           fabsf(state.measured_pitch_deg) > trip_deg;
 }
 
-static float flight_control_ground_ramp_base_duty(const params_store_t *params,
-                                                  float current_duty,
-                                                  float target_duty,
-                                                  uint32_t loop_dt_us)
+static float flight_control_ramp_base_duty(float ramp_duty_per_s,
+                                           float current_duty,
+                                           float target_duty,
+                                           uint32_t loop_dt_us)
 {
-    if (params == NULL || loop_dt_us == 0u) {
+    if (loop_dt_us == 0u) {
         return current_duty;
     }
 
-    const float max_delta = params->ground_test_ramp_duty_per_s * ((float)loop_dt_us / 1000000.0f);
+    const float max_delta = ramp_duty_per_s * ((float)loop_dt_us / 1000000.0f);
     if (max_delta <= 0.0f) {
         return target_duty;
     }
@@ -160,13 +167,12 @@ static float flight_control_ground_ramp_base_duty(const params_store_t *params,
     return fmaxf(current_duty - max_delta, target_duty);
 }
 
-static bool flight_control_ground_limit_outputs(const params_store_t *params,
-                                                float base_duty,
+static bool flight_control_limit_outputs_window(float lower,
+                                                float upper,
+                                                float balance_limit,
                                                 float outputs[MOTOR_COUNT])
 {
     bool saturated = false;
-    const float lower = fmaxf(0.0f, base_duty - params->ground_test_max_extra_duty);
-    const float upper = fminf(params->motor_max_duty, base_duty + params->ground_test_max_extra_duty);
     float min_output = 1.0f;
     float max_output = 0.0f;
 
@@ -191,10 +197,34 @@ static bool flight_control_ground_limit_outputs(const params_store_t *params,
         }
     }
 
-    if ((max_output - min_output) > params->ground_test_motor_balance_limit) {
+    if ((max_output - min_output) > balance_limit) {
         saturated = true;
     }
     return saturated;
+}
+
+static bool flight_control_ground_limit_outputs(const params_store_t *params,
+                                                float base_duty,
+                                                float outputs[MOTOR_COUNT])
+{
+    const ground_tune_state_t state = runtime_state_get_ground_tune_state();
+    const bool liftoff_submode = state.submode == GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF;
+    const float max_extra = liftoff_submode ? params->liftoff_verify_max_extra_duty : params->ground_test_max_extra_duty;
+    const float lower = fmaxf(0.0f, base_duty - max_extra);
+    const float upper = fminf(params->motor_max_duty, base_duty + max_extra);
+    return flight_control_limit_outputs_window(lower, upper, params->ground_test_motor_balance_limit, outputs);
+}
+
+static void flight_control_set_ground_inner_clamps(bool motor_saturated, rate_controller_status_t rate_status)
+{
+    uint8_t flags = 0u;
+    if (motor_saturated || rate_status.motor_saturation) {
+        flags |= GROUND_TUNE_INNER_CLAMP_MOTOR;
+    }
+    if (rate_status.integrator_freeze) {
+        flags |= GROUND_TUNE_INNER_CLAMP_INTEGRATOR;
+    }
+    ground_tune_set_inner_clamp_flags(flags);
 }
 
 static bool flight_control_ground_rate_jitter(axis3f_t previous, axis3f_t current)
@@ -503,6 +533,16 @@ static void flight_control_task(void *arg)
 
         if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE) {
             const params_store_t *params = params_get();
+            const ground_tune_state_t ground_state = runtime_state_get_ground_tune_state();
+            const bool liftoff_submode = ground_state.submode == GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF;
+            const bool outer_required =
+                params->ground_tune_enable_attitude_outer ||
+                ground_state.submode == GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY ||
+                ground_state.submode == GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF ||
+                ground_state.submode == GROUND_TUNE_SUBMODE_UDP_MANUAL;
+            const float target_base_duty = liftoff_submode ? params->liftoff_verify_base_duty : params->ground_test_base_duty;
+            const float ramp_duty_per_s = liftoff_submode ? params->liftoff_verify_ramp_duty_per_s : params->ground_test_ramp_duty_per_s;
+            const uint32_t auto_disarm_ms = liftoff_submode ? params->liftoff_verify_auto_disarm_ms : params->ground_test_auto_disarm_ms;
 
             if (ground_mode_start_us == 0u) {
                 ground_mode_start_us = now_us;
@@ -528,14 +568,14 @@ static void flight_control_task(void *arg)
                                                 false);
                 continue;
             }
-            if (!runtime_state_get_ground_tune_state().ref_valid) {
+            if (!ground_state.ref_valid) {
                 flight_control_stop_ground_tune(command_outputs,
                                                 GROUND_TUNE_TRIP_REF_MISSING,
                                                 "ground tune stopped: ground ref missing",
                                                 false);
                 continue;
             }
-            if (params->ground_tune_enable_attitude_outer &&
+            if (outer_required &&
                 params->ground_tune_use_kalman_attitude &&
                 !estimator_state.kalman_valid) {
                 flight_control_stop_ground_tune(command_outputs,
@@ -544,7 +584,7 @@ static void flight_control_task(void *arg)
                                                 false);
                 continue;
             }
-            if ((now_us - ground_mode_start_us) >= ((uint64_t)params->ground_test_auto_disarm_ms * 1000u)) {
+            if ((now_us - ground_mode_start_us) >= ((uint64_t)auto_disarm_ms * 1000u)) {
                 flight_control_stop_ground_tune(command_outputs,
                                                 GROUND_TUNE_TRIP_WATCHDOG,
                                                 "ground tune stopped: watchdog timeout",
@@ -552,10 +592,10 @@ static void flight_control_task(void *arg)
                 continue;
             }
 
-            ground_active_base_duty = flight_control_ground_ramp_base_duty(params,
-                                                                           ground_active_base_duty,
-                                                                           params->ground_test_base_duty,
-                                                                           loop_dt_us);
+            ground_active_base_duty = flight_control_ramp_base_duty(ramp_duty_per_s,
+                                                                    ground_active_base_duty,
+                                                                    target_base_duty,
+                                                                    loop_dt_us);
             flight_control_set_ground_base_duty_active(ground_active_base_duty);
             if (fresh_sample) {
                 axis3f_t rate_setpoint = {0};
@@ -608,6 +648,7 @@ static void flight_control_task(void *arg)
                     const bool saturated = flight_control_ground_limit_outputs(params, ground_active_base_duty, command_outputs);
                     ground_saturated_for_freeze = saturated;
                     controller_set_runtime_flags(true, ground_active_base_duty, saturated, false);
+                    flight_control_set_ground_inner_clamps(saturated, rate_status);
                     ground_saturation_ticks = saturated ? (ground_saturation_ticks + 1u) : 0u;
                     ground_jitter_ticks =
                         flight_control_ground_rate_jitter(previous_ground_pid_axis, rate_status.output)
@@ -645,9 +686,15 @@ static void flight_control_task(void *arg)
                                                false);
                 continue;
             }
-            if (!flight_control_attitude_reference_ready()) {
+            if (!runtime_state_get_ground_tune_state().ref_valid) {
                 flight_control_stop_udp_manual(command_outputs,
-                                               "udp manual stopped: attitude reference missing",
+                                               "udp manual stopped: ground reference missing",
+                                               false);
+                continue;
+            }
+            if (params->ground_tune_use_kalman_attitude && !estimator_state.kalman_valid) {
+                flight_control_stop_udp_manual(command_outputs,
+                                               "udp manual stopped: kalman invalid",
                                                false);
                 continue;
             }
@@ -668,28 +715,28 @@ static void flight_control_task(void *arg)
             });
             runtime_state_set_rate_setpoint_request(rate_setpoint);
             flight_control_set_base_duty_active(manual.throttle);
+            ground_tune_set_submode(GROUND_TUNE_SUBMODE_UDP_MANUAL);
+            flight_control_set_ground_base_duty_active(manual.throttle);
 
             axis3f_t pid_axis = controller_get_last_rate_status().output;
             if (fresh_sample && sample.has_gyro_acc) {
-                axis3f_t attitude_rate_setpoint = {0};
-                if (!attitude_bench_compute(&estimator_state, &attitude_rate_setpoint)) {
+                if (!ground_tune_compute(&estimator_state, &rate_setpoint)) {
                     flight_control_stop_udp_manual(command_outputs,
                                                    "udp manual stopped: estimator/ref invalid",
                                                    false);
                     continue;
                 }
-                if (flight_control_attitude_trip_exceeded(params)) {
+                rate_setpoint.yaw = yaw_rate_setpoint.yaw;
+                if (flight_control_ground_trip_exceeded(params)) {
                     flight_control_stop_udp_manual(command_outputs,
                                                    "udp manual stopped: attitude trip",
                                                    false);
                     continue;
                 }
 
-                rate_setpoint.roll = attitude_rate_setpoint.roll;
-                rate_setpoint.pitch = attitude_rate_setpoint.pitch;
-                rate_setpoint.yaw = yaw_rate_setpoint.yaw;
                 runtime_state_set_rate_setpoint_request(rate_setpoint);
                 flight_control_set_base_duty_active(manual.throttle);
+                flight_control_set_ground_base_duty_active(manual.throttle);
 
                 if (last_rate_update_us != 0 && sample.timestamp_us > last_rate_update_us) {
                     float controller_dt_s = (float)(sample.timestamp_us - last_rate_update_us) / 1000000.0f;
@@ -700,8 +747,10 @@ static void flight_control_task(void *arg)
                     }
 
                     controller_set_runtime_flags(true, manual.throttle, false, false);
+                    const axis3f_t measured_rate =
+                        params->ground_tune_use_filtered_rate ? estimator_state.filtered_rate_rpy_dps : estimator_state.rate_rpy_dps;
                     const rate_controller_status_t rate_status =
-                        controller_update_rate(&rate_setpoint, &estimator_state.rate_rpy_dps, controller_dt_s);
+                        controller_update_rate(&rate_setpoint, &measured_rate, controller_dt_s);
                     pid_axis = rate_status.output;
                 }
                 last_rate_update_us = sample.timestamp_us;
@@ -713,6 +762,11 @@ static void flight_control_task(void *arg)
                           .axis = pid_axis,
                       },
                       command_outputs);
+            const bool saturated = flight_control_limit_outputs_window(0.0f,
+                                                                       params->udp_manual_max_pwm,
+                                                                       params->ground_test_motor_balance_limit,
+                                                                       command_outputs);
+            flight_control_set_ground_inner_clamps(saturated, controller_get_last_rate_status());
             motor_set_armed_outputs(command_outputs, false);
             continue;
         }

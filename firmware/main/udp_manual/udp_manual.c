@@ -8,8 +8,9 @@
 
 #include "esp_timer.h"
 
-#include "attitude_bench.h"
 #include "console.h"
+#include "estimator.h"
+#include "ground_tune.h"
 #include "imu.h"
 #include "motor.h"
 #include "params.h"
@@ -57,18 +58,24 @@ static bool udp_manual_all_finite(float a, float b, float c, float d)
     return isfinite(a) && isfinite(b) && isfinite(c) && isfinite(d);
 }
 
-static console_cmd_status_t udp_manual_ensure_attitude_reference(void)
+static console_cmd_status_t udp_manual_ensure_ground_reference(void)
 {
-    if (runtime_state_get_attitude_hang_state().ref_valid) {
+    if (runtime_state_get_ground_tune_state().ref_valid) {
         return CMD_STATUS_OK;
     }
 
     imu_sample_t sample = {0};
+    estimator_state_t estimator_state = {0};
     if (!imu_get_latest(&sample, NULL) ||
         sample.health != IMU_HEALTH_OK ||
         !sample.has_gyro_acc ||
-        !sample.has_quaternion ||
-        !attitude_bench_capture_reference(&sample)) {
+        !sample.has_quaternion) {
+        return CMD_STATUS_IMU_NOT_READY;
+    }
+    if (!estimator_get_latest(&estimator_state) || estimator_state.timestamp_us != sample.timestamp_us) {
+        estimator_update_from_imu(&sample, &estimator_state);
+    }
+    if (!ground_tune_capture_reference(&sample, &estimator_state)) {
         return CMD_STATUS_IMU_NOT_READY;
     }
 
@@ -117,7 +124,7 @@ console_cmd_status_t udp_manual_enable(void)
     runtime_state_set_axis_test_request((axis3f_t){0});
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
 
-    const console_cmd_status_t ref_status = udp_manual_ensure_attitude_reference();
+    const console_cmd_status_t ref_status = udp_manual_ensure_ground_reference();
     if (ref_status != CMD_STATUS_OK) {
         return ref_status;
     }
@@ -130,7 +137,8 @@ console_cmd_status_t udp_manual_enable(void)
     taskEXIT_CRITICAL(&s_udp_manual_lock);
 
     runtime_state_set_control_mode(CONTROL_MODE_UDP_MANUAL);
-    console_send_event_text("udp manual enabled: attitude roll/pitch with rate-PID yaw");
+    ground_tune_set_submode(GROUND_TUNE_SUBMODE_UDP_MANUAL);
+    console_send_event_text("udp manual enabled: ground-reference attitude outer loop with rate-PID yaw");
     return CMD_STATUS_OK;
 }
 
@@ -179,7 +187,7 @@ console_cmd_status_t udp_manual_takeoff(void)
     runtime_state_set_axis_test_request((axis3f_t){0});
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
 
-    const console_cmd_status_t ref_status = udp_manual_ensure_attitude_reference();
+    const console_cmd_status_t ref_status = udp_manual_ensure_ground_reference();
     if (ref_status != CMD_STATUS_OK) {
         return ref_status;
     }
@@ -199,8 +207,9 @@ console_cmd_status_t udp_manual_takeoff(void)
     taskEXIT_CRITICAL(&s_udp_manual_lock);
 
     runtime_state_set_control_mode(CONTROL_MODE_UDP_MANUAL);
+    ground_tune_set_submode(GROUND_TUNE_SUBMODE_UDP_MANUAL);
     safety_request_arm(true);
-    console_send_event_text("udp takeoff requested: base-duty ramp with attitude roll/pitch");
+    console_send_event_text("udp takeoff requested: unified ground-reference outer loop and rate PID");
     return CMD_STATUS_OK;
 }
 

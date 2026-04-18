@@ -78,6 +78,28 @@ static float ground_tune_apply_deadband(float value_deg, float deadband_deg)
     return (fabsf(value_deg) <= deadband_deg) ? 0.0f : value_deg;
 }
 
+static bool ground_tune_outer_forced(ground_tune_submode_t submode)
+{
+    return submode == GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY ||
+           submode == GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF ||
+           submode == GROUND_TUNE_SUBMODE_UDP_MANUAL;
+}
+
+static float ground_tune_apply_target_limit(float target_deg, const params_store_t *params)
+{
+    const float limit = params->ground_att_target_limit_deg;
+    return ground_tune_clampf(target_deg, -limit, limit);
+}
+
+static float ground_tune_clamp_rate(float value, float limit, uint8_t flag, uint8_t *flags)
+{
+    const float clamped = ground_tune_clampf(value, -limit, limit);
+    if (fabsf(clamped - value) > 0.001f && flags != NULL) {
+        *flags |= flag;
+    }
+    return clamped;
+}
+
 bool ground_tune_capture_reference(const imu_sample_t *sample, const estimator_state_t *estimator_state)
 {
     bool valid = false;
@@ -92,8 +114,7 @@ bool ground_tune_capture_reference(const imu_sample_t *sample, const estimator_s
         return false;
     }
 
-    if (params->ground_tune_enable_attitude_outer &&
-        params->ground_tune_use_kalman_attitude &&
+    if (params->ground_tune_use_kalman_attitude &&
         !estimator_state->kalman_valid) {
         ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
         return false;
@@ -109,11 +130,24 @@ bool ground_tune_capture_reference(const imu_sample_t *sample, const estimator_s
         .ref_q_body_to_world = normalized,
         .ref_kalman_roll_deg = estimator_state->kalman_roll_deg,
         .ref_kalman_pitch_deg = estimator_state->kalman_pitch_deg,
+        .target_roll_deg = 0.0f,
+        .target_pitch_deg = 0.0f,
+        .target_yaw_deg = 0.0f,
+        .measured_roll_deg = 0.0f,
+        .measured_pitch_deg = 0.0f,
+        .measured_yaw_deg = 0.0f,
+        .error_roll_deg = 0.0f,
+        .error_pitch_deg = 0.0f,
+        .error_yaw_deg = 0.0f,
         .err_roll_deg = 0.0f,
         .err_pitch_deg = 0.0f,
         .rate_sp_roll_dps = 0.0f,
         .rate_sp_pitch_dps = 0.0f,
+        .rate_sp_yaw_dps = 0.0f,
         .base_duty_active = 0.0f,
+        .outer_clamp_flags = 0u,
+        .inner_clamp_flags = 0u,
+        .submode = GROUND_TUNE_SUBMODE_RATE_ONLY,
         .trip_reason = GROUND_TUNE_TRIP_NONE,
     });
     return true;
@@ -127,11 +161,23 @@ void ground_tune_clear_reference(void)
 void ground_tune_reset_status(void)
 {
     ground_tune_state_t state = runtime_state_get_ground_tune_state();
+    state.target_roll_deg = 0.0f;
+    state.target_pitch_deg = 0.0f;
+    state.target_yaw_deg = 0.0f;
+    state.measured_roll_deg = 0.0f;
+    state.measured_pitch_deg = 0.0f;
+    state.measured_yaw_deg = 0.0f;
+    state.error_roll_deg = 0.0f;
+    state.error_pitch_deg = 0.0f;
+    state.error_yaw_deg = 0.0f;
     state.err_roll_deg = 0.0f;
     state.err_pitch_deg = 0.0f;
     state.rate_sp_roll_dps = 0.0f;
     state.rate_sp_pitch_dps = 0.0f;
+    state.rate_sp_yaw_dps = 0.0f;
     state.base_duty_active = 0.0f;
+    state.outer_clamp_flags = 0u;
+    state.inner_clamp_flags = 0u;
     state.trip_reason = GROUND_TUNE_TRIP_NONE;
     runtime_state_set_ground_tune_state(state);
 }
@@ -141,6 +187,46 @@ void ground_tune_set_trip_reason(ground_tune_trip_reason_t reason)
     ground_tune_state_t state = runtime_state_get_ground_tune_state();
     state.trip_reason = reason;
     runtime_state_set_ground_tune_state(state);
+}
+
+void ground_tune_set_submode(ground_tune_submode_t submode)
+{
+    ground_tune_state_t state = runtime_state_get_ground_tune_state();
+    state.submode = submode;
+    runtime_state_set_ground_tune_state(state);
+}
+
+void ground_tune_set_inner_clamp_flags(uint8_t flags)
+{
+    ground_tune_state_t state = runtime_state_get_ground_tune_state();
+    state.inner_clamp_flags = flags;
+    runtime_state_set_ground_tune_state(state);
+}
+
+bool ground_tune_set_angle_target(uint8_t axis_id, float target_deg)
+{
+    const params_store_t *params = params_get();
+    if (!isfinite(target_deg) || params == NULL) {
+        return false;
+    }
+
+    ground_tune_state_t state = runtime_state_get_ground_tune_state();
+    const float limited = ground_tune_apply_target_limit(target_deg, params);
+    switch (axis_id) {
+    case 0:
+        state.target_roll_deg = limited;
+        break;
+    case 1:
+        state.target_pitch_deg = limited;
+        break;
+    case 2:
+        state.target_yaw_deg = 0.0f;
+        break;
+    default:
+        return false;
+    }
+    runtime_state_set_ground_tune_state(state);
+    return true;
 }
 
 bool ground_tune_compute(const estimator_state_t *estimator_state, axis3f_t *out_rate_setpoint_dps)
@@ -158,9 +244,8 @@ bool ground_tune_compute(const estimator_state_t *estimator_state, axis3f_t *out
         return false;
     }
 
-    if (params->ground_tune_enable_attitude_outer &&
-        params->ground_tune_use_kalman_attitude &&
-        !estimator_state->kalman_valid) {
+    const bool outer_enabled = params->ground_tune_enable_attitude_outer || ground_tune_outer_forced(state.submode);
+    if (params->ground_tune_use_kalman_attitude && !estimator_state->kalman_valid) {
         ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
         return false;
     }
@@ -187,35 +272,58 @@ bool ground_tune_compute(const estimator_state_t *estimator_state, axis3f_t *out
     }
 
     const vec3f_t rotvec_rad = ground_tune_quat_to_rotvec_rad(q_rel);
-    float err_roll_deg = -rotvec_rad.y * GROUND_TUNE_DEG_PER_RAD;
-    float err_pitch_deg = rotvec_rad.x * GROUND_TUNE_DEG_PER_RAD;
+    float measured_roll_deg = -rotvec_rad.y * GROUND_TUNE_DEG_PER_RAD;
+    float measured_pitch_deg = rotvec_rad.x * GROUND_TUNE_DEG_PER_RAD;
     if (params->ground_tune_use_kalman_attitude) {
-        err_roll_deg = estimator_state->kalman_roll_deg - state.ref_kalman_roll_deg;
-        err_pitch_deg = estimator_state->kalman_pitch_deg - state.ref_kalman_pitch_deg;
+        measured_roll_deg = estimator_state->kalman_roll_deg - state.ref_kalman_roll_deg;
+        measured_pitch_deg = estimator_state->kalman_pitch_deg - state.ref_kalman_pitch_deg;
     }
 
-    err_roll_deg = ground_tune_apply_deadband(err_roll_deg, params->ground_att_error_deadband_deg);
-    err_pitch_deg = ground_tune_apply_deadband(err_pitch_deg, params->ground_att_error_deadband_deg);
+    const float target_roll_deg = ground_tune_apply_target_limit(state.target_roll_deg, params);
+    const float target_pitch_deg = ground_tune_apply_target_limit(state.target_pitch_deg, params);
+    const float target_yaw_deg = 0.0f;
+    const float display_err_roll_deg =
+        ground_tune_apply_deadband(measured_roll_deg, params->ground_att_error_deadband_deg);
+    const float display_err_pitch_deg =
+        ground_tune_apply_deadband(measured_pitch_deg, params->ground_att_error_deadband_deg);
+    const float error_roll_deg =
+        ground_tune_apply_deadband(target_roll_deg - measured_roll_deg, params->ground_att_error_deadband_deg);
+    const float error_pitch_deg =
+        ground_tune_apply_deadband(target_pitch_deg - measured_pitch_deg, params->ground_att_error_deadband_deg);
+    const axis3f_t runtime_rate_request = runtime_state_get_rate_setpoint_request();
+    uint8_t outer_clamp_flags = 0u;
 
-    if (params->ground_tune_enable_attitude_outer) {
-        out_rate_setpoint_dps->roll = ground_tune_clampf(
-            -params->ground_att_kp_roll * err_roll_deg,
-            -params->ground_att_rate_limit_roll,
-            params->ground_att_rate_limit_roll);
-        out_rate_setpoint_dps->pitch = ground_tune_clampf(
-            -params->ground_att_kp_pitch * err_pitch_deg,
-            -params->ground_att_rate_limit_pitch,
-            params->ground_att_rate_limit_pitch);
-        out_rate_setpoint_dps->yaw = runtime_state_get_rate_setpoint_request().yaw;
+    if (outer_enabled) {
+        out_rate_setpoint_dps->roll = ground_tune_clamp_rate(
+            params->ground_att_kp_roll * error_roll_deg,
+            params->ground_att_rate_limit_roll,
+            GROUND_TUNE_OUTER_CLAMP_ROLL,
+            &outer_clamp_flags);
+        out_rate_setpoint_dps->pitch = ground_tune_clamp_rate(
+            params->ground_att_kp_pitch * error_pitch_deg,
+            params->ground_att_rate_limit_pitch,
+            GROUND_TUNE_OUTER_CLAMP_PITCH,
+            &outer_clamp_flags);
+        out_rate_setpoint_dps->yaw = runtime_rate_request.yaw;
     } else {
         *out_rate_setpoint_dps = (axis3f_t){0};
     }
 
-    state.err_roll_deg = err_roll_deg;
-    state.err_pitch_deg = err_pitch_deg;
+    state.target_roll_deg = target_roll_deg;
+    state.target_pitch_deg = target_pitch_deg;
+    state.target_yaw_deg = target_yaw_deg;
+    state.measured_roll_deg = measured_roll_deg;
+    state.measured_pitch_deg = measured_pitch_deg;
+    state.measured_yaw_deg = 0.0f;
+    state.error_roll_deg = error_roll_deg;
+    state.error_pitch_deg = error_pitch_deg;
+    state.error_yaw_deg = 0.0f;
+    state.err_roll_deg = display_err_roll_deg;
+    state.err_pitch_deg = display_err_pitch_deg;
     state.rate_sp_roll_dps = out_rate_setpoint_dps->roll;
     state.rate_sp_pitch_dps = out_rate_setpoint_dps->pitch;
-    state.base_duty_active = params->ground_test_base_duty;
+    state.rate_sp_yaw_dps = out_rate_setpoint_dps->yaw;
+    state.outer_clamp_flags = outer_clamp_flags;
     state.trip_reason = GROUND_TUNE_TRIP_NONE;
     runtime_state_set_ground_tune_state(state);
     return true;
