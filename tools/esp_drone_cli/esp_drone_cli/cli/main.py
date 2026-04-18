@@ -33,6 +33,7 @@ from esp_drone_cli.core.protocol.messages import CmdId, CommandError, ensure_com
 CONTROL_MODE_ATTITUDE_GROUND_TUNE = 6
 GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY = 1
 GROUND_VERIFY_SAFE_PARAMS = (
+    ("telemetry_usb_hz", 2, 50),
     ("ground_att_kp_roll", 4, 0.8),
     ("ground_att_kp_pitch", 4, 0.8),
     ("ground_att_rate_limit_roll", 4, 4.0),
@@ -194,6 +195,22 @@ def _axis_motor_delta(sample: TelemetrySample, axis_name: str) -> float:
     raise ValueError(f"unsupported attitude verify axis {axis_name}")
 
 
+def _same_sign_ratio(samples: list[TelemetrySample], lhs, rhs, lhs_deadband: float, rhs_deadband: float) -> float:
+    considered = 0
+    matched = 0
+    for sample in samples:
+        left = float(lhs(sample) if callable(lhs) else getattr(sample, lhs))
+        right = float(rhs(sample) if callable(rhs) else getattr(sample, rhs))
+        if abs(left) <= lhs_deadband or abs(right) <= rhs_deadband:
+            continue
+        considered += 1
+        if left * right > 0.0:
+            matched += 1
+    if considered == 0:
+        return 0.0
+    return matched / considered
+
+
 def analyze_attitude_ground_verify_samples(samples: list[TelemetrySample], target_deg: float) -> dict[str, object]:
     active = [
         sample for sample in samples
@@ -208,6 +225,10 @@ def analyze_attitude_ground_verify_samples(samples: list[TelemetrySample], targe
         "yaw_ok": False,
         "outer_clamp_max": max((sample.outer_loop_clamp_flag for sample in active), default=0),
         "inner_clamp_max": max((sample.inner_loop_clamp_flag for sample in active), default=0),
+        "inner_motor_clamp_max": max((sample.inner_loop_clamp_flag & 0x01 for sample in active), default=0),
+        "inner_integrator_freeze_count": sum(
+            1 for sample in active if (sample.inner_loop_clamp_flag & 0x02) != 0
+        ),
         "motor_saturation_max": max((sample.motor_saturation_flag for sample in active), default=0),
         "segments": {},
     }
@@ -245,13 +266,37 @@ def analyze_attitude_ground_verify_samples(samples: list[TelemetrySample], targe
                 if segment_samples else 0.0
             )
             expected = direction
-            sign_ok = bool(segment_samples) and all(
-                value * expected > 0.0
-                for value in (err_mean, rate_sp_mean, rate_err_mean, pid_p_mean, pid_out_mean, motor_delta_mean)
+            outer_link_ok = bool(segment_samples) and err_mean * expected > 0.0 and rate_sp_mean * err_mean > 0.0
+            rate_pid_sign_ratio = _same_sign_ratio(
+                segment_samples,
+                f"rate_err_{axis_name}",
+                f"rate_pid_p_{axis_name}",
+                0.05,
+                1e-6,
             )
+            pid_out_sign_ratio = _same_sign_ratio(
+                segment_samples,
+                f"rate_pid_p_{axis_name}",
+                f"pid_out_{axis_name}",
+                1e-6,
+                1e-6,
+            )
+            mixer_sign_ratio = _same_sign_ratio(
+                segment_samples,
+                lambda sample, axis=axis_name: getattr(sample, f"pid_out_{axis}"),
+                lambda sample, axis=axis_name: _axis_motor_delta(sample, axis),
+                1e-6,
+                1e-6,
+            )
+            sign_ok = bool(segment_samples) and outer_link_ok and rate_pid_sign_ratio >= 0.90 and \
+                pid_out_sign_ratio >= 0.95 and mixer_sign_ratio >= 0.95
             segments[f"{axis_name}_{label}"] = {
                 "count": len(segment_samples),
                 "sign_ok": sign_ok,
+                "outer_link_ok": outer_link_ok,
+                "rate_pid_sign_ratio": rate_pid_sign_ratio,
+                "pid_out_sign_ratio": pid_out_sign_ratio,
+                "mixer_sign_ratio": mixer_sign_ratio,
                 "angle_error_mean": err_mean,
                 "outer_rate_target_mean": rate_sp_mean,
                 "rate_error_mean": rate_err_mean,
@@ -275,7 +320,7 @@ def analyze_attitude_ground_verify_samples(samples: list[TelemetrySample], targe
         result["yaw_ok"] and
         result["chain_ok"] and
         int(result["outer_clamp_max"]) == 0 and
-        int(result["inner_clamp_max"]) == 0 and
+        int(result["inner_motor_clamp_max"]) == 0 and
         int(result["motor_saturation_max"]) == 0
     )
     return result
@@ -287,6 +332,8 @@ def format_attitude_ground_verify_summary(result: dict[str, object]) -> list[str
         (
             f"validity_ok={result['validity_ok']} safety_ok={result['safety_ok']} yaw_ok={result['yaw_ok']} "
             f"outer_clamp_max={result['outer_clamp_max']} inner_clamp_max={result['inner_clamp_max']} "
+            f"inner_motor_clamp_max={result.get('inner_motor_clamp_max', 0)} "
+            f"inner_integrator_freeze_count={result.get('inner_integrator_freeze_count', 0)} "
             f"motor_saturation_max={result['motor_saturation_max']} passed={result.get('passed', False)}"
         ),
     ]
@@ -294,6 +341,9 @@ def format_attitude_ground_verify_summary(result: dict[str, object]) -> list[str
         signs = dict(segment["signs"])
         lines.append(
             f"{name}: count={segment['count']} sign_ok={segment['sign_ok']} "
+            f"outer_ok={segment.get('outer_link_ok', False)} "
+            f"rate_pid_ratio={segment.get('rate_pid_sign_ratio', 0.0):.2f} "
+            f"mixer_ratio={segment.get('mixer_sign_ratio', 0.0):.2f} "
             f"err={segment['angle_error_mean']:.4f}({signs['angle_error']}) "
             f"outer_rate={segment['outer_rate_target_mean']:.4f}({signs['outer_rate_target']}) "
             f"rate_err={segment['rate_error_mean']:.4f}({signs['rate_error']}) "
@@ -997,6 +1047,8 @@ def cmd_attitude_ground_verify_round(session: DeviceSession, args) -> int:
     stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     path = output_dir / f"{stamp}_attitude_ground_verify_round.csv"
     samples: list[TelemetrySample] = []
+    result: dict[str, object] | None = None
+    round_error: Exception | None = None
 
     if not args.no_apply_safe_params:
         for name, type_id, value in GROUND_VERIFY_SAFE_PARAMS:
@@ -1016,8 +1068,6 @@ def cmd_attitude_ground_verify_round(session: DeviceSession, args) -> int:
     try:
         session.start_csv_log(path)
         started_log = True
-        session.start_stream()
-        started_stream = True
         time.sleep(args.settle_s)
 
         ensure_command_ok(CmdId.GROUND_CAPTURE_REF, session.ground_capture_ref())
@@ -1030,6 +1080,8 @@ def cmd_attitude_ground_verify_round(session: DeviceSession, args) -> int:
             session.attitude_ground_verify_start(base_duty=args.base_duty),
         )
         started_verify = True
+        session.start_stream()
+        started_stream = True
         time.sleep(args.zero_s)
 
         sequence = [
@@ -1050,6 +1102,8 @@ def cmd_attitude_ground_verify_round(session: DeviceSession, args) -> int:
             time.sleep(args.zero_s if abs(target) <= 0.01 else args.step_s)
 
         result = analyze_attitude_ground_verify_samples(samples, target_deg)
+    except Exception as exc:
+        round_error = exc
     finally:
         if started_verify:
             try:
@@ -1072,7 +1126,15 @@ def cmd_attitude_ground_verify_round(session: DeviceSession, args) -> int:
             session.stop_csv_log()
         session.unsubscribe(token)
 
+    if result is None:
+        result = analyze_attitude_ground_verify_samples(samples, target_deg)
+    if round_error is not None:
+        result["passed"] = False
+        result["round_error"] = str(round_error)
+
     print(f"attitude_ground_verify_round_log={path}")
+    if round_error is not None:
+        print(f"round_error={round_error}")
     for line in format_attitude_ground_verify_summary(result):
         print(line)
     return 0 if result.get("passed", False) else 2

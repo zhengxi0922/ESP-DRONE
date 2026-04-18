@@ -37,6 +37,7 @@ from .transport.serial_link import SerialTransport
 from .transport.udp_link import UdpTransport
 
 DEFAULT_RESPONSE_TIMEOUT_S = 2.5
+ATTITUDE_GROUND_TARGET_TIMEOUT_S = 8.0
 
 
 TelemetryCallback = Callable[[TelemetrySample], None]
@@ -742,11 +743,21 @@ class DeviceSession:
         self.require_attitude_ground_verify()
         return self.command(CmdId.ATTITUDE_GROUND_VERIFY_STOP)
 
-    def attitude_ground_set_target(self, axis_index: int, target_deg: float) -> int:
+    def attitude_ground_set_target(
+        self,
+        axis_index: int,
+        target_deg: float,
+        timeout: float = ATTITUDE_GROUND_TARGET_TIMEOUT_S,
+    ) -> int:
         """Set one small flat-ground attitude verification angle target."""
 
         self.require_attitude_ground_verify()
-        return self.command(CmdId.ATTITUDE_GROUND_SET_TARGET, arg_u8=axis_index, arg_f32=float(target_deg))
+        return self.command(
+            CmdId.ATTITUDE_GROUND_SET_TARGET,
+            arg_u8=axis_index,
+            arg_f32=float(target_deg),
+            timeout=timeout,
+        )
 
     def liftoff_verify_start(self, base_duty: float | None = None) -> int:
         """Start the explicit low-risk liftoff verification path."""

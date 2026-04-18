@@ -1058,6 +1058,62 @@ def test_attitude_ground_verify_analysis_accepts_small_symmetric_targets():
     assert result["passed"] is True
 
 
+def test_attitude_ground_verify_analysis_accepts_rate_overshoot_correction():
+    samples = []
+    cases = (
+        ("roll", 1.0, 0.8, 0.0006),
+        ("roll", -1.0, 0.4, 0.0003),
+        ("pitch", 1.0, -0.5, -0.0004),
+        ("pitch", -1.0, -0.8, -0.0006),
+    )
+    for axis_name, target, rate_error, pid_out in cases:
+        for _ in range(4):
+            sample = TelemetrySample.from_payload(build_telemetry_payload_v5())
+            sample.control_mode = 6
+            sample.control_submode = 1
+            sample.kalman_valid = 1
+            sample.attitude_valid = 1
+            sample.ground_ref_valid = 1
+            sample.failsafe_reason = 0
+            sample.ground_trip_reason = 0
+            sample.outer_loop_clamp_flag = 0
+            sample.inner_loop_clamp_flag = 2
+            sample.motor_saturation_flag = 0
+            sample.angle_target_roll = target if axis_name == "roll" else 0.0
+            sample.angle_target_pitch = target if axis_name == "pitch" else 0.0
+            sample.angle_target_yaw = 0.0
+            sample.angle_error_roll = target if axis_name == "roll" else 0.0
+            sample.angle_error_pitch = target if axis_name == "pitch" else 0.0
+            sample.outer_loop_rate_target_roll = 0.8 * target if axis_name == "roll" else 0.0
+            sample.outer_loop_rate_target_pitch = 0.8 * target if axis_name == "pitch" else 0.0
+            sample.outer_loop_rate_target_yaw = 0.0
+            sample.rate_setpoint_yaw = 0.0
+            if axis_name == "roll":
+                sample.rate_err_roll = rate_error
+                sample.rate_pid_p_roll = pid_out
+                sample.pid_out_roll = pid_out
+                sample.motor1 = 0.08 + pid_out
+                sample.motor4 = 0.08 + pid_out
+                sample.motor2 = 0.08 - pid_out
+                sample.motor3 = 0.08 - pid_out
+            else:
+                sample.rate_err_pitch = rate_error
+                sample.rate_pid_p_pitch = pid_out
+                sample.pid_out_pitch = pid_out
+                sample.motor3 = 0.08 + pid_out
+                sample.motor4 = 0.08 + pid_out
+                sample.motor1 = 0.08 - pid_out
+                sample.motor2 = 0.08 - pid_out
+            samples.append(sample)
+
+    result = analyze_attitude_ground_verify_samples(samples, target_deg=1.0)
+
+    assert result["inner_clamp_max"] == 2
+    assert result["inner_motor_clamp_max"] == 0
+    assert result["chain_ok"] is True
+    assert result["passed"] is True
+
+
 def test_gui_startup_without_device_or_missing_pyqt5(monkeypatch):
     if importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None:
         from esp_drone_cli import gui_main
