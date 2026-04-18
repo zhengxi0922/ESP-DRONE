@@ -61,6 +61,11 @@ LIFTOFF_VERIFY_SAFE_PARAMS = (
     ("liftoff_verify_ramp_duty_per_s", 4, 0.08),
     ("liftoff_verify_att_trip_deg", 4, 7.0),
 )
+LIFTOFF_STATE_NO = "no liftoff"
+LIFTOFF_STATE_NEAR = "near liftoff / unloading"
+LIFTOFF_STATE_CONFIRMED = "confirmed liftoff"
+LIFTOFF_NEAR_BARO_DELTA_M = 0.04
+LIFTOFF_CONFIRMED_BARO_DELTA_M = 0.12
 
 
 def axis_name_to_index(name: str) -> int:
@@ -391,6 +396,8 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         "steady_samples": 0,
         "active_duration_s": 0.0,
         "validity_ok": False,
+        "failsafe_reason": 0,
+        "ground_trip_reason": 0,
         "safety_ok": False,
         "terminal_trip_reason": terminal_trip,
         "terminal_trip_ok": terminal_trip in {0, 6, 9},
@@ -398,6 +405,10 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         "chain_ok": False,
         "yaw_ok": False,
         "tilt_ok": False,
+        "control_safe_pass": False,
+        "physical_liftoff_state": LIFTOFF_STATE_NO,
+        "physical_liftoff_confirmed": False,
+        "free_flight_pass": False,
         "probable_liftoff": False,
         "base_duty_target": base_duty,
         "base_duty_max": max((sample.base_duty_active for sample in active), default=0.0),
@@ -422,6 +433,7 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
             sum(abs(sample.rate_meas_yaw_filtered) for sample in active) / len(active)
             if active else 0.0
         ),
+        "battery_sag_v": 0.0,
         "baro_altitude_delta_m": 0.0,
         "axis": {},
     }
@@ -441,6 +453,15 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         if sample.base_duty_active < steady_threshold and
         ((sample.inner_loop_clamp_flag & 0x01) != 0 or sample.motor_saturation_flag != 0)
     )
+    result["failsafe_reason"] = max((int(sample.failsafe_reason) for sample in active), default=0)
+    result["ground_trip_reason"] = max((int(sample.ground_trip_reason) for sample in active), default=0)
+    valid_battery = [
+        sample.battery_voltage
+        for sample in active
+        if sample.battery_valid and sample.battery_voltage > 0.1
+    ]
+    if valid_battery:
+        result["battery_sag_v"] = max(valid_battery) - min(valid_battery)
     valid_baro = [sample.baro_altitude_m for sample in active if sample.baro_valid]
     if valid_baro:
         result["baro_altitude_delta_m"] = max(valid_baro) - min(valid_baro)
@@ -472,7 +493,13 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         float(result["max_abs_roll_deg"]) <= 6.5 and
         float(result["max_abs_pitch_deg"]) <= 6.5
     )
-    result["probable_liftoff"] = bool(float(result["baro_altitude_delta_m"]) >= 0.08)
+    baro_delta = float(result["baro_altitude_delta_m"])
+    if baro_delta >= LIFTOFF_CONFIRMED_BARO_DELTA_M:
+        result["physical_liftoff_state"] = LIFTOFF_STATE_CONFIRMED
+        result["physical_liftoff_confirmed"] = True
+    elif baro_delta >= LIFTOFF_NEAR_BARO_DELTA_M:
+        result["physical_liftoff_state"] = LIFTOFF_STATE_NEAR
+    result["probable_liftoff"] = bool(result["physical_liftoff_confirmed"])
 
     axis_results: dict[str, dict[str, object]] = {}
     for axis_name in ("roll", "pitch"):
@@ -514,7 +541,7 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         }
     result["axis"] = axis_results
     result["chain_ok"] = all(axis["axis_ok"] for axis in axis_results.values())
-    result["passed"] = bool(
+    result["control_safe_pass"] = bool(
         result["validity_ok"] and
         result["safety_ok"] and
         result["terminal_trip_ok"] and
@@ -526,6 +553,7 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         int(result["inner_motor_clamp_max"]) == 0 and
         int(result["motor_saturation_max"]) == 0
     )
+    result["passed"] = result["control_safe_pass"]
     return result
 
 
@@ -534,28 +562,42 @@ def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
         f"samples={result['samples']} active_samples={result['active_samples']} "
         f"steady_samples={result.get('steady_samples', 0)} active_duration_s={result['active_duration_s']:.3f}",
         (
-            f"validity_ok={result['validity_ok']} safety_ok={result['safety_ok']} "
-            f"terminal_trip={result['terminal_trip_reason']} terminal_trip_ok={result['terminal_trip_ok']} "
+            f"validity_ok={result['validity_ok']} failsafe_reason={result.get('failsafe_reason', 0)} "
+            f"ground_trip_reason={result.get('ground_trip_reason', 0)} "
+            f"terminal_trip={result['terminal_trip_reason']} terminal_trip_ok={result['terminal_trip_ok']}"
+        ),
+        (
             f"unified_path_ok={result['unified_path_ok']} chain_ok={result['chain_ok']} "
-            f"yaw_ok={result['yaw_ok']} tilt_ok={result['tilt_ok']} passed={result.get('passed', False)}"
+            f"yaw_ok={result['yaw_ok']} tilt_ok={result['tilt_ok']} "
+            f"safety_ok={result['safety_ok']} control_safe_pass={result.get('control_safe_pass', False)}"
         ),
         (
             f"base_duty_max={result['base_duty_max']:.4f}/{result['base_duty_target']:.4f} "
             f"motor_max={result['motor_max']:.4f} outer_clamp_max={result['outer_clamp_max']} "
-            f"inner_motor_clamp_max={result['inner_motor_clamp_max']} "
+            f"steady_inner_motor_clamp_max={result['inner_motor_clamp_max']} "
             f"raw_inner_motor_clamp_max={result.get('raw_inner_motor_clamp_max', 0)} "
             f"startup_motor_clamp_count={result.get('startup_motor_clamp_count', 0)} "
             f"inner_integrator_freeze_count={result['inner_integrator_freeze_count']} "
-            f"motor_saturation_max={result['motor_saturation_max']} "
+            f"steady_motor_saturation_max={result['motor_saturation_max']} "
             f"raw_motor_saturation_max={result.get('raw_motor_saturation_max', 0)}"
         ),
         (
-            f"max_abs_roll_deg={result['max_abs_roll_deg']:.3f} "
-            f"max_abs_pitch_deg={result['max_abs_pitch_deg']:.3f} "
+            f"max_roll_deg={result['max_abs_roll_deg']:.3f} "
+            f"max_pitch_deg={result['max_abs_pitch_deg']:.3f} "
             f"max_abs_yaw_rate_dps={result['max_abs_yaw_rate_dps']:.3f} "
             f"mean_abs_yaw_rate_dps={result['mean_abs_yaw_rate_dps']:.3f} "
-            f"baro_altitude_delta_m={result['baro_altitude_delta_m']:.3f} "
-            f"probable_liftoff={result['probable_liftoff']}"
+            f"battery_sag_v={result.get('battery_sag_v', 0.0):.3f} "
+            f"baro_delta_m={result['baro_altitude_delta_m']:.3f}"
+        ),
+        (
+            f"physical_liftoff_state={result.get('physical_liftoff_state', LIFTOFF_STATE_NO)} "
+            f"physical_liftoff_confirmed={result.get('physical_liftoff_confirmed', False)} "
+            f"free_flight_pass={result.get('free_flight_pass', False)}"
+        ),
+        (
+            "final_verdict: "
+            f"safety/control={'control-safe pass' if result.get('control_safe_pass', False) else 'not pass'} "
+            f"physical_liftoff={'confirmed' if result.get('physical_liftoff_confirmed', False) else 'not confirmed'}"
         ),
     ]
     for axis_name, axis in dict(result.get("axis", {})).items():
@@ -1448,6 +1490,7 @@ def cmd_liftoff_verify_round(session: DeviceSession, args) -> int:
     if result is None:
         result = analyze_liftoff_verify_samples(samples, base_duty)
     if round_error is not None:
+        result["control_safe_pass"] = False
         result["passed"] = False
         result["round_error"] = str(round_error)
 

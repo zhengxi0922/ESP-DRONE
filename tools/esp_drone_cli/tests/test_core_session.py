@@ -27,6 +27,7 @@ from esp_drone_cli.core import DeviceSession
 from esp_drone_cli.cli.main import (
     analyze_attitude_ground_verify_samples,
     analyze_liftoff_verify_samples,
+    format_liftoff_verify_summary,
     format_rate_status_line,
 )
 from esp_drone_cli.core.models import (
@@ -1175,8 +1176,16 @@ def test_liftoff_verify_analysis_accepts_conservative_closed_loop_attempt():
     assert result["yaw_ok"] is True
     assert result["tilt_ok"] is True
     assert result["inner_motor_clamp_max"] == 0
+    assert result["control_safe_pass"] is True
+    assert result["physical_liftoff_state"] == "confirmed liftoff"
+    assert result["physical_liftoff_confirmed"] is True
+    assert result["free_flight_pass"] is False
     assert result["probable_liftoff"] is True
     assert result["passed"] is True
+
+    summary = "\n".join(format_liftoff_verify_summary(result))
+    assert "control_safe_pass=True" in summary
+    assert "physical_liftoff=confirmed" in summary
 
 
 def test_liftoff_verify_analysis_ignores_startup_idle_clamp():
@@ -1232,6 +1241,66 @@ def test_liftoff_verify_analysis_ignores_startup_idle_clamp():
     assert result["startup_motor_clamp_count"] == 1
     assert result["inner_motor_clamp_max"] == 0
     assert result["motor_saturation_max"] == 0
+    assert result["control_safe_pass"] is True
+    assert result["physical_liftoff_state"] == "near liftoff / unloading"
+    assert result["physical_liftoff_confirmed"] is False
+    assert result["free_flight_pass"] is False
+    assert result["probable_liftoff"] is False
+    assert result["passed"] is True
+
+
+def test_liftoff_verify_analysis_separates_no_liftoff_from_control_safe_pass():
+    samples = []
+    for index in range(4):
+        sample = TelemetrySample.from_payload(build_telemetry_payload_v5())
+        sample.timestamp_us = 3_000_000 + index * 20_000
+        sample.control_mode = 6
+        sample.control_submode = 2
+        sample.kalman_valid = 1
+        sample.attitude_valid = 1
+        sample.ground_ref_valid = 1
+        sample.battery_valid = 1
+        sample.failsafe_reason = 0
+        sample.ground_trip_reason = 0
+        sample.outer_loop_clamp_flag = 0
+        sample.inner_loop_clamp_flag = 0
+        sample.motor_saturation_flag = 0
+        sample.base_duty_active = 0.10
+        sample.angle_target_roll = 0.0
+        sample.angle_target_pitch = 0.0
+        sample.angle_target_yaw = 0.0
+        sample.angle_measured_roll = 0.2
+        sample.angle_measured_pitch = -0.2
+        sample.angle_error_roll = 0.0
+        sample.angle_error_pitch = 0.0
+        sample.angle_error_yaw = 0.0
+        sample.outer_loop_rate_target_roll = 0.0
+        sample.outer_loop_rate_target_pitch = 0.0
+        sample.outer_loop_rate_target_yaw = 0.0
+        sample.rate_setpoint_roll = 0.0
+        sample.rate_setpoint_pitch = 0.0
+        sample.rate_setpoint_yaw = 0.0
+        sample.rate_err_roll = 0.0
+        sample.rate_err_pitch = 0.0
+        sample.rate_err_yaw = 0.0
+        sample.pid_out_roll = 0.0
+        sample.pid_out_pitch = 0.0
+        sample.pid_out_yaw = 0.0
+        sample.motor1 = 0.10
+        sample.motor2 = 0.10
+        sample.motor3 = 0.10
+        sample.motor4 = 0.10
+        sample.rate_meas_yaw_filtered = 0.5
+        sample.baro_valid = 1
+        sample.baro_altitude_m = 0.003 * index
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.10)
+
+    assert result["control_safe_pass"] is True
+    assert result["physical_liftoff_state"] == "no liftoff"
+    assert result["physical_liftoff_confirmed"] is False
+    assert result["free_flight_pass"] is False
     assert result["passed"] is True
 
 
