@@ -24,7 +24,7 @@ from pathlib import Path
 import pytest
 
 from esp_drone_cli.core import DeviceSession
-from esp_drone_cli.cli.main import format_rate_status_line
+from esp_drone_cli.cli.main import analyze_attitude_ground_verify_samples, format_rate_status_line
 from esp_drone_cli.core.models import (
     CMD_REQ_STRUCT,
     CapabilityError,
@@ -1002,6 +1002,62 @@ def test_telemetry_sample_v5_decodes_attitude_ground_verify_fields():
     assert row["control_submode"] == 1
 
 
+def test_attitude_ground_verify_analysis_accepts_small_symmetric_targets():
+    samples = []
+    for axis_name, target, pid_out in (
+        ("roll", 1.0, 0.0006),
+        ("roll", -1.0, -0.0006),
+        ("pitch", 1.0, 0.0006),
+        ("pitch", -1.0, -0.0006),
+    ):
+        for _ in range(4):
+            sample = TelemetrySample.from_payload(build_telemetry_payload_v5())
+            sample.control_mode = 6
+            sample.control_submode = 1
+            sample.kalman_valid = 1
+            sample.attitude_valid = 1
+            sample.ground_ref_valid = 1
+            sample.failsafe_reason = 0
+            sample.ground_trip_reason = 0
+            sample.outer_loop_clamp_flag = 0
+            sample.inner_loop_clamp_flag = 0
+            sample.motor_saturation_flag = 0
+            sample.angle_target_roll = target if axis_name == "roll" else 0.0
+            sample.angle_target_pitch = target if axis_name == "pitch" else 0.0
+            sample.angle_target_yaw = 0.0
+            sample.angle_error_roll = target if axis_name == "roll" else 0.0
+            sample.angle_error_pitch = target if axis_name == "pitch" else 0.0
+            sample.outer_loop_rate_target_roll = 0.8 * target if axis_name == "roll" else 0.0
+            sample.outer_loop_rate_target_pitch = 0.8 * target if axis_name == "pitch" else 0.0
+            sample.outer_loop_rate_target_yaw = 0.0
+            sample.rate_setpoint_yaw = 0.0
+            if axis_name == "roll":
+                sample.rate_err_roll = 0.8 * target
+                sample.rate_pid_p_roll = pid_out
+                sample.pid_out_roll = pid_out
+                sample.motor1 = 0.08 + pid_out
+                sample.motor4 = 0.08 + pid_out
+                sample.motor2 = 0.08 - pid_out
+                sample.motor3 = 0.08 - pid_out
+            else:
+                sample.rate_err_pitch = 0.8 * target
+                sample.rate_pid_p_pitch = pid_out
+                sample.pid_out_pitch = pid_out
+                sample.motor3 = 0.08 + pid_out
+                sample.motor4 = 0.08 + pid_out
+                sample.motor1 = 0.08 - pid_out
+                sample.motor2 = 0.08 - pid_out
+            samples.append(sample)
+
+    result = analyze_attitude_ground_verify_samples(samples, target_deg=1.0)
+
+    assert result["validity_ok"] is True
+    assert result["safety_ok"] is True
+    assert result["yaw_ok"] is True
+    assert result["chain_ok"] is True
+    assert result["passed"] is True
+
+
 def test_gui_startup_without_device_or_missing_pyqt5(monkeypatch):
     if importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None:
         from esp_drone_cli import gui_main
@@ -1525,6 +1581,13 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert attitude_ground_log_args.command == "attitude-ground-log"
     assert attitude_ground_log_args.duration == pytest.approx(2.0)
 
+    attitude_ground_round_args = build_parser().parse_args(
+        ["--serial", "COM7", "attitude-ground-round", "--target-deg", "1.0", "--auto-arm"]
+    )
+    assert attitude_ground_round_args.command == "attitude-ground-round"
+    assert attitude_ground_round_args.target_deg == pytest.approx(1.0)
+    assert attitude_ground_round_args.auto_arm is True
+
     liftoff_args = build_parser().parse_args(["--serial", "COM7", "liftoff-verify", "start", "--base-duty", "0.10"])
     assert liftoff_args.command == "liftoff-verify"
     assert liftoff_args.action == "start"
@@ -1744,6 +1807,10 @@ def test_gui_ground_defaults_preserve_confirmed_rate_p_only_baseline():
     assert '("rate_kp_yaw", "rate_kp_yaw", 0.0, 0.05, 5, 0.0001, 0.0005)' in gui_main
     assert '("rate_ki_roll", "rate_ki_roll", 0.0, 0.02, 5, 0.0001, 0.0)' in gui_main
     assert '("rate_kd_roll", "rate_kd_roll", 0.0, 0.01, 5, 0.0001, 0.0)' in gui_main
+    assert '("ground_att_kp_roll", "ground_att_kp_roll", 0.0, 10.0, 2, 0.1, 0.8)' in gui_main
+    assert '("ground_att_rate_limit_roll", "ground_att_rate_limit_roll", 0.0, 60.0, 1, 1.0, 4.0)' in gui_main
+    assert '("ground_att_target_limit_deg", "ground_target_limit", 0.5, 10.0, 1, 0.5, 2.0)' in gui_main
+    assert '("ground_test_max_extra_duty", "ground_max_extra_duty", 0.0, 0.20, 3, 0.01, 0.03)' in gui_main
 
 
 def test_firmware_registers_softap_udp_transport():

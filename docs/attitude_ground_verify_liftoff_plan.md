@@ -35,7 +35,7 @@ angle PID tuning mode and it is not proof of hover stability.
 Default protections:
 
 - Requires armed state, fresh IMU, valid ground reference, and valid Kalman when `ground_tune_use_kalman_attitude=true`.
-- Roll/pitch targets are clamped by `ground_att_target_limit_deg`, default `3 deg`.
+- Roll/pitch targets are clamped by `ground_att_target_limit_deg`, default `2 deg`.
 - Yaw angle target is forced to zero; yaw remains rate-limited and conservative.
 - Outer-loop output is clamped by `ground_att_rate_limit_roll/pitch`.
 - Motor output is clamped around the ramped base duty by `ground_test_max_extra_duty`.
@@ -50,6 +50,12 @@ python -m esp_drone_cli --serial COM4 attitude-ground-verify target roll 1.0
 python -m esp_drone_cli --serial COM4 attitude-ground-verify target pitch -1.0
 python -m esp_drone_cli --serial COM4 attitude-ground-log --duration 10
 python -m esp_drone_cli --serial COM4 attitude-ground-verify stop
+```
+
+One-command very small verification round:
+
+```powershell
+python -m esp_drone_cli --serial COM4 attitude-ground-round --target-deg 1.0 --base-duty 0.08 --auto-arm
 ```
 
 GUI:

@@ -30,6 +30,22 @@ from esp_drone_cli.core.roll_bench import (
 )
 from esp_drone_cli.core.protocol.messages import CmdId, CommandError, ensure_command_ok
 
+CONTROL_MODE_ATTITUDE_GROUND_TUNE = 6
+GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY = 1
+GROUND_VERIFY_SAFE_PARAMS = (
+    ("ground_att_kp_roll", 4, 0.8),
+    ("ground_att_kp_pitch", 4, 0.8),
+    ("ground_att_rate_limit_roll", 4, 4.0),
+    ("ground_att_rate_limit_pitch", 4, 4.0),
+    ("ground_att_target_limit_deg", 4, 2.0),
+    ("ground_att_error_deadband_deg", 4, 0.2),
+    ("ground_test_base_duty", 4, 0.08),
+    ("ground_test_max_extra_duty", 4, 0.03),
+    ("ground_test_motor_balance_limit", 4, 0.06),
+    ("ground_test_ramp_duty_per_s", 4, 0.15),
+    ("ground_test_auto_disarm_ms", 2, 15000),
+)
+
 
 def axis_name_to_index(name: str) -> int:
     """将轴名称转换为协议使用的轴编号。
@@ -154,6 +170,138 @@ def format_ground_status_line(sample: TelemetrySample, axis_name: str) -> str:
 def format_ground_status_line_all(sample: TelemetrySample) -> str:
     parts = [format_ground_status_line(sample, axis_name) for axis_name in ("roll", "pitch", "yaw")]
     return " | ".join(parts)
+
+
+def _mean_field(samples: list[TelemetrySample], field: str) -> float:
+    if not samples:
+        return 0.0
+    return sum(float(getattr(sample, field)) for sample in samples) / len(samples)
+
+
+def _sign_label(value: float, deadband: float = 1e-5) -> str:
+    if value > deadband:
+        return "+"
+    if value < -deadband:
+        return "-"
+    return "0"
+
+
+def _axis_motor_delta(sample: TelemetrySample, axis_name: str) -> float:
+    if axis_name == "roll":
+        return (sample.motor1 + sample.motor4) - (sample.motor2 + sample.motor3)
+    if axis_name == "pitch":
+        return (sample.motor3 + sample.motor4) - (sample.motor1 + sample.motor2)
+    raise ValueError(f"unsupported attitude verify axis {axis_name}")
+
+
+def analyze_attitude_ground_verify_samples(samples: list[TelemetrySample], target_deg: float) -> dict[str, object]:
+    active = [
+        sample for sample in samples
+        if sample.control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE
+        and sample.control_submode == GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY
+    ]
+    result: dict[str, object] = {
+        "samples": len(samples),
+        "active_samples": len(active),
+        "validity_ok": False,
+        "safety_ok": False,
+        "yaw_ok": False,
+        "outer_clamp_max": max((sample.outer_loop_clamp_flag for sample in active), default=0),
+        "inner_clamp_max": max((sample.inner_loop_clamp_flag for sample in active), default=0),
+        "motor_saturation_max": max((sample.motor_saturation_flag for sample in active), default=0),
+        "segments": {},
+    }
+    if not active:
+        return result
+
+    result["validity_ok"] = all(
+        sample.kalman_valid and sample.attitude_valid and sample.ground_ref_valid for sample in active
+    )
+    result["safety_ok"] = all(
+        sample.failsafe_reason == 0 and sample.ground_trip_reason == 0 for sample in active
+    )
+    result["yaw_ok"] = all(
+        abs(sample.angle_target_yaw) <= 0.01 and
+        abs(sample.outer_loop_rate_target_yaw) <= 0.05 and
+        abs(sample.rate_setpoint_yaw) <= 0.05
+        for sample in active
+    )
+
+    segments: dict[str, dict[str, object]] = {}
+    threshold = max(0.25, abs(target_deg) * 0.5)
+    for axis_name in ("roll", "pitch"):
+        for direction, label in ((1.0, "pos"), (-1.0, "neg")):
+            segment_samples = [
+                sample for sample in active
+                if direction * float(getattr(sample, f"angle_target_{axis_name}")) > threshold
+            ]
+            err_mean = _mean_field(segment_samples, f"angle_error_{axis_name}")
+            rate_sp_mean = _mean_field(segment_samples, f"outer_loop_rate_target_{axis_name}")
+            rate_err_mean = _mean_field(segment_samples, f"rate_err_{axis_name}")
+            pid_p_mean = _mean_field(segment_samples, f"rate_pid_p_{axis_name}")
+            pid_out_mean = _mean_field(segment_samples, f"pid_out_{axis_name}")
+            motor_delta_mean = (
+                sum(_axis_motor_delta(sample, axis_name) for sample in segment_samples) / len(segment_samples)
+                if segment_samples else 0.0
+            )
+            expected = direction
+            sign_ok = bool(segment_samples) and all(
+                value * expected > 0.0
+                for value in (err_mean, rate_sp_mean, rate_err_mean, pid_p_mean, pid_out_mean, motor_delta_mean)
+            )
+            segments[f"{axis_name}_{label}"] = {
+                "count": len(segment_samples),
+                "sign_ok": sign_ok,
+                "angle_error_mean": err_mean,
+                "outer_rate_target_mean": rate_sp_mean,
+                "rate_error_mean": rate_err_mean,
+                "pid_p_mean": pid_p_mean,
+                "pid_out_mean": pid_out_mean,
+                "motor_delta_mean": motor_delta_mean,
+                "signs": {
+                    "angle_error": _sign_label(err_mean),
+                    "outer_rate_target": _sign_label(rate_sp_mean),
+                    "rate_error": _sign_label(rate_err_mean),
+                    "pid_p": _sign_label(pid_p_mean),
+                    "pid_out": _sign_label(pid_out_mean),
+                    "motor_delta": _sign_label(motor_delta_mean),
+                },
+            }
+    result["segments"] = segments
+    result["chain_ok"] = all(segment["sign_ok"] for segment in segments.values())
+    result["passed"] = bool(
+        result["validity_ok"] and
+        result["safety_ok"] and
+        result["yaw_ok"] and
+        result["chain_ok"] and
+        int(result["outer_clamp_max"]) == 0 and
+        int(result["inner_clamp_max"]) == 0 and
+        int(result["motor_saturation_max"]) == 0
+    )
+    return result
+
+
+def format_attitude_ground_verify_summary(result: dict[str, object]) -> list[str]:
+    lines = [
+        f"samples={result['samples']} active_samples={result['active_samples']}",
+        (
+            f"validity_ok={result['validity_ok']} safety_ok={result['safety_ok']} yaw_ok={result['yaw_ok']} "
+            f"outer_clamp_max={result['outer_clamp_max']} inner_clamp_max={result['inner_clamp_max']} "
+            f"motor_saturation_max={result['motor_saturation_max']} passed={result.get('passed', False)}"
+        ),
+    ]
+    for name, segment in dict(result.get("segments", {})).items():
+        signs = dict(segment["signs"])
+        lines.append(
+            f"{name}: count={segment['count']} sign_ok={segment['sign_ok']} "
+            f"err={segment['angle_error_mean']:.4f}({signs['angle_error']}) "
+            f"outer_rate={segment['outer_rate_target_mean']:.4f}({signs['outer_rate_target']}) "
+            f"rate_err={segment['rate_error_mean']:.4f}({signs['rate_error']}) "
+            f"pid_p={segment['pid_p_mean']:.6f}({signs['pid_p']}) "
+            f"pid_out={segment['pid_out_mean']:.6f}({signs['pid_out']}) "
+            f"motor_delta={segment['motor_delta_mean']:.6f}({signs['motor_delta']})"
+        )
+    return lines
 
 
 def wait_for_one_sample(session: DeviceSession, timeout: float) -> TelemetrySample:
@@ -842,6 +990,94 @@ def cmd_attitude_ground_log(session: DeviceSession, args) -> int:
     return 0 if rows > 0 else 1
 
 
+def cmd_attitude_ground_verify_round(session: DeviceSession, args) -> int:
+    require_attitude_ground_verify_capability(session)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+    path = output_dir / f"{stamp}_attitude_ground_verify_round.csv"
+    samples: list[TelemetrySample] = []
+
+    if not args.no_apply_safe_params:
+        for name, type_id, value in GROUND_VERIFY_SAFE_PARAMS:
+            session.set_param(name, type_id, value)
+
+    target_deg = abs(float(args.target_deg))
+    if target_deg > 2.0:
+        raise ValueError("attitude ground verify target must be <= 2 deg")
+
+    def on_telemetry(sample: TelemetrySample) -> None:
+        samples.append(sample)
+
+    token = session.subscribe_telemetry(on_telemetry)
+    started_stream = False
+    started_log = False
+    started_verify = False
+    try:
+        session.start_csv_log(path)
+        started_log = True
+        session.start_stream()
+        started_stream = True
+        time.sleep(args.settle_s)
+
+        ensure_command_ok(CmdId.GROUND_CAPTURE_REF, session.ground_capture_ref())
+        if args.auto_arm:
+            ensure_command_ok(CmdId.ARM, session.arm())
+            time.sleep(0.4)
+
+        ensure_command_ok(
+            CmdId.ATTITUDE_GROUND_VERIFY_START,
+            session.attitude_ground_verify_start(base_duty=args.base_duty),
+        )
+        started_verify = True
+        time.sleep(args.zero_s)
+
+        sequence = [
+            ("roll", target_deg),
+            ("roll", 0.0),
+            ("roll", -target_deg),
+            ("roll", 0.0),
+            ("pitch", target_deg),
+            ("pitch", 0.0),
+            ("pitch", -target_deg),
+            ("pitch", 0.0),
+        ]
+        for axis_name, target in sequence:
+            ensure_command_ok(
+                CmdId.ATTITUDE_GROUND_SET_TARGET,
+                session.attitude_ground_set_target(axis_name_to_index(axis_name), target),
+            )
+            time.sleep(args.zero_s if abs(target) <= 0.01 else args.step_s)
+
+        result = analyze_attitude_ground_verify_samples(samples, target_deg)
+    finally:
+        if started_verify:
+            try:
+                session.attitude_ground_set_target(axis_name_to_index("roll"), 0.0)
+                session.attitude_ground_set_target(axis_name_to_index("pitch"), 0.0)
+                session.attitude_ground_verify_stop()
+            except Exception:
+                pass
+        if args.auto_arm:
+            try:
+                session.disarm()
+            except Exception:
+                pass
+        if started_stream:
+            try:
+                session.stop_stream()
+            except Exception:
+                pass
+        if started_log:
+            session.stop_csv_log()
+        session.unsubscribe(token)
+
+    print(f"attitude_ground_verify_round_log={path}")
+    for line in format_attitude_ground_verify_summary(result):
+        print(line)
+    return 0 if result.get("passed", False) else 2
+
+
 def cmd_liftoff_verify(session: DeviceSession, args) -> int:
     require_low_risk_liftoff_capability(session)
     if args.action == "start":
@@ -1283,6 +1519,20 @@ def build_parser() -> argparse.ArgumentParser:
     attitude_ground_log_p.add_argument("--duration", type=float, default=10.0)
     attitude_ground_log_p.add_argument("--output-dir", default="logs")
 
+    attitude_ground_round_p = sub.add_parser(
+        "attitude-ground-round",
+        help="run one very small +Z-up attitude ground verify sequence and record CSV",
+        description="Capture flat-ground reference, optionally arm, start attitude-ground-verify, apply +/- small roll/pitch angle targets, record telemetry, stop, and print sign/clamp checks.",
+    )
+    attitude_ground_round_p.add_argument("--target-deg", type=float, default=1.0)
+    attitude_ground_round_p.add_argument("--base-duty", type=float, default=0.08)
+    attitude_ground_round_p.add_argument("--step-s", type=float, default=1.0)
+    attitude_ground_round_p.add_argument("--zero-s", type=float, default=0.6)
+    attitude_ground_round_p.add_argument("--settle-s", type=float, default=0.8)
+    attitude_ground_round_p.add_argument("--output-dir", default="logs")
+    attitude_ground_round_p.add_argument("--auto-arm", action="store_true")
+    attitude_ground_round_p.add_argument("--no-apply-safe-params", action="store_true")
+
     liftoff_verify_p = sub.add_parser(
         "liftoff-verify",
         help="start or stop the low-risk short liftoff verification mode",
@@ -1421,6 +1671,7 @@ def main(argv: list[str] | None = None) -> int:
             "ground-log": cmd_ground_log,
             "attitude-ground-verify": cmd_attitude_ground_verify,
             "attitude-ground-log": cmd_attitude_ground_log,
+            "attitude-ground-round": cmd_attitude_ground_verify_round,
             "liftoff-verify": cmd_liftoff_verify,
             "udp-manual": cmd_udp_manual,
             "calib": cmd_calib,

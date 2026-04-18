@@ -246,18 +246,18 @@ static void params_apply_defaults(params_store_t *store)
     store->ground_tune_use_kalman_attitude = true;
     store->ground_tune_use_filtered_rate = true;
 
-    store->ground_att_kp_roll = 1.2f;
-    store->ground_att_kp_pitch = 1.2f;
-    store->ground_att_rate_limit_roll = 12.0f;
-    store->ground_att_rate_limit_pitch = 12.0f;
-    store->ground_att_target_limit_deg = 3.0f;
-    store->ground_att_error_deadband_deg = 0.8f;
+    store->ground_att_kp_roll = 0.8f;
+    store->ground_att_kp_pitch = 0.8f;
+    store->ground_att_rate_limit_roll = 4.0f;
+    store->ground_att_rate_limit_pitch = 4.0f;
+    store->ground_att_target_limit_deg = 2.0f;
+    store->ground_att_error_deadband_deg = 0.2f;
     store->ground_att_trip_deg = 12.0f;
     store->ground_test_base_duty = 0.08f;
-    store->ground_test_max_extra_duty = 0.05f;
-    store->ground_test_motor_balance_limit = 0.08f;
+    store->ground_test_max_extra_duty = 0.03f;
+    store->ground_test_motor_balance_limit = 0.06f;
     store->ground_test_auto_disarm_ms = 15000u;
-    store->ground_test_ramp_duty_per_s = 0.30f;
+    store->ground_test_ramp_duty_per_s = 0.15f;
     store->liftoff_verify_base_duty = 0.10f;
     store->liftoff_verify_max_extra_duty = 0.04f;
     store->liftoff_verify_auto_disarm_ms = 2500u;

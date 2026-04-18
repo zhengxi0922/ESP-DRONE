@@ -105,6 +105,12 @@ python -m esp_drone_cli --serial COM4 attitude-ground-verify stop
 python -m esp_drone_cli --serial COM4 disarm
 ```
 
+One-command very small attitude ground verification:
+
+```powershell
+python -m esp_drone_cli --serial COM4 attitude-ground-round --target-deg 1.0 --base-duty 0.08 --auto-arm
+```
+
 Low-risk liftoff verification entry commands:
 
 ```powershell
