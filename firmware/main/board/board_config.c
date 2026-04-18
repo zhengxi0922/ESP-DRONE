@@ -11,6 +11,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+#define BATTERY_ADC_SAMPLE_COUNT 5u
+#define BATTERY_ADC_OUTLIER_DELTA_V 0.60f
+#define BATTERY_ADC_OUTLIER_STREAK_LIMIT 3u
+
 static adc_oneshot_unit_handle_t s_adc_handle;
 static adc_cali_handle_t s_adc_cali_handle;
 static SemaphoreHandle_t s_battery_adc_mutex;
@@ -19,6 +23,7 @@ static bool s_battery_last_nonzero_valid;
 static int s_battery_last_raw;
 static int s_battery_last_mv;
 static float s_battery_last_voltage;
+static uint8_t s_battery_outlier_streak;
 
 static const board_motor_config_t s_motor_configs[BOARD_MOTOR_COUNT] = {
     {
@@ -99,6 +104,31 @@ static esp_err_t board_battery_return_last_valid(int *out_raw, int *out_mv, floa
     return ESP_OK;
 }
 
+static void board_battery_sort_raw_samples(int raw_samples[BATTERY_ADC_SAMPLE_COUNT])
+{
+    for (uint32_t i = 1u; i < BATTERY_ADC_SAMPLE_COUNT; ++i) {
+        const int value = raw_samples[i];
+        uint32_t j = i;
+        while (j > 0u && raw_samples[j - 1u] > value) {
+            raw_samples[j] = raw_samples[j - 1u];
+            --j;
+        }
+        raw_samples[j] = value;
+    }
+}
+
+static bool board_battery_is_outlier(float voltage)
+{
+    if (!s_battery_last_nonzero_valid) {
+        return false;
+    }
+    float delta = voltage - s_battery_last_voltage;
+    if (delta < 0.0f) {
+        delta = -delta;
+    }
+    return delta > BATTERY_ADC_OUTLIER_DELTA_V;
+}
+
 const board_motor_config_t *board_get_motor_config(board_motor_id_t logical_id)
 {
     if ((unsigned)logical_id >= BOARD_MOTOR_COUNT) {
@@ -177,11 +207,15 @@ esp_err_t board_battery_read(int *out_raw, int *out_mv, float *out_voltage)
         goto fail;
     }
 
-    int raw = 0;
-    err = adc_oneshot_read(s_adc_handle, channel, &raw);
-    if (err != ESP_OK) {
-        goto fail;
+    int raw_samples[BATTERY_ADC_SAMPLE_COUNT] = {0};
+    for (uint32_t i = 0u; i < BATTERY_ADC_SAMPLE_COUNT; ++i) {
+        err = adc_oneshot_read(s_adc_handle, channel, &raw_samples[i]);
+        if (err != ESP_OK) {
+            goto fail;
+        }
     }
+    board_battery_sort_raw_samples(raw_samples);
+    const int raw = raw_samples[BATTERY_ADC_SAMPLE_COUNT / 2u];
 
     int mv = 0;
     if (s_adc_cali_handle != NULL) {
@@ -199,6 +233,17 @@ esp_err_t board_battery_read(int *out_raw, int *out_mv, float *out_voltage)
         goto done;
     }
 
+    if (board_battery_is_outlier(voltage)) {
+        if (s_battery_outlier_streak < BATTERY_ADC_OUTLIER_STREAK_LIMIT) {
+            ++s_battery_outlier_streak;
+        }
+        if (s_battery_outlier_streak < BATTERY_ADC_OUTLIER_STREAK_LIMIT) {
+            err = board_battery_return_last_valid(out_raw, out_mv, out_voltage);
+            goto done;
+        }
+    }
+
+    s_battery_outlier_streak = 0u;
     s_battery_last_nonzero_valid = true;
     s_battery_last_raw = raw;
     s_battery_last_mv = mv;

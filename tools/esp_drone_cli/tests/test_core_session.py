@@ -1515,6 +1515,10 @@ def test_firmware_telemetry_battery_read_does_not_emit_transient_zero():
 
     assert "s_battery_adc_mutex = xSemaphoreCreateMutex();" in board_config
     assert "xSemaphoreTake(s_battery_adc_mutex, portMAX_DELAY);" in board_config
+    assert "BATTERY_ADC_SAMPLE_COUNT 5u" in board_config
+    assert "board_battery_sort_raw_samples(raw_samples);" in board_config
+    assert "BATTERY_ADC_OUTLIER_DELTA_V" in board_config
+    assert "s_battery_outlier_streak" in board_config
     assert "board_battery_return_last_valid" in board_config
     assert "if (board_battery_read(&battery_raw, &battery_mv, &battery_v) == ESP_OK)" in app_main
     assert "last_battery_valid = true;" in app_main
