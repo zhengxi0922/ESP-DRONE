@@ -32,6 +32,7 @@ from esp_drone_cli.core.protocol.messages import CmdId, CommandError, ensure_com
 
 CONTROL_MODE_ATTITUDE_GROUND_TUNE = 6
 GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY = 1
+GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF = 2
 GROUND_VERIFY_SAFE_PARAMS = (
     ("telemetry_usb_hz", 2, 50),
     ("ground_att_kp_roll", 4, 0.8),
@@ -45,6 +46,20 @@ GROUND_VERIFY_SAFE_PARAMS = (
     ("ground_test_motor_balance_limit", 4, 0.06),
     ("ground_test_ramp_duty_per_s", 4, 0.15),
     ("ground_test_auto_disarm_ms", 2, 15000),
+)
+LIFTOFF_VERIFY_SAFE_PARAMS = (
+    ("telemetry_usb_hz", 2, 50),
+    ("ground_att_kp_roll", 4, 0.8),
+    ("ground_att_kp_pitch", 4, 0.8),
+    ("ground_att_rate_limit_roll", 4, 4.0),
+    ("ground_att_rate_limit_pitch", 4, 4.0),
+    ("ground_att_target_limit_deg", 4, 2.0),
+    ("ground_att_error_deadband_deg", 4, 0.2),
+    ("ground_test_motor_balance_limit", 4, 0.05),
+    ("liftoff_verify_max_extra_duty", 4, 0.03),
+    ("liftoff_verify_auto_disarm_ms", 2, 2300),
+    ("liftoff_verify_ramp_duty_per_s", 4, 0.08),
+    ("liftoff_verify_att_trip_deg", 4, 7.0),
 )
 
 
@@ -195,7 +210,7 @@ def _axis_motor_delta(sample: TelemetrySample, axis_name: str) -> float:
     raise ValueError(f"unsupported attitude verify axis {axis_name}")
 
 
-def _same_sign_ratio(samples: list[TelemetrySample], lhs, rhs, lhs_deadband: float, rhs_deadband: float) -> float:
+def _same_sign_stats(samples: list[TelemetrySample], lhs, rhs, lhs_deadband: float, rhs_deadband: float) -> tuple[int, int, float]:
     considered = 0
     matched = 0
     for sample in samples:
@@ -207,8 +222,12 @@ def _same_sign_ratio(samples: list[TelemetrySample], lhs, rhs, lhs_deadband: flo
         if left * right > 0.0:
             matched += 1
     if considered == 0:
-        return 0.0
-    return matched / considered
+        return 0, 0, 0.0
+    return considered, matched, matched / considered
+
+
+def _same_sign_ratio(samples: list[TelemetrySample], lhs, rhs, lhs_deadband: float, rhs_deadband: float) -> float:
+    return _same_sign_stats(samples, lhs, rhs, lhs_deadband, rhs_deadband)[2]
 
 
 def analyze_attitude_ground_verify_samples(samples: list[TelemetrySample], target_deg: float) -> dict[str, object]:
@@ -350,6 +369,182 @@ def format_attitude_ground_verify_summary(result: dict[str, object]) -> list[str
             f"pid_p={segment['pid_p_mean']:.6f}({signs['pid_p']}) "
             f"pid_out={segment['pid_out_mean']:.6f}({signs['pid_out']}) "
             f"motor_delta={segment['motor_delta_mean']:.6f}({signs['motor_delta']})"
+        )
+    return lines
+
+
+def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: float) -> dict[str, object]:
+    active = [
+        sample for sample in samples
+        if sample.control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE
+        and sample.control_submode == GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF
+    ]
+    terminal_trip = 0
+    for sample in reversed(samples):
+        if sample.ground_trip_reason != 0:
+            terminal_trip = int(sample.ground_trip_reason)
+            break
+
+    result: dict[str, object] = {
+        "samples": len(samples),
+        "active_samples": len(active),
+        "active_duration_s": 0.0,
+        "validity_ok": False,
+        "safety_ok": False,
+        "terminal_trip_reason": terminal_trip,
+        "terminal_trip_ok": terminal_trip in {0, 6, 9},
+        "unified_path_ok": False,
+        "chain_ok": False,
+        "yaw_ok": False,
+        "tilt_ok": False,
+        "probable_liftoff": False,
+        "base_duty_target": base_duty,
+        "base_duty_max": max((sample.base_duty_active for sample in active), default=0.0),
+        "motor_max": max(
+            (max(sample.motor1, sample.motor2, sample.motor3, sample.motor4) for sample in active),
+            default=0.0,
+        ),
+        "outer_clamp_max": max((sample.outer_loop_clamp_flag for sample in active), default=0),
+        "inner_clamp_max": max((sample.inner_loop_clamp_flag for sample in active), default=0),
+        "inner_motor_clamp_max": max((sample.inner_loop_clamp_flag & 0x01 for sample in active), default=0),
+        "inner_integrator_freeze_count": sum(
+            1 for sample in active if (sample.inner_loop_clamp_flag & 0x02) != 0
+        ),
+        "motor_saturation_max": max((sample.motor_saturation_flag for sample in active), default=0),
+        "max_abs_roll_deg": max((abs(sample.angle_measured_roll) for sample in active), default=0.0),
+        "max_abs_pitch_deg": max((abs(sample.angle_measured_pitch) for sample in active), default=0.0),
+        "max_abs_yaw_rate_dps": max((abs(sample.rate_meas_yaw_filtered) for sample in active), default=0.0),
+        "mean_abs_yaw_rate_dps": (
+            sum(abs(sample.rate_meas_yaw_filtered) for sample in active) / len(active)
+            if active else 0.0
+        ),
+        "baro_altitude_delta_m": 0.0,
+        "axis": {},
+    }
+    if not active:
+        return result
+
+    result["active_duration_s"] = max(0.0, (active[-1].timestamp_us - active[0].timestamp_us) / 1000000.0)
+    valid_baro = [sample.baro_altitude_m for sample in active if sample.baro_valid]
+    if valid_baro:
+        result["baro_altitude_delta_m"] = max(valid_baro) - min(valid_baro)
+
+    result["validity_ok"] = all(
+        sample.kalman_valid and sample.attitude_valid and sample.ground_ref_valid and sample.battery_valid
+        for sample in active
+    )
+    result["safety_ok"] = all(
+        sample.failsafe_reason == 0 and sample.ground_trip_reason == 0 for sample in active
+    )
+    result["unified_path_ok"] = all(
+        abs(sample.rate_setpoint_roll - sample.outer_loop_rate_target_roll) <= 0.05 and
+        abs(sample.rate_setpoint_pitch - sample.outer_loop_rate_target_pitch) <= 0.05 and
+        abs(sample.rate_setpoint_yaw - sample.outer_loop_rate_target_yaw) <= 0.05
+        for sample in active
+    )
+    result["yaw_ok"] = (
+        all(
+            abs(sample.angle_target_yaw) <= 0.01 and
+            abs(sample.outer_loop_rate_target_yaw) <= 0.05 and
+            abs(sample.rate_setpoint_yaw) <= 0.05
+            for sample in active
+        ) and
+        float(result["max_abs_yaw_rate_dps"]) <= 80.0 and
+        float(result["mean_abs_yaw_rate_dps"]) <= 35.0
+    )
+    result["tilt_ok"] = (
+        float(result["max_abs_roll_deg"]) <= 6.5 and
+        float(result["max_abs_pitch_deg"]) <= 6.5
+    )
+    result["probable_liftoff"] = bool(float(result["baro_altitude_delta_m"]) >= 0.08)
+
+    axis_results: dict[str, dict[str, object]] = {}
+    for axis_name in ("roll", "pitch"):
+        outer_count, outer_match, outer_ratio = _same_sign_stats(
+            active,
+            f"angle_error_{axis_name}",
+            f"outer_loop_rate_target_{axis_name}",
+            0.25,
+            0.05,
+        )
+        rate_count, rate_match, rate_ratio = _same_sign_stats(
+            active,
+            f"rate_err_{axis_name}",
+            f"rate_pid_p_{axis_name}",
+            0.05,
+            1e-6,
+        )
+        mixer_count, mixer_match, mixer_ratio = _same_sign_stats(
+            active,
+            lambda sample, axis=axis_name: getattr(sample, f"pid_out_{axis}"),
+            lambda sample, axis=axis_name: _axis_motor_delta(sample, axis),
+            1e-6,
+            1e-6,
+        )
+        outer_ok = outer_count == 0 or outer_ratio >= 0.90
+        rate_ok = rate_count == 0 or rate_ratio >= 0.90
+        mixer_ok = mixer_count == 0 or mixer_ratio >= 0.95
+        axis_results[axis_name] = {
+            "outer_count": outer_count,
+            "outer_match": outer_match,
+            "outer_ratio": outer_ratio,
+            "rate_pid_count": rate_count,
+            "rate_pid_match": rate_match,
+            "rate_pid_ratio": rate_ratio,
+            "mixer_count": mixer_count,
+            "mixer_match": mixer_match,
+            "mixer_ratio": mixer_ratio,
+            "axis_ok": outer_ok and rate_ok and mixer_ok,
+        }
+    result["axis"] = axis_results
+    result["chain_ok"] = all(axis["axis_ok"] for axis in axis_results.values())
+    result["passed"] = bool(
+        result["validity_ok"] and
+        result["safety_ok"] and
+        result["terminal_trip_ok"] and
+        result["unified_path_ok"] and
+        result["chain_ok"] and
+        result["yaw_ok"] and
+        result["tilt_ok"] and
+        int(result["outer_clamp_max"]) == 0 and
+        int(result["inner_motor_clamp_max"]) == 0 and
+        int(result["motor_saturation_max"]) == 0
+    )
+    return result
+
+
+def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
+    lines = [
+        f"samples={result['samples']} active_samples={result['active_samples']} "
+        f"active_duration_s={result['active_duration_s']:.3f}",
+        (
+            f"validity_ok={result['validity_ok']} safety_ok={result['safety_ok']} "
+            f"terminal_trip={result['terminal_trip_reason']} terminal_trip_ok={result['terminal_trip_ok']} "
+            f"unified_path_ok={result['unified_path_ok']} chain_ok={result['chain_ok']} "
+            f"yaw_ok={result['yaw_ok']} tilt_ok={result['tilt_ok']} passed={result.get('passed', False)}"
+        ),
+        (
+            f"base_duty_max={result['base_duty_max']:.4f}/{result['base_duty_target']:.4f} "
+            f"motor_max={result['motor_max']:.4f} outer_clamp_max={result['outer_clamp_max']} "
+            f"inner_motor_clamp_max={result['inner_motor_clamp_max']} "
+            f"inner_integrator_freeze_count={result['inner_integrator_freeze_count']} "
+            f"motor_saturation_max={result['motor_saturation_max']}"
+        ),
+        (
+            f"max_abs_roll_deg={result['max_abs_roll_deg']:.3f} "
+            f"max_abs_pitch_deg={result['max_abs_pitch_deg']:.3f} "
+            f"max_abs_yaw_rate_dps={result['max_abs_yaw_rate_dps']:.3f} "
+            f"mean_abs_yaw_rate_dps={result['mean_abs_yaw_rate_dps']:.3f} "
+            f"baro_altitude_delta_m={result['baro_altitude_delta_m']:.3f} "
+            f"probable_liftoff={result['probable_liftoff']}"
+        ),
+    ]
+    for axis_name, axis in dict(result.get("axis", {})).items():
+        lines.append(
+            f"{axis_name}: axis_ok={axis['axis_ok']} "
+            f"outer_ratio={axis['outer_ratio']:.2f}({axis['outer_match']}/{axis['outer_count']}) "
+            f"rate_pid_ratio={axis['rate_pid_ratio']:.2f}({axis['rate_pid_match']}/{axis['rate_pid_count']}) "
+            f"mixer_ratio={axis['mixer_ratio']:.2f}({axis['mixer_match']}/{axis['mixer_count']})"
         )
     return lines
 
@@ -1149,6 +1344,102 @@ def cmd_liftoff_verify(session: DeviceSession, args) -> int:
     return 0
 
 
+def cmd_liftoff_verify_round(session: DeviceSession, args) -> int:
+    require_low_risk_liftoff_capability(session)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+    path = output_dir / f"{stamp}_liftoff_verify_round.csv"
+    samples: list[TelemetrySample] = []
+    result: dict[str, object] | None = None
+    round_error: Exception | None = None
+
+    base_duty = float(args.base_duty)
+    duration_s = float(args.duration_s)
+    if base_duty < 0.0 or base_duty > 0.12:
+        raise ValueError("first liftoff verify base duty must be <= 0.12")
+    if duration_s <= 0.0 or duration_s > 2.2:
+        raise ValueError("first liftoff verify duration must be >0 and <=2.2 seconds")
+
+    if not args.no_apply_safe_params:
+        for name, type_id, value in LIFTOFF_VERIFY_SAFE_PARAMS:
+            session.set_param(name, type_id, value)
+        session.set_param("liftoff_verify_base_duty", 4, base_duty)
+
+    def on_telemetry(sample: TelemetrySample) -> None:
+        samples.append(sample)
+
+    token = session.subscribe_telemetry(on_telemetry)
+    started_stream = False
+    started_log = False
+    started_liftoff = False
+    auto_arm = not args.no_auto_arm
+    try:
+        session.start_csv_log(path)
+        started_log = True
+        time.sleep(args.settle_s)
+
+        ensure_command_ok(CmdId.GROUND_CAPTURE_REF, session.ground_capture_ref())
+        if auto_arm:
+            ensure_command_ok(CmdId.ARM, session.arm())
+            time.sleep(0.35)
+
+        ensure_command_ok(CmdId.LIFTOFF_VERIFY_START, session.liftoff_verify_start(base_duty=base_duty))
+        started_liftoff = True
+        session.start_stream()
+        started_stream = True
+
+        deadline = time.monotonic() + duration_s
+        saw_active = False
+        while time.monotonic() < deadline:
+            if samples:
+                latest = samples[-1]
+                active = (
+                    latest.control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE and
+                    latest.control_submode == GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF
+                )
+                saw_active = saw_active or active
+                if saw_active and not active:
+                    break
+            time.sleep(0.03)
+
+        result = analyze_liftoff_verify_samples(samples, base_duty)
+    except Exception as exc:
+        round_error = exc
+    finally:
+        if started_liftoff:
+            try:
+                session.liftoff_verify_stop()
+            except Exception:
+                pass
+        if auto_arm:
+            try:
+                session.disarm()
+            except Exception:
+                pass
+        if started_stream:
+            try:
+                session.stop_stream()
+            except Exception:
+                pass
+        if started_log:
+            session.stop_csv_log()
+        session.unsubscribe(token)
+
+    if result is None:
+        result = analyze_liftoff_verify_samples(samples, base_duty)
+    if round_error is not None:
+        result["passed"] = False
+        result["round_error"] = str(round_error)
+
+    print(f"liftoff_verify_round_log={path}")
+    if round_error is not None:
+        print(f"round_error={round_error}")
+    for line in format_liftoff_verify_summary(result):
+        print(line)
+    return 0 if result.get("passed", False) else 2
+
+
 def cmd_udp_manual(session: DeviceSession, args) -> int:
     """Run experimental UDP manual-control commands."""
 
@@ -1605,6 +1896,18 @@ def build_parser() -> argparse.ArgumentParser:
     liftoff_verify_start_p.add_argument("--base-duty", type=float)
     liftoff_verify_sub.add_parser("stop")
 
+    liftoff_round_p = sub.add_parser(
+        "liftoff-round",
+        help="run one very short low-risk liftoff verification round and record CSV",
+        description="Capture a flat-ground reference, arm, run one conservative low-risk liftoff verify attempt, record telemetry, stop, and print safety/path checks. This is not hover tuning.",
+    )
+    liftoff_round_p.add_argument("--base-duty", type=float, default=0.10)
+    liftoff_round_p.add_argument("--duration-s", type=float, default=2.0)
+    liftoff_round_p.add_argument("--settle-s", type=float, default=1.0)
+    liftoff_round_p.add_argument("--output-dir", default="logs")
+    liftoff_round_p.add_argument("--no-auto-arm", action="store_true")
+    liftoff_round_p.add_argument("--no-apply-safe-params", action="store_true")
+
     udp_manual_p = sub.add_parser(
         "udp-manual",
         help="experimental UDP manual control; not free-flight ready",
@@ -1735,6 +2038,7 @@ def main(argv: list[str] | None = None) -> int:
             "attitude-ground-log": cmd_attitude_ground_log,
             "attitude-ground-round": cmd_attitude_ground_verify_round,
             "liftoff-verify": cmd_liftoff_verify,
+            "liftoff-round": cmd_liftoff_verify_round,
             "udp-manual": cmd_udp_manual,
             "calib": cmd_calib,
             "axis-bench": cmd_axis_bench,

@@ -121,6 +121,12 @@ python -m esp_drone_cli --serial COM4 liftoff-verify stop
 python -m esp_drone_cli --serial COM4 disarm
 ```
 
+One-command first low-risk liftoff verification round:
+
+```powershell
+python -m esp_drone_cli --serial COM4 liftoff-round --base-duty 0.10 --duration-s 2.0
+```
+
 ## Rate-Status Output
 
 `rate-status roll` prints explicit roll bench fields:

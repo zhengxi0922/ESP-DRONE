@@ -24,7 +24,11 @@ from pathlib import Path
 import pytest
 
 from esp_drone_cli.core import DeviceSession
-from esp_drone_cli.cli.main import analyze_attitude_ground_verify_samples, format_rate_status_line
+from esp_drone_cli.cli.main import (
+    analyze_attitude_ground_verify_samples,
+    analyze_liftoff_verify_samples,
+    format_rate_status_line,
+)
 from esp_drone_cli.core.models import (
     CMD_REQ_STRUCT,
     CapabilityError,
@@ -1114,6 +1118,67 @@ def test_attitude_ground_verify_analysis_accepts_rate_overshoot_correction():
     assert result["passed"] is True
 
 
+def test_liftoff_verify_analysis_accepts_conservative_closed_loop_attempt():
+    samples = []
+    for index in range(8):
+        sample = TelemetrySample.from_payload(build_telemetry_payload_v5())
+        sample.timestamp_us = 1_000_000 + index * 20_000
+        sample.control_mode = 6
+        sample.control_submode = 2
+        sample.kalman_valid = 1
+        sample.attitude_valid = 1
+        sample.ground_ref_valid = 1
+        sample.battery_valid = 1
+        sample.failsafe_reason = 0
+        sample.ground_trip_reason = 0
+        sample.outer_loop_clamp_flag = 0
+        sample.inner_loop_clamp_flag = 2
+        sample.motor_saturation_flag = 0
+        sample.base_duty_active = 0.10
+        sample.angle_target_roll = 0.0
+        sample.angle_target_pitch = 0.0
+        sample.angle_target_yaw = 0.0
+        sample.angle_measured_roll = 1.0
+        sample.angle_measured_pitch = -1.0
+        sample.angle_error_roll = -1.0
+        sample.angle_error_pitch = 1.0
+        sample.angle_error_yaw = 0.0
+        sample.outer_loop_rate_target_roll = -0.8
+        sample.outer_loop_rate_target_pitch = 0.8
+        sample.outer_loop_rate_target_yaw = 0.0
+        sample.rate_setpoint_roll = -0.8
+        sample.rate_setpoint_pitch = 0.8
+        sample.rate_setpoint_yaw = 0.0
+        sample.rate_err_roll = -0.6
+        sample.rate_err_pitch = 0.6
+        sample.rate_err_yaw = 0.0
+        sample.rate_pid_p_roll = -0.00042
+        sample.rate_pid_p_pitch = 0.00042
+        sample.pid_out_roll = -0.00042
+        sample.pid_out_pitch = 0.00042
+        sample.pid_out_yaw = 0.0
+        sample.motor1 = 0.10 - 0.00042 - 0.00042
+        sample.motor2 = 0.10 + 0.00042 - 0.00042
+        sample.motor3 = 0.10 + 0.00042 + 0.00042
+        sample.motor4 = 0.10 - 0.00042 + 0.00042
+        sample.rate_meas_yaw_filtered = 2.0
+        sample.baro_valid = 1
+        sample.baro_altitude_m = 0.02 * index
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.10)
+
+    assert result["validity_ok"] is True
+    assert result["safety_ok"] is True
+    assert result["unified_path_ok"] is True
+    assert result["chain_ok"] is True
+    assert result["yaw_ok"] is True
+    assert result["tilt_ok"] is True
+    assert result["inner_motor_clamp_max"] == 0
+    assert result["probable_liftoff"] is True
+    assert result["passed"] is True
+
+
 def test_gui_startup_without_device_or_missing_pyqt5(monkeypatch):
     if importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None:
         from esp_drone_cli import gui_main
@@ -1649,6 +1714,13 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert liftoff_args.action == "start"
     assert liftoff_args.base_duty == pytest.approx(0.10)
 
+    liftoff_round_args = build_parser().parse_args(
+        ["--serial", "COM7", "liftoff-round", "--base-duty", "0.10", "--duration-s", "2.0"]
+    )
+    assert liftoff_round_args.command == "liftoff-round"
+    assert liftoff_round_args.base_duty == pytest.approx(0.10)
+    assert liftoff_round_args.duration_s == pytest.approx(2.0)
+
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
     real_import = builtins.__import__
@@ -1773,6 +1845,39 @@ def test_cli_attitude_ground_and_liftoff_commands_use_device_session(monkeypatch
     assert ("liftoff_verify_start", (0.10,), {}) in session.calls
     assert ("liftoff_verify_stop", (), {}) in session.calls
     assert any(name == "dump_csv" and args[0].name.endswith("_attitude_ground_verify_log.csv") for name, args, _ in session.calls)
+
+
+def test_cli_liftoff_round_records_and_stops_with_fake_session(monkeypatch, tmp_path: Path):
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+
+    rc = cli_main.main(
+        [
+            "--serial",
+            "COM7",
+            "liftoff-round",
+            "--base-duty",
+            "0.10",
+            "--duration-s",
+            "0.01",
+            "--settle-s",
+            "0",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 2
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "ground_capture_ref" in call_names
+    assert "arm" in call_names
+    assert ("liftoff_verify_start", (0.10,), {}) in session.calls
+    assert "start_stream" in call_names
+    assert "liftoff_verify_stop" in call_names
+    assert "disarm" in call_names
+    assert any(name == "start_csv_log" and args[0].name.endswith("_liftoff_verify_round.csv") for name, args, _ in session.calls)
 
 
 def test_cli_attitude_start_old_firmware_fails_before_param_write(monkeypatch, capsys):
