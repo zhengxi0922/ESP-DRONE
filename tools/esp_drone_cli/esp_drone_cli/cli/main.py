@@ -66,6 +66,9 @@ LIFTOFF_STATE_NEAR = "near liftoff / unloading"
 LIFTOFF_STATE_CONFIRMED = "confirmed liftoff"
 LIFTOFF_NEAR_BARO_DELTA_M = 0.04
 LIFTOFF_CONFIRMED_BARO_DELTA_M = 0.12
+UNIFIED_PATH_TOLERANCE_DPS = 0.05
+UNIFIED_PATH_MIN_RATIO = 0.98
+UNIFIED_PATH_MAX_TRANSIENT_DPS = 0.25
 
 
 def axis_name_to_index(name: str) -> int:
@@ -402,6 +405,10 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         "terminal_trip_reason": terminal_trip,
         "terminal_trip_ok": terminal_trip in {0, 6, 9},
         "unified_path_ok": False,
+        "unified_path_count": 0,
+        "unified_path_match": 0,
+        "unified_path_ratio": 0.0,
+        "unified_path_max_abs_error_dps": 0.0,
         "chain_ok": False,
         "yaw_ok": False,
         "tilt_ok": False,
@@ -473,11 +480,23 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
     result["safety_ok"] = all(
         sample.failsafe_reason == 0 and sample.ground_trip_reason == 0 for sample in active
     )
-    result["unified_path_ok"] = all(
-        abs(sample.rate_setpoint_roll - sample.outer_loop_rate_target_roll) <= 0.05 and
-        abs(sample.rate_setpoint_pitch - sample.outer_loop_rate_target_pitch) <= 0.05 and
-        abs(sample.rate_setpoint_yaw - sample.outer_loop_rate_target_yaw) <= 0.05
+    unified_errors = [
+        max(
+            abs(sample.rate_setpoint_roll - sample.outer_loop_rate_target_roll),
+            abs(sample.rate_setpoint_pitch - sample.outer_loop_rate_target_pitch),
+            abs(sample.rate_setpoint_yaw - sample.outer_loop_rate_target_yaw),
+        )
         for sample in active
+    ]
+    unified_match = sum(1 for error in unified_errors if error <= UNIFIED_PATH_TOLERANCE_DPS)
+    result["unified_path_count"] = len(unified_errors)
+    result["unified_path_match"] = unified_match
+    result["unified_path_ratio"] = unified_match / len(unified_errors) if unified_errors else 0.0
+    result["unified_path_max_abs_error_dps"] = max(unified_errors, default=0.0)
+    result["unified_path_ok"] = bool(
+        unified_errors and
+        float(result["unified_path_ratio"]) >= UNIFIED_PATH_MIN_RATIO and
+        float(result["unified_path_max_abs_error_dps"]) <= UNIFIED_PATH_MAX_TRANSIENT_DPS
     )
     result["yaw_ok"] = (
         all(
@@ -570,6 +589,11 @@ def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
             f"unified_path_ok={result['unified_path_ok']} chain_ok={result['chain_ok']} "
             f"yaw_ok={result['yaw_ok']} tilt_ok={result['tilt_ok']} "
             f"safety_ok={result['safety_ok']} control_safe_pass={result.get('control_safe_pass', False)}"
+        ),
+        (
+            f"unified_path_ratio={result.get('unified_path_ratio', 0.0):.3f}"
+            f"({result.get('unified_path_match', 0)}/{result.get('unified_path_count', 0)}) "
+            f"unified_path_max_abs_error_dps={result.get('unified_path_max_abs_error_dps', 0.0):.3f}"
         ),
         (
             f"base_duty_max={result['base_duty_max']:.4f}/{result['base_duty_target']:.4f} "

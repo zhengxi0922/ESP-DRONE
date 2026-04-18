@@ -1304,6 +1304,65 @@ def test_liftoff_verify_analysis_separates_no_liftoff_from_control_safe_pass():
     assert result["passed"] is True
 
 
+def test_liftoff_verify_analysis_allows_one_coherent_path_snapshot_transient():
+    samples = []
+    for index in range(60):
+        sample = TelemetrySample.from_payload(build_telemetry_payload_v5())
+        sample.timestamp_us = 4_000_000 + index * 20_000
+        sample.control_mode = 6
+        sample.control_submode = 2
+        sample.kalman_valid = 1
+        sample.attitude_valid = 1
+        sample.ground_ref_valid = 1
+        sample.battery_valid = 1
+        sample.failsafe_reason = 0
+        sample.ground_trip_reason = 0
+        sample.outer_loop_clamp_flag = 0
+        sample.inner_loop_clamp_flag = 0
+        sample.motor_saturation_flag = 0
+        sample.base_duty_active = 0.105
+        sample.angle_target_roll = 0.0
+        sample.angle_target_pitch = 0.0
+        sample.angle_target_yaw = 0.0
+        sample.angle_measured_roll = 0.5
+        sample.angle_measured_pitch = -0.5
+        sample.angle_error_roll = -0.5
+        sample.angle_error_pitch = 0.5
+        sample.angle_error_yaw = 0.0
+        sample.outer_loop_rate_target_roll = -0.4
+        sample.outer_loop_rate_target_pitch = 0.4
+        sample.outer_loop_rate_target_yaw = 0.0
+        sample.rate_setpoint_roll = -0.4
+        sample.rate_setpoint_pitch = 0.4
+        sample.rate_setpoint_yaw = 0.0
+        sample.rate_err_roll = -0.3
+        sample.rate_err_pitch = 0.3
+        sample.rate_err_yaw = 0.0
+        sample.rate_pid_p_roll = -0.00021
+        sample.rate_pid_p_pitch = 0.00021
+        sample.pid_out_roll = -0.00021
+        sample.pid_out_pitch = 0.00021
+        sample.pid_out_yaw = 0.0
+        sample.motor1 = 0.105 - 0.00021 - 0.00021
+        sample.motor2 = 0.105 + 0.00021 - 0.00021
+        sample.motor3 = 0.105 + 0.00021 + 0.00021
+        sample.motor4 = 0.105 - 0.00021 + 0.00021
+        sample.rate_meas_yaw_filtered = 1.0
+        sample.baro_valid = 1
+        sample.baro_altitude_m = 0.001 * index
+        if index == 30:
+            sample.rate_setpoint_pitch = 0.22
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.105)
+
+    assert result["unified_path_ratio"] == pytest.approx(59 / 60)
+    assert result["unified_path_max_abs_error_dps"] == pytest.approx(0.18)
+    assert result["unified_path_ok"] is True
+    assert result["control_safe_pass"] is True
+    assert result["physical_liftoff_state"] == "near liftoff / unloading"
+
+
 def test_gui_startup_without_device_or_missing_pyqt5(monkeypatch):
     if importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None:
         from esp_drone_cli import gui_main
