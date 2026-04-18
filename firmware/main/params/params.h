@@ -39,7 +39,7 @@
  *
  * @note 参数布局发生不兼容变化时应递增。
  */
-#define PARAMS_SCHEMA_VERSION 6u
+#define PARAMS_SCHEMA_VERSION 7u
 
 /**
  * @brief 参数值类型编号。
@@ -148,6 +148,7 @@ typedef struct {
     float kalman_q_angle;
     float kalman_q_bias;
     float kalman_r_measure;
+    bool ground_tune_enable_attitude_outer;
     bool ground_tune_use_kalman_attitude;
     bool ground_tune_use_filtered_rate;
 
@@ -161,6 +162,7 @@ typedef struct {
     float ground_test_max_extra_duty;
     float ground_test_motor_balance_limit;
     uint32_t ground_test_auto_disarm_ms;
+    float ground_test_ramp_duty_per_s;
 } params_store_t;
 
 /**

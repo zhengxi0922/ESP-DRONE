@@ -514,7 +514,9 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         if (!estimator_get_latest(&estimator_state) || estimator_state.timestamp_us != sample.timestamp_us) {
             estimator_update_from_imu(&sample, &estimator_state);
         }
-        if (params_get()->ground_tune_use_kalman_attitude && !estimator_state.kalman_valid) {
+        if (params_get()->ground_tune_enable_attitude_outer &&
+            params_get()->ground_tune_use_kalman_attitude &&
+            !estimator_state.kalman_valid) {
             ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
             console_send_cmd_resp(req.cmd_id, CMD_STATUS_IMU_NOT_READY);
             break;
@@ -844,6 +846,18 @@ void console_send_telemetry(const imu_sample_t *imu_sample,
     }
     const bool ground_active = control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE;
     const bool reference_valid = ground_active ? ground_state.ref_valid : hang_state.ref_valid;
+    axis3f_t rate_measured_for_error = estimator_state.filtered_rate_rpy_dps;
+    if (control_mode == CONTROL_MODE_RATE_TEST ||
+        control_mode == CONTROL_MODE_ATTITUDE_HANG_TEST ||
+        control_mode == CONTROL_MODE_UDP_MANUAL ||
+        (ground_active && !params_get()->ground_tune_use_filtered_rate)) {
+        rate_measured_for_error = estimator_state.raw_rate_rpy_dps;
+    }
+    const axis3f_t rate_error_observed = {
+        .roll = rate_setpoint_request.roll - rate_measured_for_error.roll,
+        .pitch = rate_setpoint_request.pitch - rate_measured_for_error.pitch,
+        .yaw = rate_setpoint_request.yaw - rate_measured_for_error.yaw,
+    };
 
     const console_telemetry_sample_t sample = {
         .timestamp_us = imu_sample->timestamp_us,
@@ -925,9 +939,9 @@ void console_send_telemetry(const imu_sample_t *imu_sample,
         .rate_meas_roll_filtered = estimator_state.filtered_rate_rpy_dps.roll,
         .rate_meas_pitch_filtered = estimator_state.filtered_rate_rpy_dps.pitch,
         .rate_meas_yaw_filtered = estimator_state.filtered_rate_rpy_dps.yaw,
-        .rate_err_roll = rate_status.error.roll,
-        .rate_err_pitch = rate_status.error.pitch,
-        .rate_err_yaw = rate_status.error.yaw,
+        .rate_err_roll = rate_error_observed.roll,
+        .rate_err_pitch = rate_error_observed.pitch,
+        .rate_err_yaw = rate_error_observed.yaw,
         .sample_seq = sample_seq,
         .attitude_valid = estimator_state.attitude_valid ? 1u : 0u,
         .kalman_valid = estimator_state.kalman_valid ? 1u : 0u,
@@ -936,7 +950,7 @@ void console_send_telemetry(const imu_sample_t *imu_sample,
         .ground_ref_valid = ground_state.ref_valid ? 1u : 0u,
         .reference_valid = reference_valid ? 1u : 0u,
         .ground_trip_reason = (uint8_t)ground_state.trip_reason,
-        .telemetry_reserved = 0u,
+        .battery_valid = (battery_raw > 0 && battery_voltage > 0.1f) ? 1u : 0u,
     };
 
     console_send_frame(MSG_TELEMETRY_SAMPLE, &sample, sizeof(sample));

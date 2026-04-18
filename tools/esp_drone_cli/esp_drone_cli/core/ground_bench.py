@@ -74,7 +74,8 @@ GROUND_PARAM_NAMES = [
     "ground_test_motor_balance_limit", "ground_test_auto_disarm_ms",
     "gyro_lpf_hz", "accel_lpf_hz", "rate_lpf_hz",
     "kalman_enable", "kalman_q_angle", "kalman_q_bias", "kalman_r_measure",
-    "ground_tune_use_kalman_attitude", "ground_tune_use_filtered_rate",
+    "ground_tune_enable_attitude_outer", "ground_tune_use_kalman_attitude", "ground_tune_use_filtered_rate",
+    "ground_test_ramp_duty_per_s",
 ]
 
 

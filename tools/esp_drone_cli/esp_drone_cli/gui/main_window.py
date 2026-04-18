@@ -2492,8 +2492,8 @@ class MainWindow(QMainWindow):
         self.ground_capture_button = QPushButton("Capture Ground Ref")
         self.ground_start_button = QPushButton("Ground Test Start")
         self.ground_stop_button = QPushButton("Ground Test Stop")
-        self.ground_record_5_button = QPushButton("Record 5s")
-        self.ground_record_10_button = QPushButton("Record 10s")
+        self.ground_record_5_button = QPushButton("Ground Log 5s")
+        self.ground_record_10_button = QPushButton("Ground Log 10s")
         self.ground_bench_roll_button = QPushButton("Run Ground Bench Roll")
         self.ground_bench_pitch_button = QPushButton("Run Ground Bench Pitch")
         self.ground_bench_yaw_button = QPushButton("Run Ground Bench Yaw")
@@ -2516,6 +2516,8 @@ class MainWindow(QMainWindow):
         ground_layout.addWidget(self.ground_kalman_status_label, 5, 3)
         ground_layout.addWidget(QLabel("Trip"), 6, 0)
         ground_layout.addWidget(self.ground_trip_status_label, 6, 1, 1, 3)
+        self.ground_outer_checkbox = QCheckBox("Enable attitude outer loop")
+        ground_layout.addWidget(self.ground_outer_checkbox, 7, 0, 1, 4)
         self.ground_param_spins: dict[str, QDoubleSpinBox] = {}
 
         def add_ground_param(row: int, col: int, name: str, label: str, minimum: float, maximum: float, decimals: int, step: float, value: float) -> None:
@@ -2528,7 +2530,7 @@ class MainWindow(QMainWindow):
             ground_layout.addWidget(QLabel(label), row, col)
             ground_layout.addWidget(spin, row, col + 1)
 
-        ground_row = 7
+        ground_row = 8
         ground_params = [
             ("rate_kp_roll", "rate_kp_roll", 0.0, 0.05, 5, 0.0005, 0.0026),
             ("rate_ki_roll", "rate_ki_roll", 0.0, 0.02, 5, 0.0001, 0.0),
@@ -2539,6 +2541,8 @@ class MainWindow(QMainWindow):
             ("rate_kp_yaw", "rate_kp_yaw", 0.0, 0.05, 5, 0.0005, 0.0026),
             ("rate_ki_yaw", "rate_ki_yaw", 0.0, 0.02, 5, 0.0001, 0.0),
             ("rate_kd_yaw", "rate_kd_yaw", 0.0, 0.01, 5, 0.0001, 0.0),
+            ("rate_integral_limit", "rate_integral_limit", 0.0, 300.0, 1, 1.0, 100.0),
+            ("rate_output_limit", "rate_output_limit", 0.0, 0.35, 3, 0.01, 0.20),
             ("ground_att_kp_roll", "ground_att_kp_roll", 0.0, 10.0, 2, 0.1, 1.2),
             ("ground_att_kp_pitch", "ground_att_kp_pitch", 0.0, 10.0, 2, 0.1, 1.2),
             ("ground_att_rate_limit_roll", "ground_att_rate_limit_roll", 0.0, 60.0, 1, 1.0, 12.0),
@@ -2546,6 +2550,9 @@ class MainWindow(QMainWindow):
             ("ground_att_error_deadband_deg", "ground_deadband", 0.0, 5.0, 1, 0.1, 0.8),
             ("ground_att_trip_deg", "ground_trip", 5.0, 30.0, 1, 1.0, 12.0),
             ("ground_test_base_duty", "ground_base_duty", 0.0, 1.0, 3, 0.01, 0.08),
+            ("ground_test_max_extra_duty", "ground_max_extra_duty", 0.0, 0.20, 3, 0.01, 0.05),
+            ("ground_test_motor_balance_limit", "ground_motor_balance_limit", 0.0, 0.30, 3, 0.01, 0.08),
+            ("ground_test_ramp_duty_per_s", "ground_ramp_duty_per_s", 0.01, 2.0, 2, 0.05, 0.30),
             ("gyro_lpf_hz", "gyro_lpf_hz", 0.0, 250.0, 1, 5.0, 40.0),
             ("accel_lpf_hz", "accel_lpf_hz", 0.0, 120.0, 1, 5.0, 20.0),
             ("rate_lpf_hz", "rate_lpf_hz", 0.0, 250.0, 1, 5.0, 30.0),
@@ -3042,8 +3049,8 @@ class MainWindow(QMainWindow):
         self.ground_capture_button.setText("Capture Ground Ref")
         self.ground_start_button.setText("Ground Test Start")
         self.ground_stop_button.setText("Ground Test Stop")
-        self.ground_record_5_button.setText("Record 5s")
-        self.ground_record_10_button.setText("Record 10s")
+        self.ground_record_5_button.setText("Ground Log 5s")
+        self.ground_record_10_button.setText("Ground Log 10s")
         self.ground_bench_roll_button.setText("Run Ground Bench Roll")
         self.ground_bench_pitch_button.setText("Run Ground Bench Pitch")
         self.ground_bench_yaw_button.setText("Run Ground Bench Yaw")
@@ -3472,6 +3479,10 @@ class MainWindow(QMainWindow):
         if not getattr(self, "_params", None) or not hasattr(self, "ground_param_spins"):
             return
         param_map = {item.name: item.value for item in self._params}
+        if hasattr(self, "ground_outer_checkbox") and "ground_tune_enable_attitude_outer" in param_map:
+            self.ground_outer_checkbox.blockSignals(True)
+            self.ground_outer_checkbox.setChecked(bool(param_map["ground_tune_enable_attitude_outer"]))
+            self.ground_outer_checkbox.blockSignals(False)
         for name, spin in self.ground_param_spins.items():
             if name not in param_map:
                 continue
@@ -3480,6 +3491,8 @@ class MainWindow(QMainWindow):
             spin.blockSignals(False)
 
     def _apply_ground_params(self) -> None:
+        if hasattr(self, "ground_outer_checkbox"):
+            self._session.set_param("ground_tune_enable_attitude_outer", 0, self.ground_outer_checkbox.isChecked())
         for name, spin in self.ground_param_spins.items():
             self._session.set_param(name, 4, spin.value())
 
@@ -3504,7 +3517,7 @@ class MainWindow(QMainWindow):
     def _record_ground(self, seconds: float) -> None:
         output_dir = Path.cwd() / "logs"
         output_dir.mkdir(parents=True, exist_ok=True)
-        path = output_dir / f"{time.strftime('%Y%m%d_%H%M%S')}_ground_record.csv"
+        path = output_dir / f"{time.strftime('%Y%m%d_%H%M%S')}_ground_tune_log_{int(seconds)}s.csv"
 
         def action():
             rows = self._session.dump_csv(path, duration_s=seconds)

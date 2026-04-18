@@ -217,6 +217,7 @@ typedef enum {
     GROUND_TUNE_TRIP_RATE_JITTER = 7,
     GROUND_TUNE_TRIP_FAILSAFE = 8,
     GROUND_TUNE_TRIP_STOP_NORMAL = 9,
+    GROUND_TUNE_TRIP_BATTERY = 10,
 } ground_tune_trip_reason_t;
 
 typedef struct {

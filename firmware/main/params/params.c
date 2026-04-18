@@ -38,6 +38,7 @@ static params_store_t s_params;
 #define PARAMS_RATE_KD_YAW_DEFAULT 0.0f
 #define PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_REMAP 4u
 #define PARAMS_SCHEMA_VERSION_BEFORE_GROUND_TUNE 5u
+#define PARAMS_SCHEMA_VERSION_BEFORE_RATE_FIRST_GROUND_TUNE 6u
 
 /* 参数系统采用“单 blob + schema_version + CRC32”保存策略。
  * 运行时所有参数写入都必须先过 params_try_set() 的合法性校验。 */
@@ -124,6 +125,7 @@ static const param_descriptor_t s_param_descs[] = {
     {"kalman_q_angle", PARAM_TYPE_FLOAT, offsetof(params_store_t, kalman_q_angle)},
     {"kalman_q_bias", PARAM_TYPE_FLOAT, offsetof(params_store_t, kalman_q_bias)},
     {"kalman_r_measure", PARAM_TYPE_FLOAT, offsetof(params_store_t, kalman_r_measure)},
+    {"ground_tune_enable_attitude_outer", PARAM_TYPE_BOOL, offsetof(params_store_t, ground_tune_enable_attitude_outer)},
     {"ground_tune_use_kalman_attitude", PARAM_TYPE_BOOL, offsetof(params_store_t, ground_tune_use_kalman_attitude)},
     {"ground_tune_use_filtered_rate", PARAM_TYPE_BOOL, offsetof(params_store_t, ground_tune_use_filtered_rate)},
     {"ground_att_kp_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_att_kp_roll)},
@@ -136,6 +138,7 @@ static const param_descriptor_t s_param_descs[] = {
     {"ground_test_max_extra_duty", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_test_max_extra_duty)},
     {"ground_test_motor_balance_limit", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_test_motor_balance_limit)},
     {"ground_test_auto_disarm_ms", PARAM_TYPE_U32, offsetof(params_store_t, ground_test_auto_disarm_ms)},
+    {"ground_test_ramp_duty_per_s", PARAM_TYPE_FLOAT, offsetof(params_store_t, ground_test_ramp_duty_per_s)},
 };
 
 static const param_descriptor_t s_runtime_param_descs[] = {
@@ -232,6 +235,7 @@ static void params_apply_defaults(params_store_t *store)
     store->kalman_q_angle = 0.0025f;
     store->kalman_q_bias = 0.0030f;
     store->kalman_r_measure = 0.0800f;
+    store->ground_tune_enable_attitude_outer = false;
     store->ground_tune_use_kalman_attitude = true;
     store->ground_tune_use_filtered_rate = true;
 
@@ -245,6 +249,7 @@ static void params_apply_defaults(params_store_t *store)
     store->ground_test_max_extra_duty = 0.05f;
     store->ground_test_motor_balance_limit = 0.08f;
     store->ground_test_auto_disarm_ms = 15000u;
+    store->ground_test_ramp_duty_per_s = 0.30f;
 
     store->log_event_text_enabled = true;
 }
@@ -474,6 +479,7 @@ static bool params_validate_ground_tune_limits(const params_store_t *store)
         !params_float_in_range(store->ground_att_trip_deg, 5.0f, 30.0f) ||
         !params_float_in_range(store->ground_test_max_extra_duty, 0.0f, 0.20f) ||
         !params_float_in_range(store->ground_test_motor_balance_limit, 0.0f, 0.30f) ||
+        !params_float_in_range(store->ground_test_ramp_duty_per_s, 0.01f, 2.0f) ||
         store->ground_test_auto_disarm_ms < 1000u ||
         store->ground_test_auto_disarm_ms > 120000u) {
         return false;
@@ -529,9 +535,11 @@ static bool params_try_load_from_nvs(params_store_t *store)
     const bool current_schema = header.schema_version == PARAMS_SCHEMA_VERSION;
     const bool pre_motor_remap_schema = header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_REMAP;
     const bool pre_ground_tune_schema = header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_GROUND_TUNE;
+    const bool pre_rate_first_ground_tune_schema =
+        header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_RATE_FIRST_GROUND_TUNE;
     const size_t payload_len = len - sizeof(header);
     if (header.magic != PARAMS_BLOB_MAGIC ||
-        (!current_schema && !pre_motor_remap_schema && !pre_ground_tune_schema) ||
+        (!current_schema && !pre_motor_remap_schema && !pre_ground_tune_schema && !pre_rate_first_ground_tune_schema) ||
         header.payload_len != payload_len ||
         header.payload_len > sizeof(params_store_t)) {
         return false;

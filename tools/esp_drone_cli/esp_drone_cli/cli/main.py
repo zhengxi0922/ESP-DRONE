@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from collections import deque
+from datetime import datetime
 import sys
 import time
 from pathlib import Path
@@ -129,8 +130,10 @@ def format_ground_status_line(sample: TelemetrySample, axis_name: str) -> str:
         f"pid_d={float(getattr(sample, f'rate_pid_d_{axis_name}')):.4f} "
         f"pid_out={float(getattr(sample, f'pid_out_{axis_name}')):.4f} "
         f"base={sample.base_duty_active:.3f} "
+        f"mixer=[thr:{sample.base_duty_active:.3f},r:{sample.pid_out_roll:.4f},p:{sample.pid_out_pitch:.4f},y:{sample.pid_out_yaw:.4f}] "
         f"sat={sample.motor_saturation_flag} "
         f"i_freeze={sample.integrator_freeze_flag} "
+        f"battery_valid={sample.battery_valid} "
         f"motors=[{motors}] "
         f"arm={sample.arm_state} mode={sample.control_mode} imu_age_us={sample.imu_age_us}"
     )
@@ -737,6 +740,18 @@ def cmd_ground_bench(session: DeviceSession, args) -> int:
     return 0 if result.summary.safe_to_continue else 2
 
 
+def cmd_ground_log(session: DeviceSession, args) -> int:
+    require_ground_tune_capability(session)
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+    path = output_dir / f"{stamp}_ground_tune_log.csv"
+    rows = session.dump_csv(path, duration_s=args.duration)
+    print(f"ground_tune_log={path}")
+    print(f"rows={rows}")
+    return 0 if rows > 0 else 1
+
+
 def cmd_udp_manual(session: DeviceSession, args) -> int:
     """Run experimental UDP manual-control commands."""
 
@@ -1140,6 +1155,14 @@ def build_parser() -> argparse.ArgumentParser:
     ground_bench_p.add_argument("--auto-arm", action="store_true")
     ground_bench_p.add_argument("--mode", default="manual_perturb")
 
+    ground_log_p = sub.add_parser(
+        "ground-log",
+        help="record a clearly named flat-ground tune telemetry CSV",
+        description="Start the telemetry stream, record a ground tune CSV for the requested duration, then close the file.",
+    )
+    ground_log_p.add_argument("--duration", type=float, default=10.0)
+    ground_log_p.add_argument("--output-dir", default="logs")
+
     udp_manual_p = sub.add_parser(
         "udp-manual",
         help="experimental UDP manual control; not free-flight ready",
@@ -1265,6 +1288,7 @@ def main(argv: list[str] | None = None) -> int:
             "ground-status": cmd_ground_status,
             "watch-ground": cmd_watch_ground,
             "ground-bench": cmd_ground_bench,
+            "ground-log": cmd_ground_log,
             "udp-manual": cmd_udp_manual,
             "calib": cmd_calib,
             "axis-bench": cmd_axis_bench,

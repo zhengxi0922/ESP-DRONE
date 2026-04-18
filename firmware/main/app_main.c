@@ -141,11 +141,32 @@ static bool flight_control_ground_trip_exceeded(const params_store_t *params)
            fabsf(state.err_pitch_deg) > params->ground_att_trip_deg;
 }
 
-static bool flight_control_ground_limit_outputs(const params_store_t *params, float outputs[MOTOR_COUNT])
+static float flight_control_ground_ramp_base_duty(const params_store_t *params,
+                                                  float current_duty,
+                                                  float target_duty,
+                                                  uint32_t loop_dt_us)
+{
+    if (params == NULL || loop_dt_us == 0u) {
+        return current_duty;
+    }
+
+    const float max_delta = params->ground_test_ramp_duty_per_s * ((float)loop_dt_us / 1000000.0f);
+    if (max_delta <= 0.0f) {
+        return target_duty;
+    }
+    if (current_duty < target_duty) {
+        return fminf(current_duty + max_delta, target_duty);
+    }
+    return fmaxf(current_duty - max_delta, target_duty);
+}
+
+static bool flight_control_ground_limit_outputs(const params_store_t *params,
+                                                float base_duty,
+                                                float outputs[MOTOR_COUNT])
 {
     bool saturated = false;
-    const float lower = fmaxf(0.0f, params->ground_test_base_duty - params->ground_test_max_extra_duty);
-    const float upper = fminf(params->motor_max_duty, params->ground_test_base_duty + params->ground_test_max_extra_duty);
+    const float lower = fmaxf(0.0f, base_duty - params->ground_test_max_extra_duty);
+    const float upper = fminf(params->motor_max_duty, base_duty + params->ground_test_max_extra_duty);
     float min_output = 1.0f;
     float max_output = 0.0f;
 
@@ -262,6 +283,7 @@ static void flight_control_task(void *arg)
     uint32_t ground_jitter_ticks = 0;
     uint64_t ground_mode_start_us = 0;
     bool ground_saturated_for_freeze = false;
+    float ground_active_base_duty = 0.0f;
     axis3f_t previous_ground_pid_axis = {0};
 
     mixer_build_coeffs(mixer_coeffs);
@@ -329,6 +351,7 @@ static void flight_control_task(void *arg)
             ground_saturation_ticks = 0;
             ground_jitter_ticks = 0;
             ground_saturated_for_freeze = false;
+            ground_active_base_duty = 0.0f;
             previous_ground_pid_axis = (axis3f_t){0};
             ground_mode_start_us = (control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE) ? now_us : 0u;
             last_arm_state = safety_status.arm_state;
@@ -484,6 +507,13 @@ static void flight_control_task(void *arg)
             if (ground_mode_start_us == 0u) {
                 ground_mode_start_us = now_us;
             }
+            if (!battery_initialized || !(battery_filtered_v > params->battery_critical_v)) {
+                flight_control_stop_ground_tune(command_outputs,
+                                                GROUND_TUNE_TRIP_BATTERY,
+                                                "ground tune stopped: battery invalid or critical",
+                                                true);
+                continue;
+            }
             if (!flight_control_attitude_sample_ready(&sample)) {
                 flight_control_stop_ground_tune(command_outputs,
                                                 GROUND_TUNE_TRIP_IMU_STALE,
@@ -505,7 +535,9 @@ static void flight_control_task(void *arg)
                                                 false);
                 continue;
             }
-            if (params->ground_tune_use_kalman_attitude && !estimator_state.kalman_valid) {
+            if (params->ground_tune_enable_attitude_outer &&
+                params->ground_tune_use_kalman_attitude &&
+                !estimator_state.kalman_valid) {
                 flight_control_stop_ground_tune(command_outputs,
                                                 GROUND_TUNE_TRIP_KALMAN_INVALID,
                                                 "ground tune stopped: kalman invalid",
@@ -520,7 +552,11 @@ static void flight_control_task(void *arg)
                 continue;
             }
 
-            flight_control_set_ground_base_duty_active(params->ground_test_base_duty);
+            ground_active_base_duty = flight_control_ground_ramp_base_duty(params,
+                                                                           ground_active_base_duty,
+                                                                           params->ground_test_base_duty,
+                                                                           loop_dt_us);
+            flight_control_set_ground_base_duty_active(ground_active_base_duty);
             if (fresh_sample) {
                 axis3f_t rate_setpoint = {0};
                 if (!ground_tune_compute(&estimator_state, &rate_setpoint)) {
@@ -557,21 +593,21 @@ static void flight_control_task(void *arg)
                     const axis3f_t measured_rate =
                         params->ground_tune_use_filtered_rate ? estimator_state.filtered_rate_rpy_dps : estimator_state.rate_rpy_dps;
                     controller_set_runtime_flags(true,
-                                                 params->ground_test_base_duty,
+                                                 ground_active_base_duty,
                                                  ground_saturated_for_freeze,
                                                  false);
                     const rate_controller_status_t rate_status =
                         controller_update_rate(&rate_setpoint, &measured_rate, controller_dt_s);
                     mixer_mix(mixer_coeffs,
                               &(mixer_input_t){
-                                  .throttle = params->ground_test_base_duty,
+                                  .throttle = ground_active_base_duty,
                                   .axis = rate_status.output,
                               },
                               command_outputs);
 
-                    const bool saturated = flight_control_ground_limit_outputs(params, command_outputs);
+                    const bool saturated = flight_control_ground_limit_outputs(params, ground_active_base_duty, command_outputs);
                     ground_saturated_for_freeze = saturated;
-                    controller_set_runtime_flags(true, params->ground_test_base_duty, saturated, false);
+                    controller_set_runtime_flags(true, ground_active_base_duty, saturated, false);
                     ground_saturation_ticks = saturated ? (ground_saturation_ticks + 1u) : 0u;
                     ground_jitter_ticks =
                         flight_control_ground_rate_jitter(previous_ground_pid_axis, rate_status.output)

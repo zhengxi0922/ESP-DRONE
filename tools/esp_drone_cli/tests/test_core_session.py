@@ -134,7 +134,7 @@ def build_telemetry_payload_v4() -> bytes:
         -11.0, 12.0, -13.0,
         0.31, -0.32, 0.33,
         4242,
-        1, 1, 0, 1, 1, 1, 3, 0,
+        1, 1, 0, 1, 1, 1, 3, 1,
     ]
     return TELEMETRY_STRUCT_V4.pack(*values)
 
@@ -857,12 +857,16 @@ def test_telemetry_sample_v4_decodes_estimator_fields_after_reserved_bytes():
     assert sample.ground_ref_valid == 1
     assert sample.reference_valid == 1
     assert sample.ground_trip_reason == 3
+    assert sample.battery_valid == 1
 
     assert row["raw_gyro_x"] == pytest.approx(1.0)
     assert row["filtered_gyro_x"] == pytest.approx(1.25)
     assert row["filtered_acc_z"] == pytest.approx(0.98)
+    assert row["mixer_throttle"] == pytest.approx(0.05)
+    assert row["mixer_roll"] == pytest.approx(0.9)
     assert row["kalman_valid"] == 1
     assert row["attitude_valid"] == 1
+    assert row["battery_valid"] == 1
 
 
 def test_gui_startup_without_device_or_missing_pyqt5(monkeypatch):
@@ -1322,6 +1326,10 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert udp_args.throttle == pytest.approx(0.08)
     assert udp_args.pitch == pytest.approx(-0.02)
 
+    ground_log_args = build_parser().parse_args(["--serial", "COM7", "ground-log", "--duration", "2"])
+    assert ground_log_args.command == "ground-log"
+    assert ground_log_args.duration == pytest.approx(2.0)
+
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
     real_import = builtins.__import__
@@ -1512,6 +1520,19 @@ def test_firmware_telemetry_battery_read_does_not_emit_transient_zero():
     assert "last_battery_valid = true;" in app_main
     assert "battery_raw = last_battery_raw;" in app_main
     assert "float battery_v = last_battery_v;" in app_main
+
+
+def test_firmware_telemetry_reports_observed_rate_error():
+    repo_root = Path(__file__).resolve().parents[3]
+    console_c = (repo_root / "firmware" / "main" / "console" / "console.c").read_text(encoding="utf-8")
+    udp_protocol = (repo_root / "firmware" / "main" / "udp_protocol" / "udp_protocol.c").read_text(encoding="utf-8")
+
+    for source in (console_c, udp_protocol):
+        assert "rate_measured_for_error = estimator_state.filtered_rate_rpy_dps;" in source
+        assert "rate_setpoint_request.roll - rate_measured_for_error.roll" in source
+        assert ".rate_err_roll = rate_error_observed.roll" in source
+        assert ".rate_err_pitch = rate_error_observed.pitch" in source
+        assert ".rate_err_yaw = rate_error_observed.yaw" in source
 
 
 def test_firmware_console_ack_path_is_not_starved_by_telemetry():

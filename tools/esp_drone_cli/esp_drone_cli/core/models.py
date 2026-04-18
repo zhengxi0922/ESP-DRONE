@@ -31,7 +31,7 @@ TELEMETRY_CSV_FIELDS = [
     "rate_pid_d_roll", "rate_pid_d_pitch", "rate_pid_d_yaw",
     "pid_out_roll", "pid_out_pitch", "pid_out_yaw",
     "motor1", "motor2", "motor3", "motor4",
-    "battery_voltage", "battery_adc_raw", "loop_dt_us", "imu_age_us",
+    "battery_voltage", "battery_adc_raw", "battery_valid", "loop_dt_us", "imu_age_us",
     "imu_mode", "imu_health", "arm_state", "failsafe_reason", "control_mode",
     "baro_pressure_pa", "baro_temperature_c", "baro_altitude_m", "baro_vspeed_mps",
     "baro_update_age_us", "baro_valid", "baro_health",
@@ -45,6 +45,7 @@ TELEMETRY_CSV_FIELDS = [
     "rate_meas_roll_raw", "rate_meas_pitch_raw", "rate_meas_yaw_raw",
     "rate_meas_roll_filtered", "rate_meas_pitch_filtered", "rate_meas_yaw_filtered",
     "rate_err_roll", "rate_err_pitch", "rate_err_yaw",
+    "mixer_throttle", "mixer_roll", "mixer_pitch", "mixer_yaw",
     "sample_seq", "attitude_valid", "kalman_valid",
     "motor_saturation_flag", "integrator_freeze_flag",
     "ground_ref_valid", "reference_valid", "ground_trip_reason",
@@ -210,6 +211,7 @@ class TelemetrySample:
     motor4: float
     battery_voltage: float
     battery_adc_raw: int
+    battery_valid: int
     loop_dt_us: int
     imu_age_us: int
     imu_mode: int
@@ -372,6 +374,7 @@ class TelemetrySample:
             motor4=float(values[35]),
             battery_voltage=float(values[36]),
             battery_adc_raw=int(values[37]),
+            battery_valid=1 if int(values[37]) > 0 and float(values[36]) > 0.1 else 0,
             loop_dt_us=int(values[38]),
             imu_age_us=int(values[39]),
             imu_mode=int(values[40]),
@@ -479,6 +482,7 @@ class TelemetrySample:
         sample.ground_ref_valid = int(values[v4_offset + 22])
         sample.reference_valid = int(values[v4_offset + 23])
         sample.ground_trip_reason = int(values[v4_offset + 24])
+        sample.battery_valid = int(values[v4_offset + 25])
         return sample
 
     @classmethod
@@ -519,6 +523,10 @@ class TelemetrySample:
                 "raw_quat_x": self.quat_x,
                 "raw_quat_y": self.quat_y,
                 "raw_quat_z": self.quat_z,
+                "mixer_throttle": self.base_duty_active,
+                "mixer_roll": self.pid_out_roll,
+                "mixer_pitch": self.pid_out_pitch,
+                "mixer_yaw": self.pid_out_yaw,
             }
         )
         return data

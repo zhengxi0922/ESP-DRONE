@@ -18,6 +18,12 @@ Example:
 logs/20260413_211530_ground_roll_manual_perturb/
 ```
 
+The one-shot recorder creates a simpler CSV:
+
+```text
+logs/YYYYMMDD_HHMMSS_ground_tune_log.csv
+```
+
 ## Required Telemetry Columns
 
 - `timestamp_us`
@@ -27,7 +33,9 @@ logs/20260413_211530_ground_roll_manual_perturb/
 - `arm_state`
 - `control_mode`
 - `failsafe_reason`
-- `battery_v`
+- `battery_voltage`
+- `battery_adc_raw`
+- `battery_valid`
 - `raw_gyro_x`, `raw_gyro_y`, `raw_gyro_z`
 - `filtered_gyro_x`, `filtered_gyro_y`, `filtered_gyro_z`
 - `raw_acc_x`, `raw_acc_y`, `raw_acc_z`
@@ -39,10 +47,14 @@ logs/20260413_211530_ground_roll_manual_perturb/
 - `attitude_err_roll_deg`
 - `attitude_err_pitch_deg`
 - `rate_setpoint_roll`, `rate_setpoint_pitch`, `rate_setpoint_yaw`
+- `rate_meas_roll_raw`, `rate_meas_pitch_raw`, `rate_meas_yaw_raw`
+- `rate_meas_roll_filtered`, `rate_meas_pitch_filtered`, `rate_meas_yaw_filtered`
+- `rate_err_roll`, `rate_err_pitch`, `rate_err_yaw`
 - `rate_pid_p_roll`, `rate_pid_p_pitch`, `rate_pid_p_yaw`
 - `rate_pid_i_roll`, `rate_pid_i_pitch`, `rate_pid_i_yaw`
 - `rate_pid_d_roll`, `rate_pid_d_pitch`, `rate_pid_d_yaw`
 - `pid_out_roll`, `pid_out_pitch`, `pid_out_yaw`
+- `mixer_throttle`, `mixer_roll`, `mixer_pitch`, `mixer_yaw`
 - `motor1`, `motor2`, `motor3`, `motor4`
 - `base_duty_active`
 - `reference_valid`
@@ -51,9 +63,6 @@ logs/20260413_211530_ground_roll_manual_perturb/
 
 Additional useful columns include:
 
-- `rate_meas_roll_raw`, `rate_meas_pitch_raw`, `rate_meas_yaw_raw`
-- `rate_meas_roll_filtered`, `rate_meas_pitch_filtered`, `rate_meas_yaw_filtered`
-- `rate_err_roll`, `rate_err_pitch`, `rate_err_yaw`
 - `attitude_valid`
 - `kalman_valid`
 - `ground_ref_valid`

@@ -92,7 +92,9 @@ bool ground_tune_capture_reference(const imu_sample_t *sample, const estimator_s
         return false;
     }
 
-    if (params->ground_tune_use_kalman_attitude && !estimator_state->kalman_valid) {
+    if (params->ground_tune_enable_attitude_outer &&
+        params->ground_tune_use_kalman_attitude &&
+        !estimator_state->kalman_valid) {
         ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
         return false;
     }
@@ -156,7 +158,9 @@ bool ground_tune_compute(const estimator_state_t *estimator_state, axis3f_t *out
         return false;
     }
 
-    if (params->ground_tune_use_kalman_attitude && !estimator_state->kalman_valid) {
+    if (params->ground_tune_enable_attitude_outer &&
+        params->ground_tune_use_kalman_attitude &&
+        !estimator_state->kalman_valid) {
         ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
         return false;
     }
@@ -193,15 +197,19 @@ bool ground_tune_compute(const estimator_state_t *estimator_state, axis3f_t *out
     err_roll_deg = ground_tune_apply_deadband(err_roll_deg, params->ground_att_error_deadband_deg);
     err_pitch_deg = ground_tune_apply_deadband(err_pitch_deg, params->ground_att_error_deadband_deg);
 
-    out_rate_setpoint_dps->roll = ground_tune_clampf(
-        -params->ground_att_kp_roll * err_roll_deg,
-        -params->ground_att_rate_limit_roll,
-        params->ground_att_rate_limit_roll);
-    out_rate_setpoint_dps->pitch = ground_tune_clampf(
-        -params->ground_att_kp_pitch * err_pitch_deg,
-        -params->ground_att_rate_limit_pitch,
-        params->ground_att_rate_limit_pitch);
-    out_rate_setpoint_dps->yaw = runtime_state_get_rate_setpoint_request().yaw;
+    if (params->ground_tune_enable_attitude_outer) {
+        out_rate_setpoint_dps->roll = ground_tune_clampf(
+            -params->ground_att_kp_roll * err_roll_deg,
+            -params->ground_att_rate_limit_roll,
+            params->ground_att_rate_limit_roll);
+        out_rate_setpoint_dps->pitch = ground_tune_clampf(
+            -params->ground_att_kp_pitch * err_pitch_deg,
+            -params->ground_att_rate_limit_pitch,
+            params->ground_att_rate_limit_pitch);
+        out_rate_setpoint_dps->yaw = runtime_state_get_rate_setpoint_request().yaw;
+    } else {
+        *out_rate_setpoint_dps = (axis3f_t){0};
+    }
 
     state.err_roll_deg = err_roll_deg;
     state.err_pitch_deg = err_pitch_deg;
@@ -236,6 +244,8 @@ const char *ground_tune_trip_reason_text(ground_tune_trip_reason_t reason)
         return "failsafe";
     case GROUND_TUNE_TRIP_STOP_NORMAL:
         return "ground tune stopped normally";
+    case GROUND_TUNE_TRIP_BATTERY:
+        return "battery invalid or critical";
     default:
         return "unknown";
     }

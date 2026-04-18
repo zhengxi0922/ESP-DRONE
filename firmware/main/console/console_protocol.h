@@ -4,7 +4,7 @@
 
 #define CONSOLE_FRAME_MAGIC 0xA5u
 #define CONSOLE_FRAME_VERSION 0x01u
-#define CONSOLE_PROTOCOL_VERSION 0x06u
+#define CONSOLE_PROTOCOL_VERSION 0x07u
 #define CONSOLE_BUILD_GIT_HASH_LEN 16u
 #define CONSOLE_BUILD_TIME_LEN 24u
 
@@ -212,5 +212,5 @@ typedef struct __attribute__((packed)) {
     uint8_t ground_ref_valid;
     uint8_t reference_valid;
     uint8_t ground_trip_reason;
-    uint8_t telemetry_reserved;
+    uint8_t battery_valid;
 } console_telemetry_sample_t;
