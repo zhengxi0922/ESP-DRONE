@@ -75,7 +75,7 @@ Use these values as the first-pass ground-tune baseline for the current airframe
 
 - `rate_kp_roll=0.0007`
 - `rate_kp_pitch=0.0007`
-- `rate_kp_yaw=0.0007`
+- `rate_kp_yaw=0.0005`
 - `rate_ki_roll=0`
 - `rate_ki_pitch=0`
 - `rate_ki_yaw=0`
@@ -88,6 +88,7 @@ Validation logs:
 - `tools/esp_drone_cli/logs/20260418_103300_ground_tune_log.csv`: roll P-only, no trip, roll PID output stayed below +/-0.01, saturation only from low-throttle floor contact.
 - `tools/esp_drone_cli/logs/20260418_103624_ground_tune_log.csv`: pitch P-only, no trip, no motor saturation.
 - `tools/esp_drone_cli/logs/20260418_103850_ground_tune_log.csv`: yaw P-only, no trip, no motor saturation.
+- `tools/esp_drone_cli/logs/20260418_104754_ground_tune_log.csv`: all-axis P-only, no trip, no motor saturation, all PID outputs stayed below +/-0.02.
 
 These values are not final flight gains. Keep D at zero until gyro noise is reviewed under motor load, and keep I at zero until windup behavior is explicitly tested.
 
