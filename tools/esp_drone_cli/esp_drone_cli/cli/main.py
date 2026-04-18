@@ -388,6 +388,7 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
     result: dict[str, object] = {
         "samples": len(samples),
         "active_samples": len(active),
+        "steady_samples": 0,
         "active_duration_s": 0.0,
         "validity_ok": False,
         "safety_ok": False,
@@ -406,11 +407,14 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         ),
         "outer_clamp_max": max((sample.outer_loop_clamp_flag for sample in active), default=0),
         "inner_clamp_max": max((sample.inner_loop_clamp_flag for sample in active), default=0),
-        "inner_motor_clamp_max": max((sample.inner_loop_clamp_flag & 0x01 for sample in active), default=0),
+        "raw_inner_motor_clamp_max": max((sample.inner_loop_clamp_flag & 0x01 for sample in active), default=0),
+        "inner_motor_clamp_max": 0,
+        "startup_motor_clamp_count": 0,
         "inner_integrator_freeze_count": sum(
             1 for sample in active if (sample.inner_loop_clamp_flag & 0x02) != 0
         ),
-        "motor_saturation_max": max((sample.motor_saturation_flag for sample in active), default=0),
+        "raw_motor_saturation_max": max((sample.motor_saturation_flag for sample in active), default=0),
+        "motor_saturation_max": 0,
         "max_abs_roll_deg": max((abs(sample.angle_measured_roll) for sample in active), default=0.0),
         "max_abs_pitch_deg": max((abs(sample.angle_measured_pitch) for sample in active), default=0.0),
         "max_abs_yaw_rate_dps": max((abs(sample.rate_meas_yaw_filtered) for sample in active), default=0.0),
@@ -425,6 +429,18 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         return result
 
     result["active_duration_s"] = max(0.0, (active[-1].timestamp_us - active[0].timestamp_us) / 1000000.0)
+    steady_threshold = max(0.05, base_duty * 0.5)
+    steady = [sample for sample in active if sample.base_duty_active >= steady_threshold]
+    if not steady:
+        steady = active
+    result["steady_samples"] = len(steady)
+    result["inner_motor_clamp_max"] = max((sample.inner_loop_clamp_flag & 0x01 for sample in steady), default=0)
+    result["motor_saturation_max"] = max((sample.motor_saturation_flag for sample in steady), default=0)
+    result["startup_motor_clamp_count"] = sum(
+        1 for sample in active
+        if sample.base_duty_active < steady_threshold and
+        ((sample.inner_loop_clamp_flag & 0x01) != 0 or sample.motor_saturation_flag != 0)
+    )
     valid_baro = [sample.baro_altitude_m for sample in active if sample.baro_valid]
     if valid_baro:
         result["baro_altitude_delta_m"] = max(valid_baro) - min(valid_baro)
@@ -516,7 +532,7 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
 def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
     lines = [
         f"samples={result['samples']} active_samples={result['active_samples']} "
-        f"active_duration_s={result['active_duration_s']:.3f}",
+        f"steady_samples={result.get('steady_samples', 0)} active_duration_s={result['active_duration_s']:.3f}",
         (
             f"validity_ok={result['validity_ok']} safety_ok={result['safety_ok']} "
             f"terminal_trip={result['terminal_trip_reason']} terminal_trip_ok={result['terminal_trip_ok']} "
@@ -527,8 +543,11 @@ def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
             f"base_duty_max={result['base_duty_max']:.4f}/{result['base_duty_target']:.4f} "
             f"motor_max={result['motor_max']:.4f} outer_clamp_max={result['outer_clamp_max']} "
             f"inner_motor_clamp_max={result['inner_motor_clamp_max']} "
+            f"raw_inner_motor_clamp_max={result.get('raw_inner_motor_clamp_max', 0)} "
+            f"startup_motor_clamp_count={result.get('startup_motor_clamp_count', 0)} "
             f"inner_integrator_freeze_count={result['inner_integrator_freeze_count']} "
-            f"motor_saturation_max={result['motor_saturation_max']}"
+            f"motor_saturation_max={result['motor_saturation_max']} "
+            f"raw_motor_saturation_max={result.get('raw_motor_saturation_max', 0)}"
         ),
         (
             f"max_abs_roll_deg={result['max_abs_roll_deg']:.3f} "
