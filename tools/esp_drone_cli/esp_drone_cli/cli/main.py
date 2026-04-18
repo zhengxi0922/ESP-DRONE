@@ -65,7 +65,10 @@ LIFTOFF_STATE_NO = "no liftoff"
 LIFTOFF_STATE_NEAR = "near liftoff / unloading"
 LIFTOFF_STATE_CONFIRMED = "confirmed liftoff"
 LIFTOFF_NEAR_BARO_DELTA_M = 0.04
-LIFTOFF_CONFIRMED_BARO_DELTA_M = 0.12
+LIFTOFF_CONFIRMED_BARO_DELTA_M = 0.18
+LIFTOFF_CONFIRMED_BARO_RISE_M = 0.12
+LIFTOFF_CONFIRMED_MIN_RISE_SAMPLES = 3
+LIFTOFF_VERIFY_MAX_BASE_DUTY = 0.18
 UNIFIED_PATH_TOLERANCE_DPS = 0.05
 UNIFIED_PATH_MIN_RATIO = 0.98
 UNIFIED_PATH_MAX_TRANSIENT_DPS = 0.25
@@ -442,6 +445,8 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         ),
         "battery_sag_v": 0.0,
         "baro_altitude_delta_m": 0.0,
+        "baro_peak_rise_m": 0.0,
+        "baro_confirmed_rise_samples": 0,
         "axis": {},
     }
     if not active:
@@ -472,6 +477,13 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
     valid_baro = [sample.baro_altitude_m for sample in active if sample.baro_valid]
     if valid_baro:
         result["baro_altitude_delta_m"] = max(valid_baro) - min(valid_baro)
+        baseline_count = min(10, len(valid_baro))
+        baro_baseline = sum(valid_baro[:baseline_count]) / baseline_count
+        result["baro_peak_rise_m"] = max(valid_baro) - baro_baseline
+        result["baro_confirmed_rise_samples"] = sum(
+            1 for altitude in valid_baro
+            if altitude - baro_baseline >= LIFTOFF_CONFIRMED_BARO_RISE_M
+        )
 
     result["validity_ok"] = all(
         sample.kalman_valid and sample.attitude_valid and sample.ground_ref_valid and sample.battery_valid
@@ -513,7 +525,11 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         float(result["max_abs_pitch_deg"]) <= 6.5
     )
     baro_delta = float(result["baro_altitude_delta_m"])
-    if baro_delta >= LIFTOFF_CONFIRMED_BARO_DELTA_M:
+    if (
+        baro_delta >= LIFTOFF_CONFIRMED_BARO_DELTA_M and
+        float(result["baro_peak_rise_m"]) >= LIFTOFF_CONFIRMED_BARO_RISE_M and
+        int(result["baro_confirmed_rise_samples"]) >= LIFTOFF_CONFIRMED_MIN_RISE_SAMPLES
+    ):
         result["physical_liftoff_state"] = LIFTOFF_STATE_CONFIRMED
         result["physical_liftoff_confirmed"] = True
     elif baro_delta >= LIFTOFF_NEAR_BARO_DELTA_M:
@@ -611,7 +627,9 @@ def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
             f"max_abs_yaw_rate_dps={result['max_abs_yaw_rate_dps']:.3f} "
             f"mean_abs_yaw_rate_dps={result['mean_abs_yaw_rate_dps']:.3f} "
             f"battery_sag_v={result.get('battery_sag_v', 0.0):.3f} "
-            f"baro_delta_m={result['baro_altitude_delta_m']:.3f}"
+            f"baro_delta_m={result['baro_altitude_delta_m']:.3f} "
+            f"baro_peak_rise_m={result.get('baro_peak_rise_m', 0.0):.3f} "
+            f"baro_confirmed_rise_samples={result.get('baro_confirmed_rise_samples', 0)}"
         ),
         (
             f"physical_liftoff_state={result.get('physical_liftoff_state', LIFTOFF_STATE_NO)} "
@@ -1441,8 +1459,8 @@ def cmd_liftoff_verify_round(session: DeviceSession, args) -> int:
 
     base_duty = float(args.base_duty)
     duration_s = float(args.duration_s)
-    if base_duty < 0.0 or base_duty > 0.12:
-        raise ValueError("first liftoff verify base duty must be <= 0.12")
+    if base_duty < 0.0 or base_duty > LIFTOFF_VERIFY_MAX_BASE_DUTY:
+        raise ValueError(f"liftoff verify base duty must be <= {LIFTOFF_VERIFY_MAX_BASE_DUTY:.2f}")
     if duration_s <= 0.0 or duration_s > 2.2:
         raise ValueError("first liftoff verify duration must be >0 and <=2.2 seconds")
 

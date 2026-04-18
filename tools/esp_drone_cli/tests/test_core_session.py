@@ -1121,7 +1121,7 @@ def test_attitude_ground_verify_analysis_accepts_rate_overshoot_correction():
 
 def test_liftoff_verify_analysis_accepts_conservative_closed_loop_attempt():
     samples = []
-    for index in range(8):
+    for index in range(12):
         sample = TelemetrySample.from_payload(build_telemetry_payload_v5())
         sample.timestamp_us = 1_000_000 + index * 20_000
         sample.control_mode = 6
@@ -1164,7 +1164,7 @@ def test_liftoff_verify_analysis_accepts_conservative_closed_loop_attempt():
         sample.motor4 = 0.10 - 0.00042 + 0.00042
         sample.rate_meas_yaw_filtered = 2.0
         sample.baro_valid = 1
-        sample.baro_altitude_m = 0.02 * index
+        sample.baro_altitude_m = 0.03 * index
         samples.append(sample)
 
     result = analyze_liftoff_verify_samples(samples, base_duty=0.10)
@@ -1247,6 +1247,62 @@ def test_liftoff_verify_analysis_ignores_startup_idle_clamp():
     assert result["free_flight_pass"] is False
     assert result["probable_liftoff"] is False
     assert result["passed"] is True
+
+
+def test_liftoff_verify_analysis_does_not_confirm_small_baro_delta_only():
+    samples = []
+    for index in range(8):
+        sample = TelemetrySample.from_payload(build_telemetry_payload_v5())
+        sample.timestamp_us = 2_500_000 + index * 20_000
+        sample.control_mode = 6
+        sample.control_submode = 2
+        sample.kalman_valid = 1
+        sample.attitude_valid = 1
+        sample.ground_ref_valid = 1
+        sample.battery_valid = 1
+        sample.failsafe_reason = 0
+        sample.ground_trip_reason = 0
+        sample.outer_loop_clamp_flag = 0
+        sample.inner_loop_clamp_flag = 0
+        sample.motor_saturation_flag = 0
+        sample.base_duty_active = 0.12
+        sample.angle_target_roll = 0.0
+        sample.angle_target_pitch = 0.0
+        sample.angle_target_yaw = 0.0
+        sample.angle_measured_roll = 0.5
+        sample.angle_measured_pitch = -0.5
+        sample.angle_error_roll = -0.5
+        sample.angle_error_pitch = 0.5
+        sample.angle_error_yaw = 0.0
+        sample.outer_loop_rate_target_roll = -0.4
+        sample.outer_loop_rate_target_pitch = 0.4
+        sample.outer_loop_rate_target_yaw = 0.0
+        sample.rate_setpoint_roll = -0.4
+        sample.rate_setpoint_pitch = 0.4
+        sample.rate_setpoint_yaw = 0.0
+        sample.rate_err_roll = -0.3
+        sample.rate_err_pitch = 0.3
+        sample.rate_err_yaw = 0.0
+        sample.rate_pid_p_roll = -0.00021
+        sample.rate_pid_p_pitch = 0.00021
+        sample.pid_out_roll = -0.00021
+        sample.pid_out_pitch = 0.00021
+        sample.pid_out_yaw = 0.0
+        sample.motor1 = 0.12 - 0.00021 - 0.00021
+        sample.motor2 = 0.12 + 0.00021 - 0.00021
+        sample.motor3 = 0.12 + 0.00021 + 0.00021
+        sample.motor4 = 0.12 - 0.00021 + 0.00021
+        sample.rate_meas_yaw_filtered = 1.0
+        sample.baro_valid = 1
+        sample.baro_altitude_m = 0.015 * index
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.12)
+
+    assert result["baro_altitude_delta_m"] == pytest.approx(0.105)
+    assert result["physical_liftoff_state"] == "near liftoff / unloading"
+    assert result["physical_liftoff_confirmed"] is False
+    assert result["control_safe_pass"] is True
 
 
 def test_liftoff_verify_analysis_separates_no_liftoff_from_control_safe_pass():
