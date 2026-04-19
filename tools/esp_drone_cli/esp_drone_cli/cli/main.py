@@ -81,6 +81,8 @@ LIFTOFF_PRE_START_MAX_PITCH_PP_DEG = 0.8
 LIFTOFF_PRE_START_MAX_ROLL_SLOPE_DPS = 2.0
 LIFTOFF_PRE_START_MAX_PITCH_SLOPE_DPS = 2.0
 LIFTOFF_PRE_START_MAX_GYRO_DPS = 5.0
+LIFTOFF_PRE_START_READY_HOLD_S = 0.40
+LIFTOFF_PRE_START_READY_TIMEOUT_S = 12.0
 LIFTOFF_PRE_HIT_WINDOW_S = 0.20
 LIFTOFF_PRE_HIT_MAX_ROLL_DEG = 2.0
 LIFTOFF_PRE_HIT_MAX_PITCH_DEG = 2.0
@@ -485,6 +487,24 @@ def analyze_liftoff_pre_start_samples(samples: list[TelemetrySample]) -> dict[st
         "pre_start_pitch_slope_limit_dps": LIFTOFF_PRE_START_MAX_PITCH_SLOPE_DPS,
         "pre_start_gyro_limit_dps": LIFTOFF_PRE_START_MAX_GYRO_DPS,
     }
+
+
+def current_liftoff_pre_start_readiness(samples: list[TelemetrySample]) -> dict[str, object]:
+    """Analyze the latest non-active pre-start window in a live telemetry buffer."""
+
+    if not samples:
+        return analyze_liftoff_pre_start_samples([])
+    latest_ts = samples[-1].timestamp_us
+    start_ts = latest_ts - int(LIFTOFF_PRE_START_WINDOW_S * 1000000.0)
+    window = [
+        sample for sample in samples
+        if start_ts <= sample.timestamp_us <= latest_ts
+        and not (
+            sample.control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE and
+            sample.control_submode == GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF
+        )
+    ]
+    return analyze_liftoff_pre_start_samples(window)
 
 
 def _liftoff_segment_validity_ok(segment: list[TelemetrySample]) -> bool:
@@ -1885,6 +1905,43 @@ def cmd_liftoff_verify(session: DeviceSession, args) -> int:
     return 0
 
 
+def _wait_for_liftoff_pre_start_ready(
+    samples: list[TelemetrySample],
+    *,
+    timeout_s: float,
+    hold_s: float,
+) -> tuple[bool, dict[str, object]]:
+    deadline = time.monotonic() + timeout_s
+    ready_since: float | None = None
+    last_result = current_liftoff_pre_start_readiness(samples)
+    while time.monotonic() < deadline:
+        result = current_liftoff_pre_start_readiness(samples)
+        last_result = result
+        now = time.monotonic()
+        if result.get("pre_start_ready_pass", False):
+            if ready_since is None:
+                ready_since = now
+            if now - ready_since >= hold_s:
+                return True, result
+        else:
+            ready_since = None
+        time.sleep(0.03)
+    return False, last_result
+
+
+def _mark_liftoff_pre_start_not_ready(
+    result: dict[str, object],
+    readiness: dict[str, object],
+    reason: str,
+) -> dict[str, object]:
+    result.update(readiness)
+    result["control_safe_pass"] = False
+    result["passed"] = False
+    result["round_error"] = reason
+    result["sample_class"] = LIFTOFF_SAMPLE_PRE_START_NOT_READY
+    return result
+
+
 def _run_liftoff_verify_round_once(
     session: DeviceSession,
     *,
@@ -1894,6 +1951,9 @@ def _run_liftoff_verify_round_once(
     output_dir: Path,
     apply_safe_params: bool,
     auto_arm: bool,
+    ready_gate: bool = False,
+    ready_timeout_s: float = LIFTOFF_PRE_START_READY_TIMEOUT_S,
+    ready_hold_s: float = LIFTOFF_PRE_START_READY_HOLD_S,
 ) -> tuple[Path, dict[str, object], Exception | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
@@ -1926,12 +1986,40 @@ def _run_liftoff_verify_round_once(
         started_log = True
         session.start_stream()
         started_stream = True
-        time.sleep(settle_s)
+        if ready_gate:
+            ready, readiness = _wait_for_liftoff_pre_start_ready(
+                samples,
+                timeout_s=ready_timeout_s,
+                hold_s=ready_hold_s,
+            )
+            if not ready:
+                result = _mark_liftoff_pre_start_not_ready(
+                    analyze_liftoff_verify_samples(samples, base_duty),
+                    readiness,
+                    "pre-start readiness timeout before reference capture",
+                )
+                return path, result, None
+        else:
+            time.sleep(settle_s)
 
         ensure_command_ok(CmdId.GROUND_CAPTURE_REF, session.ground_capture_ref())
         if auto_arm:
             ensure_command_ok(CmdId.ARM, session.arm())
-            time.sleep(0.35)
+            if ready_gate:
+                ready, readiness = _wait_for_liftoff_pre_start_ready(
+                    samples,
+                    timeout_s=ready_timeout_s,
+                    hold_s=ready_hold_s,
+                )
+                if not ready:
+                    result = _mark_liftoff_pre_start_not_ready(
+                        analyze_liftoff_verify_samples(samples, base_duty),
+                        readiness,
+                        "pre-start readiness timeout after arming",
+                    )
+                    return path, result, None
+            else:
+                time.sleep(0.35)
 
         ensure_command_ok(CmdId.LIFTOFF_VERIFY_START, session.liftoff_verify_start(base_duty=base_duty))
         started_liftoff = True
@@ -1994,6 +2082,7 @@ def cmd_liftoff_verify_round(session: DeviceSession, args) -> int:
         output_dir=Path(args.output_dir),
         apply_safe_params=not args.no_apply_safe_params,
         auto_arm=not args.no_auto_arm,
+        ready_gate=False,
     )
     print(f"liftoff_verify_round_log={path}")
     if round_error is not None:
@@ -2026,6 +2115,9 @@ def cmd_liftoff_auto16(session: DeviceSession, args) -> int:
             output_dir=Path(args.output_dir),
             apply_safe_params=False,
             auto_arm=True,
+            ready_gate=True,
+            ready_timeout_s=float(args.ready_timeout_s),
+            ready_hold_s=float(args.ready_hold_s),
         )
         sample_class = str(result.get("sample_class", LIFTOFF_SAMPLE_INVALID))
         if sample_class == LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_PASS:
@@ -2530,14 +2622,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     liftoff_auto16_p = sub.add_parser(
         "liftoff-auto16",
-        help="run the bounded 16% clean target-hit retry state machine",
+        help="run the bounded 16%% clean target-hit retry state machine",
         description=(
-            "Run up to three 16% target-hit rounds with fixed low-risk parameters. "
+            "Run up to three 16%% target-hit rounds with fixed low-risk parameters. "
             "Polluted samples are counted separately from clean target-hit failures."
         ),
     )
     liftoff_auto16_p.add_argument("--attempts", type=int, default=3)
     liftoff_auto16_p.add_argument("--output-dir", default="logs")
+    liftoff_auto16_p.add_argument("--ready-timeout-s", type=float, default=LIFTOFF_PRE_START_READY_TIMEOUT_S)
+    liftoff_auto16_p.add_argument("--ready-hold-s", type=float, default=LIFTOFF_PRE_START_READY_HOLD_S)
 
     udp_manual_p = sub.add_parser(
         "udp-manual",

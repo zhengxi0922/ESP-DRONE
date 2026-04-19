@@ -27,6 +27,7 @@ from esp_drone_cli.core import DeviceSession
 from esp_drone_cli.cli.main import (
     analyze_attitude_ground_verify_samples,
     analyze_liftoff_verify_samples,
+    current_liftoff_pre_start_readiness,
     format_liftoff_verify_summary,
     format_rate_status_line,
 )
@@ -1295,6 +1296,34 @@ def test_liftoff_verify_pre_start_not_ready_is_pollution_not_clean_failure():
     assert result["sample_class"] == "pre_start_not_ready_sample"
 
 
+def test_current_liftoff_pre_start_readiness_requires_validity():
+    samples = []
+    for index in range(24):
+        sample = make_liftoff_sample(
+            index,
+            base_duty_active=0.0,
+            angle_roll=0.02,
+            angle_pitch=-0.03,
+            timestamp_start_us=3_000_000,
+        )
+        sample.control_mode = 0
+        sample.control_submode = 0
+        sample.filtered_gyro_x = 0.3
+        sample.filtered_gyro_y = 0.2
+        sample.filtered_gyro_z = 0.1
+        samples.append(sample)
+
+    clean = current_liftoff_pre_start_readiness(samples)
+    assert clean["pre_start_available"] is True
+    assert clean["pre_start_ready_pass"] is True
+
+    samples[-2].kalman_valid = 0
+    dirty = current_liftoff_pre_start_readiness(samples)
+    assert dirty["pre_start_available"] is True
+    assert dirty["pre_start_validity_ok"] is False
+    assert dirty["pre_start_ready_pass"] is False
+
+
 def test_liftoff_verify_pre_hit_attitude_worsening_blocks_target_hit_pass():
     samples = []
     for index in range(120):
@@ -2186,6 +2215,9 @@ def test_cli_parser_compatibility_without_gui_dependency():
     liftoff_auto_args = build_parser().parse_args(["--serial", "COM7", "liftoff-auto16", "--attempts", "3"])
     assert liftoff_auto_args.command == "liftoff-auto16"
     assert liftoff_auto_args.attempts == 3
+    assert liftoff_auto_args.ready_timeout_s == pytest.approx(12.0)
+    assert liftoff_auto_args.ready_hold_s == pytest.approx(0.40)
+    assert "16%" in build_parser().format_help()
 
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
