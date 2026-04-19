@@ -74,11 +74,24 @@ LIFTOFF_VERIFY_AUTO_DISARM_MARGIN_MS = 400
 LIFTOFF_TARGET_HIT_DUTY_TOLERANCE = 0.001
 LIFTOFF_TARGET_HIT_WINDOW_S = 0.18
 LIFTOFF_TARGET_HIT_MIN_WINDOW_S = 0.15
+LIFTOFF_PRE_START_WINDOW_S = 0.40
+LIFTOFF_PRE_START_MIN_WINDOW_S = 0.30
+LIFTOFF_PRE_START_MAX_ROLL_PP_DEG = 0.8
+LIFTOFF_PRE_START_MAX_PITCH_PP_DEG = 0.8
+LIFTOFF_PRE_START_MAX_ROLL_SLOPE_DPS = 2.0
+LIFTOFF_PRE_START_MAX_PITCH_SLOPE_DPS = 2.0
+LIFTOFF_PRE_START_MAX_GYRO_DPS = 5.0
 LIFTOFF_PRE_HIT_WINDOW_S = 0.20
 LIFTOFF_PRE_HIT_MAX_ROLL_DEG = 2.0
 LIFTOFF_PRE_HIT_MAX_PITCH_DEG = 2.0
 LIFTOFF_SHORT_WINDOW_MAX_TILT_DEG = 3.0
 LIFTOFF_SHORT_WINDOW_MAX_TILT_DELTA_DEG = 3.0
+LIFTOFF_SAMPLE_INVALID = "invalid_sample"
+LIFTOFF_SAMPLE_PRE_START_NOT_READY = "pre_start_not_ready_sample"
+LIFTOFF_SAMPLE_PRE_HIT_POLLUTED = "pre_hit_polluted_sample"
+LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_PASS = "clean_target_hit_pass"
+LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_FAIL = "clean_target_hit_fail"
+LIFTOFF_SAMPLE_LONG_GROUND_HOLD_FAIL = "long_ground_hold_fail"
 UNIFIED_PATH_TOLERANCE_DPS = 0.05
 UNIFIED_PATH_MIN_RATIO = 0.98
 UNIFIED_PATH_MAX_TRANSIENT_DPS = 0.25
@@ -400,6 +413,80 @@ def _liftoff_segment_duration_s(segment: list[TelemetrySample]) -> float:
     return max(0.0, (segment[-1].timestamp_us - segment[0].timestamp_us) / 1000000.0)
 
 
+def _liftoff_value_peak_to_peak(segment: list[TelemetrySample], field: str) -> float:
+    values = [float(getattr(sample, field)) for sample in segment]
+    if not values:
+        return 0.0
+    return max(values) - min(values)
+
+
+def _liftoff_linear_slope_per_s(segment: list[TelemetrySample], field: str) -> float:
+    if len(segment) < 2:
+        return 0.0
+    t0_us = segment[0].timestamp_us
+    points = [
+        ((sample.timestamp_us - t0_us) / 1000000.0, float(getattr(sample, field)))
+        for sample in segment
+    ]
+    t_mean = sum(t_s for t_s, _value in points) / len(points)
+    v_mean = sum(value for _t_s, value in points) / len(points)
+    denominator = sum((t_s - t_mean) ** 2 for t_s, _value in points)
+    if denominator <= 0.0:
+        return 0.0
+    return sum((t_s - t_mean) * (value - v_mean) for t_s, value in points) / denominator
+
+
+def analyze_liftoff_pre_start_samples(samples: list[TelemetrySample]) -> dict[str, object]:
+    """Analyze the quiet pre-start window used to qualify target-hit samples."""
+
+    duration_s = _liftoff_segment_duration_s(samples)
+    roll_pp = _liftoff_value_peak_to_peak(samples, "angle_measured_roll")
+    pitch_pp = _liftoff_value_peak_to_peak(samples, "angle_measured_pitch")
+    roll_slope = _liftoff_linear_slope_per_s(samples, "angle_measured_roll")
+    pitch_slope = _liftoff_linear_slope_per_s(samples, "angle_measured_pitch")
+    gyro_abs_max = max(
+        (
+            abs(float(getattr(sample, field)))
+            for sample in samples
+            for field in ("filtered_gyro_x", "filtered_gyro_y", "filtered_gyro_z")
+        ),
+        default=0.0,
+    )
+    validity_ok = bool(samples) and all(
+        sample.kalman_valid and sample.ground_ref_valid and sample.battery_valid
+        for sample in samples
+    )
+    available = bool(samples) and len(samples) >= 3 and duration_s >= LIFTOFF_PRE_START_MIN_WINDOW_S
+    ready = bool(
+        available and
+        validity_ok and
+        roll_pp <= LIFTOFF_PRE_START_MAX_ROLL_PP_DEG and
+        pitch_pp <= LIFTOFF_PRE_START_MAX_PITCH_PP_DEG and
+        abs(roll_slope) <= LIFTOFF_PRE_START_MAX_ROLL_SLOPE_DPS and
+        abs(pitch_slope) <= LIFTOFF_PRE_START_MAX_PITCH_SLOPE_DPS and
+        gyro_abs_max <= LIFTOFF_PRE_START_MAX_GYRO_DPS
+    )
+    return {
+        "pre_start_window_s": LIFTOFF_PRE_START_WINDOW_S,
+        "pre_start_min_window_s": LIFTOFF_PRE_START_MIN_WINDOW_S,
+        "pre_start_available": available,
+        "pre_start_ready_pass": ready,
+        "pre_start_samples": len(samples),
+        "pre_start_duration_s": duration_s,
+        "pre_start_roll_pp_deg": roll_pp,
+        "pre_start_pitch_pp_deg": pitch_pp,
+        "pre_start_roll_slope_dps": roll_slope,
+        "pre_start_pitch_slope_dps": pitch_slope,
+        "pre_start_gyro_abs_max_dps": gyro_abs_max,
+        "pre_start_validity_ok": validity_ok,
+        "pre_start_roll_pp_limit_deg": LIFTOFF_PRE_START_MAX_ROLL_PP_DEG,
+        "pre_start_pitch_pp_limit_deg": LIFTOFF_PRE_START_MAX_PITCH_PP_DEG,
+        "pre_start_roll_slope_limit_dps": LIFTOFF_PRE_START_MAX_ROLL_SLOPE_DPS,
+        "pre_start_pitch_slope_limit_dps": LIFTOFF_PRE_START_MAX_PITCH_SLOPE_DPS,
+        "pre_start_gyro_limit_dps": LIFTOFF_PRE_START_MAX_GYRO_DPS,
+    }
+
+
 def _liftoff_segment_validity_ok(segment: list[TelemetrySample]) -> bool:
     return bool(segment) and all(
         sample.kalman_valid and sample.attitude_valid and sample.ground_ref_valid and sample.battery_valid
@@ -450,6 +537,35 @@ def _liftoff_segment_outer_ok(segment: list[TelemetrySample]) -> bool:
     return bool(segment) and all(sample.outer_loop_clamp_flag == 0 for sample in segment)
 
 
+def classify_liftoff_verify_result(result: dict[str, object]) -> str:
+    """Return the qualification/control class for one liftoff-verify round."""
+
+    if int(result.get("active_samples", 0)) <= 0 or result.get("round_error"):
+        return LIFTOFF_SAMPLE_INVALID
+    if bool(result.get("pre_start_available", False)) and not bool(result.get("pre_start_ready_pass", False)):
+        return LIFTOFF_SAMPLE_PRE_START_NOT_READY
+    if not bool(result.get("target_hit_reached", False)):
+        return LIFTOFF_SAMPLE_INVALID
+    if not bool(result.get("pre_hit_ready_pass", False)):
+        return LIFTOFF_SAMPLE_PRE_HIT_POLLUTED
+    if bool(result.get("target_hit_pass", False)):
+        target_hit_time = result.get("target_hit_time_s")
+        if (
+            not bool(result.get("long_ground_hold_pass", False)) and
+            target_hit_time is not None and
+            float(result.get("active_duration_s", 0.0)) >=
+            float(target_hit_time) + float(result.get("target_hit_window_s", LIFTOFF_TARGET_HIT_WINDOW_S)) + 0.20 and
+            (
+                int(result.get("terminal_trip_reason", 0)) != 0 or
+                int(result.get("inner_motor_clamp_max", 0)) != 0 or
+                int(result.get("motor_saturation_max", 0)) != 0
+            )
+        ):
+            return LIFTOFF_SAMPLE_LONG_GROUND_HOLD_FAIL
+        return LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_PASS
+    return LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_FAIL
+
+
 def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: float) -> dict[str, object]:
     active = [
         sample for sample in samples
@@ -457,7 +573,11 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         and sample.control_submode == GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF
     ]
     terminal_trip = 0
-    for sample in reversed(samples):
+    terminal_scan = samples
+    if active:
+        first_active_ts = active[0].timestamp_us
+        terminal_scan = [sample for sample in samples if sample.timestamp_us >= first_active_ts]
+    for sample in terminal_scan:
         if sample.ground_trip_reason != 0:
             terminal_trip = int(sample.ground_trip_reason)
             break
@@ -511,6 +631,23 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         "target_hit_window_roll_delta_deg": 0.0,
         "target_hit_window_pitch_delta_deg": 0.0,
         "target_hit_approach_ok": False,
+        "pre_start_window_s": LIFTOFF_PRE_START_WINDOW_S,
+        "pre_start_min_window_s": LIFTOFF_PRE_START_MIN_WINDOW_S,
+        "pre_start_available": False,
+        "pre_start_ready_pass": False,
+        "pre_start_samples": 0,
+        "pre_start_duration_s": 0.0,
+        "pre_start_roll_pp_deg": 0.0,
+        "pre_start_pitch_pp_deg": 0.0,
+        "pre_start_roll_slope_dps": 0.0,
+        "pre_start_pitch_slope_dps": 0.0,
+        "pre_start_gyro_abs_max_dps": 0.0,
+        "pre_start_validity_ok": False,
+        "pre_start_roll_pp_limit_deg": LIFTOFF_PRE_START_MAX_ROLL_PP_DEG,
+        "pre_start_pitch_pp_limit_deg": LIFTOFF_PRE_START_MAX_PITCH_PP_DEG,
+        "pre_start_roll_slope_limit_dps": LIFTOFF_PRE_START_MAX_ROLL_SLOPE_DPS,
+        "pre_start_pitch_slope_limit_dps": LIFTOFF_PRE_START_MAX_PITCH_SLOPE_DPS,
+        "pre_start_gyro_limit_dps": LIFTOFF_PRE_START_MAX_GYRO_DPS,
         "pre_hit_window_s": LIFTOFF_PRE_HIT_WINDOW_S,
         "pre_hit_ready_pass": False,
         "pre_hit_samples": 0,
@@ -555,9 +692,18 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         "baro_peak_rise_m": 0.0,
         "baro_confirmed_rise_samples": 0,
         "axis": {},
+        "sample_class": LIFTOFF_SAMPLE_INVALID,
     }
     if not active:
         return result
+
+    first_active_ts = active[0].timestamp_us
+    pre_start_start_ts = first_active_ts - int(LIFTOFF_PRE_START_WINDOW_S * 1000000.0)
+    pre_start_window = [
+        sample for sample in samples
+        if pre_start_start_ts <= sample.timestamp_us < first_active_ts
+    ]
+    result.update(analyze_liftoff_pre_start_samples(pre_start_window))
 
     result["active_duration_s"] = max(0.0, (active[-1].timestamp_us - active[0].timestamp_us) / 1000000.0)
     steady_threshold = max(0.05, base_duty * 0.5)
@@ -808,6 +954,7 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         result["target_hit_pass"] or
         (result["early_ramp_safety_pass"] and not result["target_hit_reached"])
     )
+    result["sample_class"] = classify_liftoff_verify_result(result)
     return result
 
 
@@ -831,7 +978,26 @@ def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
             "verdicts: "
             f"early_ramp_safety_pass={result.get('early_ramp_safety_pass', False)} "
             f"target_hit_pass={result.get('target_hit_pass', False)} "
-            f"long_ground_hold_pass={result.get('long_ground_hold_pass', False)}"
+            f"long_ground_hold_pass={result.get('long_ground_hold_pass', False)} "
+            f"sample_class={result.get('sample_class', LIFTOFF_SAMPLE_INVALID)}"
+        ),
+        (
+            f"pre_start: window_s={result.get('pre_start_window_s', LIFTOFF_PRE_START_WINDOW_S):.2f} "
+            f"available={result.get('pre_start_available', False)} "
+            f"ready_pass={result.get('pre_start_ready_pass', False)} "
+            f"samples={result.get('pre_start_samples', 0)} "
+            f"duration_s={result.get('pre_start_duration_s', 0.0):.3f} "
+            f"validity_ok={result.get('pre_start_validity_ok', False)} "
+            f"roll_pp_deg={result.get('pre_start_roll_pp_deg', 0.0):.3f}/"
+            f"{result.get('pre_start_roll_pp_limit_deg', LIFTOFF_PRE_START_MAX_ROLL_PP_DEG):.3f} "
+            f"pitch_pp_deg={result.get('pre_start_pitch_pp_deg', 0.0):.3f}/"
+            f"{result.get('pre_start_pitch_pp_limit_deg', LIFTOFF_PRE_START_MAX_PITCH_PP_DEG):.3f} "
+            f"roll_slope_dps={result.get('pre_start_roll_slope_dps', 0.0):.3f}/"
+            f"{result.get('pre_start_roll_slope_limit_dps', LIFTOFF_PRE_START_MAX_ROLL_SLOPE_DPS):.3f} "
+            f"pitch_slope_dps={result.get('pre_start_pitch_slope_dps', 0.0):.3f}/"
+            f"{result.get('pre_start_pitch_slope_limit_dps', LIFTOFF_PRE_START_MAX_PITCH_SLOPE_DPS):.3f} "
+            f"gyro_abs_max_dps={result.get('pre_start_gyro_abs_max_dps', 0.0):.3f}/"
+            f"{result.get('pre_start_gyro_limit_dps', LIFTOFF_PRE_START_MAX_GYRO_DPS):.3f}"
         ),
         (
             f"target_hit: reached={result.get('target_hit_reached', False)} "
@@ -1719,9 +1885,16 @@ def cmd_liftoff_verify(session: DeviceSession, args) -> int:
     return 0
 
 
-def cmd_liftoff_verify_round(session: DeviceSession, args) -> int:
-    require_low_risk_liftoff_capability(session)
-    output_dir = Path(args.output_dir)
+def _run_liftoff_verify_round_once(
+    session: DeviceSession,
+    *,
+    base_duty: float,
+    duration_s: float,
+    settle_s: float,
+    output_dir: Path,
+    apply_safe_params: bool,
+    auto_arm: bool,
+) -> tuple[Path, dict[str, object], Exception | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
     path = output_dir / f"{stamp}_liftoff_verify_round.csv"
@@ -1729,14 +1902,12 @@ def cmd_liftoff_verify_round(session: DeviceSession, args) -> int:
     result: dict[str, object] | None = None
     round_error: Exception | None = None
 
-    base_duty = float(args.base_duty)
-    duration_s = float(args.duration_s)
     if base_duty < 0.0 or base_duty > LIFTOFF_VERIFY_MAX_BASE_DUTY:
         raise ValueError(f"liftoff verify base duty must be <= {LIFTOFF_VERIFY_MAX_BASE_DUTY:.2f}")
     if duration_s <= 0.0 or duration_s > LIFTOFF_VERIFY_MAX_DURATION_S:
         raise ValueError(f"liftoff verify duration must be >0 and <={LIFTOFF_VERIFY_MAX_DURATION_S:.1f} seconds")
 
-    if not args.no_apply_safe_params:
+    if apply_safe_params:
         for name, type_id, value in LIFTOFF_VERIFY_SAFE_PARAMS:
             session.set_param(name, type_id, value)
         auto_disarm_ms = max(2500, int(duration_s * 1000.0) + LIFTOFF_VERIFY_AUTO_DISARM_MARGIN_MS)
@@ -1750,11 +1921,12 @@ def cmd_liftoff_verify_round(session: DeviceSession, args) -> int:
     started_stream = False
     started_log = False
     started_liftoff = False
-    auto_arm = not args.no_auto_arm
     try:
         session.start_csv_log(path)
         started_log = True
-        time.sleep(args.settle_s)
+        session.start_stream()
+        started_stream = True
+        time.sleep(settle_s)
 
         ensure_command_ok(CmdId.GROUND_CAPTURE_REF, session.ground_capture_ref())
         if auto_arm:
@@ -1763,8 +1935,6 @@ def cmd_liftoff_verify_round(session: DeviceSession, args) -> int:
 
         ensure_command_ok(CmdId.LIFTOFF_VERIFY_START, session.liftoff_verify_start(base_duty=base_duty))
         started_liftoff = True
-        session.start_stream()
-        started_stream = True
 
         deadline = time.monotonic() + duration_s
         saw_active = False
@@ -1809,13 +1979,85 @@ def cmd_liftoff_verify_round(session: DeviceSession, args) -> int:
         result["control_safe_pass"] = False
         result["passed"] = False
         result["round_error"] = str(round_error)
+        result["sample_class"] = classify_liftoff_verify_result(result)
 
+    return path, result, round_error
+
+
+def cmd_liftoff_verify_round(session: DeviceSession, args) -> int:
+    require_low_risk_liftoff_capability(session)
+    path, result, round_error = _run_liftoff_verify_round_once(
+        session,
+        base_duty=float(args.base_duty),
+        duration_s=float(args.duration_s),
+        settle_s=float(args.settle_s),
+        output_dir=Path(args.output_dir),
+        apply_safe_params=not args.no_apply_safe_params,
+        auto_arm=not args.no_auto_arm,
+    )
     print(f"liftoff_verify_round_log={path}")
     if round_error is not None:
         print(f"round_error={round_error}")
     for line in format_liftoff_verify_summary(result):
         print(line)
     return 0 if result.get("passed", False) else 2
+
+
+def cmd_liftoff_auto16(session: DeviceSession, args) -> int:
+    require_low_risk_liftoff_capability(session)
+    attempts = max(1, min(int(args.attempts), 3))
+    for name, type_id, value in (
+        ("liftoff_verify_ramp_duty_per_s", 4, 0.10),
+        ("ground_test_motor_balance_limit", 4, 0.06),
+        ("liftoff_verify_max_extra_duty", 4, 0.04),
+    ):
+        session.set_param(name, type_id, value)
+
+    clean_passes = 0
+    clean_fails = 0
+    polluted = 0
+    invalid = 0
+    for attempt in range(1, attempts + 1):
+        path, result, round_error = _run_liftoff_verify_round_once(
+            session,
+            base_duty=0.16,
+            duration_s=1.8,
+            settle_s=1.0,
+            output_dir=Path(args.output_dir),
+            apply_safe_params=False,
+            auto_arm=True,
+        )
+        sample_class = str(result.get("sample_class", LIFTOFF_SAMPLE_INVALID))
+        if sample_class == LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_PASS:
+            clean_passes += 1
+        elif sample_class == LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_FAIL:
+            clean_fails += 1
+        elif sample_class in {LIFTOFF_SAMPLE_PRE_START_NOT_READY, LIFTOFF_SAMPLE_PRE_HIT_POLLUTED}:
+            polluted += 1
+        else:
+            invalid += 1
+
+        print(f"auto16_round={attempt} log={path}")
+        if round_error is not None:
+            print(f"round_error={round_error}")
+        for line in format_liftoff_verify_summary(result):
+            print(line)
+
+        if clean_passes >= 2 or clean_fails >= 2:
+            break
+
+    if clean_passes >= 2:
+        conclusion = "16% clean target-hit repeatable pass"
+    elif clean_fails >= 2:
+        conclusion = "16% clean target-hit repeatable fail"
+    else:
+        conclusion = "16% dominated by polluted/invalid samples; do not raise PWM"
+    print(
+        "auto16_summary "
+        f"attempts={attempt} clean_passes={clean_passes} clean_fails={clean_fails} "
+        f"polluted={polluted} invalid={invalid} conclusion={conclusion}"
+    )
+    return 0 if clean_passes >= 2 else 2
 
 
 def cmd_udp_manual(session: DeviceSession, args) -> int:
@@ -2286,6 +2528,17 @@ def build_parser() -> argparse.ArgumentParser:
     liftoff_round_p.add_argument("--no-auto-arm", action="store_true")
     liftoff_round_p.add_argument("--no-apply-safe-params", action="store_true")
 
+    liftoff_auto16_p = sub.add_parser(
+        "liftoff-auto16",
+        help="run the bounded 16% clean target-hit retry state machine",
+        description=(
+            "Run up to three 16% target-hit rounds with fixed low-risk parameters. "
+            "Polluted samples are counted separately from clean target-hit failures."
+        ),
+    )
+    liftoff_auto16_p.add_argument("--attempts", type=int, default=3)
+    liftoff_auto16_p.add_argument("--output-dir", default="logs")
+
     udp_manual_p = sub.add_parser(
         "udp-manual",
         help="experimental UDP manual control; not free-flight ready",
@@ -2417,6 +2670,7 @@ def main(argv: list[str] | None = None) -> int:
             "attitude-ground-round": cmd_attitude_ground_verify_round,
             "liftoff-verify": cmd_liftoff_verify,
             "liftoff-round": cmd_liftoff_verify_round,
+            "liftoff-auto16": cmd_liftoff_auto16,
             "udp-manual": cmd_udp_manual,
             "calib": cmd_calib,
             "axis-bench": cmd_axis_bench,

@@ -1226,6 +1226,73 @@ def test_liftoff_verify_target_hit_pass_is_independent_from_full_log_validity():
     assert result["unified_path_ok"] is False
     assert result["long_ground_hold_pass"] is False
     assert result["passed"] is True
+    assert result["sample_class"] == "clean_target_hit_pass"
+
+
+def test_liftoff_verify_pre_start_readiness_qualifies_clean_sample():
+    samples = []
+    for index in range(20):
+        sample = make_liftoff_sample(
+            index,
+            base_duty_active=0.0,
+            angle_roll=0.05,
+            angle_pitch=-0.04,
+            timestamp_start_us=4_600_000,
+        )
+        sample.control_mode = 0
+        sample.control_submode = 0
+        sample.filtered_gyro_x = 0.2
+        sample.filtered_gyro_y = -0.1
+        sample.filtered_gyro_z = 0.15
+        samples.append(sample)
+    for index in range(100):
+        t_s = index * 0.02
+        base = min(0.16, 0.10 * t_s)
+        sample = make_liftoff_sample(index, base_duty_active=base, angle_roll=0.6, angle_pitch=-0.4)
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.16)
+
+    assert result["pre_start_available"] is True
+    assert result["pre_start_ready_pass"] is True
+    assert result["pre_start_roll_pp_deg"] == pytest.approx(0.0)
+    assert result["pre_start_pitch_pp_deg"] == pytest.approx(0.0)
+    assert result["pre_start_gyro_abs_max_dps"] == pytest.approx(0.2)
+    assert result["target_hit_pass"] is True
+    assert result["sample_class"] == "clean_target_hit_pass"
+
+
+def test_liftoff_verify_pre_start_not_ready_is_pollution_not_clean_failure():
+    samples = []
+    for index in range(20):
+        roll = 0.12 * index
+        pitch = -0.04 * index
+        sample = make_liftoff_sample(
+            index,
+            base_duty_active=0.0,
+            angle_roll=roll,
+            angle_pitch=pitch,
+            timestamp_start_us=4_600_000,
+        )
+        sample.control_mode = 0
+        sample.control_submode = 0
+        sample.filtered_gyro_x = 0.4
+        sample.filtered_gyro_y = 0.2
+        sample.filtered_gyro_z = 0.3
+        samples.append(sample)
+    for index in range(100):
+        t_s = index * 0.02
+        base = min(0.16, 0.10 * t_s)
+        sample = make_liftoff_sample(index, base_duty_active=base, angle_roll=0.6, angle_pitch=-0.4)
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.16)
+
+    assert result["pre_start_available"] is True
+    assert result["pre_start_ready_pass"] is False
+    assert result["pre_start_roll_pp_deg"] > 0.8
+    assert result["target_hit_pass"] is True
+    assert result["sample_class"] == "pre_start_not_ready_sample"
 
 
 def test_liftoff_verify_pre_hit_attitude_worsening_blocks_target_hit_pass():
@@ -1251,6 +1318,7 @@ def test_liftoff_verify_pre_hit_attitude_worsening_blocks_target_hit_pass():
     assert result["target_hit_window_safety_ok"] is True
     assert result["target_hit_window_output_ok"] is True
     assert result["target_hit_pass"] is False
+    assert result["sample_class"] == "pre_hit_polluted_sample"
 
 
 def test_liftoff_verify_pre_hit_diagnosis_reports_output_edge_state():
@@ -2114,6 +2182,10 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert liftoff_round_args.command == "liftoff-round"
     assert liftoff_round_args.base_duty == pytest.approx(0.10)
     assert liftoff_round_args.duration_s == pytest.approx(2.0)
+
+    liftoff_auto_args = build_parser().parse_args(["--serial", "COM7", "liftoff-auto16", "--attempts", "3"])
+    assert liftoff_auto_args.command == "liftoff-auto16"
+    assert liftoff_auto_args.attempts == 3
 
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):

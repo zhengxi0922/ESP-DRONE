@@ -59,6 +59,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, package_root_text)
 
 from esp_drone_cli.core import DeviceSession, ParamValue, TelemetrySample
+from esp_drone_cli.cli.main import analyze_liftoff_pre_start_samples
 from esp_drone_cli.core.ground_bench import run_ground_bench_round
 from esp_drone_cli.core.protocol.messages import CmdId, ensure_command_ok
 
@@ -1678,6 +1679,7 @@ class MainWindow(QMainWindow):
         self._udp_manual_enabled = False
         self._udp_manual_last_send_monotonic: float | None = None
         self._udp_manual_send_inflight = False
+        self._liftoff_readiness_samples: deque[TelemetrySample] = deque(maxlen=120)
 
         self._build_ui()
         self._wire_signals()
@@ -2540,14 +2542,23 @@ class MainWindow(QMainWindow):
         self.ground_ref_status_label = QLabel("-")
         self.ground_kalman_status_label = QLabel("-")
         self.ground_trip_status_label = QLabel("-")
+        self.ground_pre_start_ready_label = QLabel("-")
+        self.ground_sample_class_label = QLabel("-")
+        self.ground_liftoff_hint_label = QLabel("-")
         ground_layout.addWidget(QLabel("Current Ref"), 8, 0)
         ground_layout.addWidget(self.ground_ref_status_label, 8, 1)
         ground_layout.addWidget(QLabel("Kalman"), 8, 2)
         ground_layout.addWidget(self.ground_kalman_status_label, 8, 3)
         ground_layout.addWidget(QLabel("Trip"), 9, 0)
         ground_layout.addWidget(self.ground_trip_status_label, 9, 1, 1, 3)
+        ground_layout.addWidget(QLabel("Pre-start"), 10, 0)
+        ground_layout.addWidget(self.ground_pre_start_ready_label, 10, 1)
+        ground_layout.addWidget(QLabel("Sample class"), 10, 2)
+        ground_layout.addWidget(self.ground_sample_class_label, 10, 3)
+        ground_layout.addWidget(QLabel("Liftoff hint"), 11, 0)
+        ground_layout.addWidget(self.ground_liftoff_hint_label, 11, 1, 1, 3)
         self.ground_outer_checkbox = QCheckBox("Enable attitude outer loop")
-        ground_layout.addWidget(self.ground_outer_checkbox, 10, 0, 1, 4)
+        ground_layout.addWidget(self.ground_outer_checkbox, 12, 0, 1, 4)
         self.ground_param_spins: dict[str, QDoubleSpinBox] = {}
 
         def add_ground_param(row: int, col: int, name: str, label: str, minimum: float, maximum: float, decimals: int, step: float, value: float) -> None:
@@ -2560,7 +2571,7 @@ class MainWindow(QMainWindow):
             ground_layout.addWidget(QLabel(label), row, col)
             ground_layout.addWidget(spin, row, col + 1)
 
-        ground_row = 11
+        ground_row = 13
         ground_params = [
             ("rate_kp_roll", "rate_kp_roll", 0.0, 0.05, 5, 0.0001, 0.0007),
             ("rate_ki_roll", "rate_ki_roll", 0.0, 0.02, 5, 0.0001, 0.0),
@@ -3944,6 +3955,38 @@ class MainWindow(QMainWindow):
         else:
             _set_badge(self.status_cards["stream"][1], self._t("status.stream_off"), "neutral")
 
+    def _update_liftoff_readiness_status(self, sample: TelemetrySample) -> None:
+        if not hasattr(self, "ground_pre_start_ready_label"):
+            return
+        active_liftoff = sample.control_mode == 6 and sample.control_submode == 2
+        self._liftoff_readiness_samples.append(sample)
+        if active_liftoff:
+            _set_badge(self.ground_pre_start_ready_label, "Running", "active")
+            self.ground_sample_class_label.setText("running")
+            self.ground_liftoff_hint_label.setText("Low-risk liftoff verify active")
+            return
+
+        cutoff_us = sample.timestamp_us - int(0.40 * 1000000.0)
+        window = [
+            item for item in self._liftoff_readiness_samples
+            if item.timestamp_us >= cutoff_us and not (item.control_mode == 6 and item.control_submode == 2)
+        ]
+        readiness = analyze_liftoff_pre_start_samples(window)
+        if readiness["pre_start_ready_pass"]:
+            _set_badge(self.ground_pre_start_ready_label, "Ready", "ok")
+            self.ground_sample_class_label.setText("waiting for target-hit sample")
+            self.ground_liftoff_hint_label.setText("Ready for liftoff verify")
+            self.liftoff_verify_start_button.setToolTip("Pre-start ready; normal low-risk verify is allowed.")
+            return
+        _set_badge(self.ground_pre_start_ready_label, "Not Ready", "warn")
+        self.ground_sample_class_label.setText("pre-start not ready")
+        if not readiness["pre_start_available"]:
+            hint = "Wait for 0.4s of telemetry before judging readiness"
+        else:
+            hint = "建议重新捕获参考/等待静止"
+        self.ground_liftoff_hint_label.setText(hint)
+        self.liftoff_verify_start_button.setToolTip(hint)
+
     def _on_telemetry_received(self, sample: TelemetrySample) -> None:
         self._last_telemetry = sample
         self._history.append(sample)
@@ -3986,6 +4029,7 @@ class MainWindow(QMainWindow):
             self.ground_ref_status_label.setText("valid" if sample.ground_ref_valid else "missing")
             self.ground_kalman_status_label.setText("valid" if sample.kalman_valid else "invalid")
             self.ground_trip_status_label.setText(str(sample.ground_trip_reason))
+            self._update_liftoff_readiness_status(sample)
         self._refresh_udp_watchdog_status()
         self._update_stream_chip()
 
