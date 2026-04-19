@@ -68,7 +68,7 @@ LIFTOFF_NEAR_BARO_DELTA_M = 0.04
 LIFTOFF_CONFIRMED_BARO_DELTA_M = 0.18
 LIFTOFF_CONFIRMED_BARO_RISE_M = 0.12
 LIFTOFF_CONFIRMED_MIN_RISE_SAMPLES = 3
-LIFTOFF_VERIFY_MAX_BASE_DUTY = 0.18
+LIFTOFF_VERIFY_MAX_BASE_DUTY = 0.26
 LIFTOFF_VERIFY_MAX_DURATION_S = 3.5
 LIFTOFF_VERIFY_AUTO_DISARM_MARGIN_MS = 400
 LIFTOFF_TARGET_HIT_DUTY_TOLERANCE = 0.001
@@ -94,6 +94,9 @@ LIFTOFF_SAMPLE_PRE_HIT_POLLUTED = "pre_hit_polluted_sample"
 LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_PASS = "clean_target_hit_pass"
 LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_FAIL = "clean_target_hit_fail"
 LIFTOFF_SAMPLE_LONG_GROUND_HOLD_FAIL = "long_ground_hold_fail"
+LIFTOFF_NEAR_THRESHOLD_DUTIES = (0.22, 0.24, 0.25)
+LIFTOFF_NEAR_THRESHOLD_RAMP_DUTY_PER_S = 0.25
+LIFTOFF_NEAR_THRESHOLD_POST_HIT_OBSERVE_S = 0.35
 UNIFIED_PATH_TOLERANCE_DPS = 0.05
 UNIFIED_PATH_MIN_RATIO = 0.98
 UNIFIED_PATH_MAX_TRANSIENT_DPS = 0.25
@@ -2152,6 +2155,106 @@ def cmd_liftoff_auto16(session: DeviceSession, args) -> int:
     return 0 if clean_passes >= 2 else 2
 
 
+def _liftoff_near_threshold_duration_s(base_duty: float) -> float:
+    return min(
+        LIFTOFF_VERIFY_MAX_DURATION_S,
+        max(1.0, (base_duty / LIFTOFF_NEAR_THRESHOLD_RAMP_DUTY_PER_S) + LIFTOFF_NEAR_THRESHOLD_POST_HIT_OBSERVE_S),
+    )
+
+
+def cmd_liftoff_near_threshold(session: DeviceSession, args) -> int:
+    require_low_risk_liftoff_capability(session)
+    max_attempts = max(1, min(int(args.attempts_per_duty), 3))
+    for name, type_id, value in (
+        ("liftoff_verify_ramp_duty_per_s", 4, LIFTOFF_NEAR_THRESHOLD_RAMP_DUTY_PER_S),
+        ("ground_test_motor_balance_limit", 4, 0.06),
+        ("liftoff_verify_max_extra_duty", 4, 0.04),
+    ):
+        session.set_param(name, type_id, value)
+
+    stage_results: list[dict[str, object]] = []
+    final_conclusion = "near-threshold sequence incomplete"
+    for base_duty in LIFTOFF_NEAR_THRESHOLD_DUTIES:
+        clean_passes = 0
+        clean_fails = 0
+        polluted = 0
+        invalid = 0
+        duration_s = _liftoff_near_threshold_duration_s(base_duty)
+        duty_records: list[dict[str, object]] = []
+        for attempt in range(1, max_attempts + 1):
+            path, result, round_error = _run_liftoff_verify_round_once(
+                session,
+                base_duty=base_duty,
+                duration_s=duration_s,
+                settle_s=1.0,
+                output_dir=Path(args.output_dir),
+                apply_safe_params=False,
+                auto_arm=True,
+                ready_gate=True,
+                ready_timeout_s=float(args.ready_timeout_s),
+                ready_hold_s=float(args.ready_hold_s),
+            )
+            sample_class = str(result.get("sample_class", LIFTOFF_SAMPLE_INVALID))
+            if sample_class == LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_PASS:
+                clean_passes += 1
+            elif sample_class == LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_FAIL:
+                clean_fails += 1
+            elif sample_class in {LIFTOFF_SAMPLE_PRE_START_NOT_READY, LIFTOFF_SAMPLE_PRE_HIT_POLLUTED}:
+                polluted += 1
+            else:
+                invalid += 1
+
+            record = {
+                "duty": base_duty,
+                "attempt": attempt,
+                "path": path,
+                "result": result,
+                "round_error": round_error,
+                "sample_class": sample_class,
+            }
+            duty_records.append(record)
+            stage_results.append(record)
+
+            print(f"near_threshold_round duty={base_duty:.2f} attempt={attempt} log={path}")
+            if round_error is not None:
+                print(f"round_error={round_error}")
+            for line in format_liftoff_verify_summary(result):
+                print(line)
+
+            if int(result.get("failsafe_reason", 0)) != 0:
+                final_conclusion = f"{base_duty:.2f} stopped on failsafe"
+                break
+            if clean_passes >= 2:
+                break
+            if clean_fails >= 2:
+                final_conclusion = f"{base_duty:.2f} clean target-hit repeatable fail"
+                break
+        if final_conclusion.endswith("failsafe") or "repeatable fail" in final_conclusion:
+            break
+        if clean_passes >= 2:
+            if base_duty >= LIFTOFF_NEAR_THRESHOLD_DUTIES[-1]:
+                final_conclusion = "25% clean target-hit repeatable pass; do not auto-run 26%"
+                break
+            continue
+        final_conclusion = (
+            f"{base_duty:.2f} did not reach two clean passes "
+            f"(clean_passes={clean_passes} clean_fails={clean_fails} polluted={polluted} invalid={invalid})"
+        )
+        break
+
+    total_by_class: dict[str, int] = {}
+    for record in stage_results:
+        sample_class = str(record["sample_class"])
+        total_by_class[sample_class] = total_by_class.get(sample_class, 0) + 1
+    print(
+        "near_threshold_summary "
+        f"rounds={len(stage_results)} "
+        f"classes={total_by_class} "
+        f"conclusion={final_conclusion}"
+    )
+    return 0 if "25% clean target-hit repeatable pass" in final_conclusion else 2
+
+
 def cmd_udp_manual(session: DeviceSession, args) -> int:
     """Run experimental UDP manual-control commands."""
 
@@ -2633,6 +2736,19 @@ def build_parser() -> argparse.ArgumentParser:
     liftoff_auto16_p.add_argument("--ready-timeout-s", type=float, default=LIFTOFF_PRE_START_READY_TIMEOUT_S)
     liftoff_auto16_p.add_argument("--ready-hold-s", type=float, default=LIFTOFF_PRE_START_READY_HOLD_S)
 
+    liftoff_near_p = sub.add_parser(
+        "liftoff-near-threshold",
+        help="run the autonomous 22/24/25%% near-threshold target-hit sequence",
+        description=(
+            "Run the near-threshold target-hit ladder: 22%%, 24%%, then 25%%. "
+            "The sequence requires two clean passes at a duty before moving up and never auto-runs 26%%."
+        ),
+    )
+    liftoff_near_p.add_argument("--attempts-per-duty", type=int, default=3)
+    liftoff_near_p.add_argument("--output-dir", default="logs")
+    liftoff_near_p.add_argument("--ready-timeout-s", type=float, default=LIFTOFF_PRE_START_READY_TIMEOUT_S)
+    liftoff_near_p.add_argument("--ready-hold-s", type=float, default=LIFTOFF_PRE_START_READY_HOLD_S)
+
     udp_manual_p = sub.add_parser(
         "udp-manual",
         help="experimental UDP manual control; not free-flight ready",
@@ -2765,6 +2881,7 @@ def main(argv: list[str] | None = None) -> int:
             "liftoff-verify": cmd_liftoff_verify,
             "liftoff-round": cmd_liftoff_verify_round,
             "liftoff-auto16": cmd_liftoff_auto16,
+            "liftoff-near-threshold": cmd_liftoff_near_threshold,
             "udp-manual": cmd_udp_manual,
             "calib": cmd_calib,
             "axis-bench": cmd_axis_bench,

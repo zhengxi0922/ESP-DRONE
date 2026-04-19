@@ -2219,6 +2219,14 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert liftoff_auto_args.ready_hold_s == pytest.approx(0.40)
     assert "16%" in build_parser().format_help()
 
+    liftoff_near_args = build_parser().parse_args(
+        ["--serial", "COM7", "liftoff-near-threshold", "--attempts-per-duty", "3"]
+    )
+    assert liftoff_near_args.command == "liftoff-near-threshold"
+    assert liftoff_near_args.attempts_per_duty == 3
+    assert liftoff_near_args.ready_timeout_s == pytest.approx(12.0)
+    assert "22/24/25%" in build_parser().format_help()
+
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
     real_import = builtins.__import__
