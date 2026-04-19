@@ -97,6 +97,21 @@ LIFTOFF_SAMPLE_LONG_GROUND_HOLD_FAIL = "long_ground_hold_fail"
 LIFTOFF_NEAR_THRESHOLD_DUTIES = (0.22, 0.24, 0.25)
 LIFTOFF_NEAR_THRESHOLD_RAMP_DUTY_PER_S = 0.25
 LIFTOFF_NEAR_THRESHOLD_POST_HIT_OBSERVE_S = 0.35
+LIFTOFF_NEAR_TARGET_HIT_WINDOW_S = 0.35
+LIFTOFF_NEAR_TARGET_HIT_MIN_WINDOW_S = 0.25
+LIFTOFF_PRE_HIT_LEVEL_NOMINAL = "nominal"
+LIFTOFF_PRE_HIT_LEVEL_MARGINAL = "marginal"
+LIFTOFF_PRE_HIT_LEVEL_BAD = "bad"
+LIFTOFF_NEAR_THRESHOLD_PASS = "near_threshold_pass"
+LIFTOFF_NEAR_THRESHOLD_MARGINAL_PASS = "near_threshold_marginal_pass"
+LIFTOFF_NEAR_THRESHOLD_FAIL = "near_threshold_fail"
+LIFTOFF_NEAR_THRESHOLD_NOT_APPLICABLE = "not_applicable"
+LIFTOFF_NEAR_PRE_HIT_MARGINAL_TILT_DEG = 5.0
+LIFTOFF_NEAR_PRE_HIT_BAD_TILT_DEG = 7.0
+LIFTOFF_NEAR_MAX_TILT_DEG = 6.5
+LIFTOFF_NEAR_MAX_TILT_DELTA_DEG = 5.0
+LIFTOFF_NEAR_YAW_SPIN_DPS = 60.0
+LIFTOFF_NEAR_SUSTAINED_LIMIT_SAMPLES = 3
 UNIFIED_PATH_TOLERANCE_DPS = 0.05
 UNIFIED_PATH_MIN_RATIO = 0.98
 UNIFIED_PATH_MAX_TRANSIENT_DPS = 0.25
@@ -530,6 +545,18 @@ def _liftoff_segment_output_ok(segment: list[TelemetrySample]) -> bool:
     )
 
 
+def _liftoff_max_consecutive(samples: list[TelemetrySample], predicate) -> int:
+    best = 0
+    current = 0
+    for sample in samples:
+        if predicate(sample):
+            current += 1
+            best = max(best, current)
+        else:
+            current = 0
+    return best
+
+
 def _liftoff_segment_attitude_ok(
     segment: list[TelemetrySample],
     *,
@@ -587,6 +614,54 @@ def classify_liftoff_verify_result(result: dict[str, object]) -> str:
             return LIFTOFF_SAMPLE_LONG_GROUND_HOLD_FAIL
         return LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_PASS
     return LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_FAIL
+
+
+def classify_liftoff_pre_hit_level(result: dict[str, object]) -> str:
+    if not bool(result.get("target_hit_reached", False)) or int(result.get("pre_hit_samples", 0)) <= 0:
+        return LIFTOFF_PRE_HIT_LEVEL_BAD
+    if (
+        not bool(result.get("pre_hit_validity_ok", False)) or
+        bool(result.get("pre_hit_inner_clamp_seen", False)) or
+        bool(result.get("pre_hit_saturation_seen", False))
+    ):
+        return LIFTOFF_PRE_HIT_LEVEL_BAD
+    pre_hit_tilt = max(
+        float(result.get("pre_hit_roll_abs_max_deg", 0.0)),
+        float(result.get("pre_hit_pitch_abs_max_deg", 0.0)),
+    )
+    if pre_hit_tilt > LIFTOFF_NEAR_PRE_HIT_BAD_TILT_DEG:
+        return LIFTOFF_PRE_HIT_LEVEL_BAD
+    if (
+        pre_hit_tilt > max(LIFTOFF_PRE_HIT_MAX_ROLL_DEG, LIFTOFF_PRE_HIT_MAX_PITCH_DEG) or
+        bool(result.get("pre_hit_outer_clamp_seen", False))
+    ):
+        return LIFTOFF_PRE_HIT_LEVEL_MARGINAL
+    return LIFTOFF_PRE_HIT_LEVEL_NOMINAL
+
+
+def classify_near_threshold_result(result: dict[str, object]) -> str:
+    if not bool(result.get("near_threshold_reached", False)):
+        return LIFTOFF_NEAR_THRESHOLD_FAIL
+    if not bool(result.get("near_threshold_window_coverage_ok", False)):
+        return LIFTOFF_NEAR_THRESHOLD_FAIL
+    if (
+        int(result.get("near_threshold_terminal_trip", 0)) != 0 or
+        int(result.get("near_threshold_failsafe_reason", 0)) != 0 or
+        int(result.get("near_threshold_ground_trip_reason", 0)) != 0 or
+        bool(result.get("near_threshold_sustained_clamp_seen", False)) or
+        bool(result.get("near_threshold_sustained_saturation_seen", False)) or
+        bool(result.get("near_threshold_yaw_spin_seen", False)) or
+        bool(result.get("near_threshold_attitude_diverge_seen", False)) or
+        result.get("pre_hit_level") == LIFTOFF_PRE_HIT_LEVEL_BAD
+    ):
+        return LIFTOFF_NEAR_THRESHOLD_FAIL
+    if (
+        result.get("pre_hit_level") == LIFTOFF_PRE_HIT_LEVEL_MARGINAL or
+        int(result.get("near_threshold_clamp_samples", 0)) > 0 or
+        int(result.get("near_threshold_saturation_samples", 0)) > 0
+    ):
+        return LIFTOFF_NEAR_THRESHOLD_MARGINAL_PASS
+    return LIFTOFF_NEAR_THRESHOLD_PASS
 
 
 def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: float) -> dict[str, object]:
@@ -682,6 +757,30 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         "pre_hit_validity_ok": False,
         "pre_hit_roll_limit_deg": LIFTOFF_PRE_HIT_MAX_ROLL_DEG,
         "pre_hit_pitch_limit_deg": LIFTOFF_PRE_HIT_MAX_PITCH_DEG,
+        "pre_hit_level": LIFTOFF_PRE_HIT_LEVEL_BAD,
+        "near_threshold_window_s": LIFTOFF_NEAR_TARGET_HIT_WINDOW_S,
+        "near_threshold_min_window_s": LIFTOFF_NEAR_TARGET_HIT_MIN_WINDOW_S,
+        "near_threshold_reached": False,
+        "near_threshold_window_samples": 0,
+        "near_threshold_window_duration_s": 0.0,
+        "near_threshold_window_coverage_ok": False,
+        "near_threshold_terminal_trip": 0,
+        "near_threshold_failsafe_reason": 0,
+        "near_threshold_ground_trip_reason": 0,
+        "near_threshold_clamp_samples": 0,
+        "near_threshold_saturation_samples": 0,
+        "near_threshold_max_consecutive_clamp": 0,
+        "near_threshold_max_consecutive_saturation": 0,
+        "near_threshold_sustained_clamp_seen": False,
+        "near_threshold_sustained_saturation_seen": False,
+        "near_threshold_max_roll_deg": 0.0,
+        "near_threshold_max_pitch_deg": 0.0,
+        "near_threshold_roll_delta_deg": 0.0,
+        "near_threshold_pitch_delta_deg": 0.0,
+        "near_threshold_max_yaw_rate_dps": 0.0,
+        "near_threshold_yaw_spin_seen": False,
+        "near_threshold_attitude_diverge_seen": False,
+        "near_threshold_sample_class": LIFTOFF_NEAR_THRESHOLD_FAIL,
         "long_ground_hold_pass": False,
         "physical_liftoff_state": LIFTOFF_STATE_NO,
         "physical_liftoff_confirmed": False,
@@ -847,6 +946,67 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
             result["target_hit_window_attitude_ok"] and
             result["target_hit_approach_ok"]
         )
+        result["pre_hit_level"] = classify_liftoff_pre_hit_level(result)
+
+        near_window_end_us = target_sample.timestamp_us + int(LIFTOFF_NEAR_TARGET_HIT_WINDOW_S * 1000000.0)
+        near_window = [
+            sample for sample in active[target_hit_index:]
+            if sample.timestamp_us <= near_window_end_us
+        ]
+        near_attitude_ok, near_roll, near_pitch, near_roll_delta, near_pitch_delta = _liftoff_segment_attitude_ok(
+            near_window,
+            max_tilt_deg=LIFTOFF_NEAR_MAX_TILT_DEG,
+            max_delta_deg=LIFTOFF_NEAR_MAX_TILT_DELTA_DEG,
+        )
+        near_clamp_samples = sum(1 for sample in near_window if (sample.inner_loop_clamp_flag & 0x01) != 0)
+        near_saturation_samples = sum(1 for sample in near_window if sample.motor_saturation_flag != 0)
+        near_clamp_consecutive = _liftoff_max_consecutive(
+            near_window,
+            lambda sample: (sample.inner_loop_clamp_flag & 0x01) != 0,
+        )
+        near_saturation_consecutive = _liftoff_max_consecutive(
+            near_window,
+            lambda sample: sample.motor_saturation_flag != 0,
+        )
+        near_max_yaw = max((abs(sample.rate_meas_yaw_filtered) for sample in near_window), default=0.0)
+        near_terminal_trip = 0
+        for sample in near_window:
+            if sample.ground_trip_reason != 0:
+                near_terminal_trip = int(sample.ground_trip_reason)
+                break
+        result["near_threshold_reached"] = True
+        result["near_threshold_window_samples"] = len(near_window)
+        result["near_threshold_window_duration_s"] = _liftoff_segment_duration_s(near_window)
+        result["near_threshold_window_coverage_ok"] = (
+            float(result["near_threshold_window_duration_s"]) >= LIFTOFF_NEAR_TARGET_HIT_MIN_WINDOW_S
+        )
+        result["near_threshold_terminal_trip"] = near_terminal_trip
+        result["near_threshold_failsafe_reason"] = max(
+            (int(sample.failsafe_reason) for sample in near_window),
+            default=0,
+        )
+        result["near_threshold_ground_trip_reason"] = max(
+            (int(sample.ground_trip_reason) for sample in near_window),
+            default=0,
+        )
+        result["near_threshold_clamp_samples"] = near_clamp_samples
+        result["near_threshold_saturation_samples"] = near_saturation_samples
+        result["near_threshold_max_consecutive_clamp"] = near_clamp_consecutive
+        result["near_threshold_max_consecutive_saturation"] = near_saturation_consecutive
+        result["near_threshold_sustained_clamp_seen"] = (
+            near_clamp_consecutive >= LIFTOFF_NEAR_SUSTAINED_LIMIT_SAMPLES
+        )
+        result["near_threshold_sustained_saturation_seen"] = (
+            near_saturation_consecutive >= LIFTOFF_NEAR_SUSTAINED_LIMIT_SAMPLES
+        )
+        result["near_threshold_max_roll_deg"] = near_roll
+        result["near_threshold_max_pitch_deg"] = near_pitch
+        result["near_threshold_roll_delta_deg"] = near_roll_delta
+        result["near_threshold_pitch_delta_deg"] = near_pitch_delta
+        result["near_threshold_max_yaw_rate_dps"] = near_max_yaw
+        result["near_threshold_yaw_spin_seen"] = near_max_yaw > LIFTOFF_NEAR_YAW_SPIN_DPS
+        result["near_threshold_attitude_diverge_seen"] = not near_attitude_ok
+        result["near_threshold_sample_class"] = classify_near_threshold_result(result)
 
     result["failsafe_reason"] = max((int(sample.failsafe_reason) for sample in active), default=0)
     result["ground_trip_reason"] = max((int(sample.ground_trip_reason) for sample in active), default=0)
@@ -1002,7 +1162,8 @@ def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
             f"early_ramp_safety_pass={result.get('early_ramp_safety_pass', False)} "
             f"target_hit_pass={result.get('target_hit_pass', False)} "
             f"long_ground_hold_pass={result.get('long_ground_hold_pass', False)} "
-            f"sample_class={result.get('sample_class', LIFTOFF_SAMPLE_INVALID)}"
+            f"sample_class={result.get('sample_class', LIFTOFF_SAMPLE_INVALID)} "
+            f"near_threshold_class={result.get('near_threshold_sample_class', LIFTOFF_NEAR_THRESHOLD_FAIL)}"
         ),
         (
             f"pre_start: window_s={result.get('pre_start_window_s', LIFTOFF_PRE_START_WINDOW_S):.2f} "
@@ -1053,7 +1214,24 @@ def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
             f"{result.get('pre_hit_pitch_limit_deg', LIFTOFF_PRE_HIT_MAX_PITCH_DEG):.3f} "
             f"outer_clamp_seen={result.get('pre_hit_outer_clamp_seen', False)} "
             f"inner_clamp_seen={result.get('pre_hit_inner_clamp_seen', False)} "
-            f"saturation_seen={result.get('pre_hit_saturation_seen', False)}"
+            f"saturation_seen={result.get('pre_hit_saturation_seen', False)} "
+            f"level={result.get('pre_hit_level', LIFTOFF_PRE_HIT_LEVEL_BAD)}"
+        ),
+        (
+            f"near_threshold: class={result.get('near_threshold_sample_class', LIFTOFF_NEAR_THRESHOLD_FAIL)} "
+            f"reached={result.get('near_threshold_reached', False)} "
+            f"window_s={result.get('near_threshold_window_s', LIFTOFF_NEAR_TARGET_HIT_WINDOW_S):.2f} "
+            f"duration_s={result.get('near_threshold_window_duration_s', 0.0):.3f} "
+            f"coverage_ok={result.get('near_threshold_window_coverage_ok', False)} "
+            f"terminal_trip={result.get('near_threshold_terminal_trip', 0)} "
+            f"failsafe={result.get('near_threshold_failsafe_reason', 0)} "
+            f"ground_trip={result.get('near_threshold_ground_trip_reason', 0)} "
+            f"clamp_samples={result.get('near_threshold_clamp_samples', 0)} "
+            f"sat_samples={result.get('near_threshold_saturation_samples', 0)} "
+            f"sustained_clamp={result.get('near_threshold_sustained_clamp_seen', False)} "
+            f"sustained_sat={result.get('near_threshold_sustained_saturation_seen', False)} "
+            f"yaw_spin={result.get('near_threshold_yaw_spin_seen', False)} "
+            f"attitude_diverge={result.get('near_threshold_attitude_diverge_seen', False)}"
         ),
         (
             f"early_ramp: samples={result.get('early_ramp_samples', 0)} "
@@ -2164,7 +2342,7 @@ def _liftoff_near_threshold_duration_s(base_duty: float) -> float:
 
 def cmd_liftoff_near_threshold(session: DeviceSession, args) -> int:
     require_low_risk_liftoff_capability(session)
-    max_attempts = max(1, min(int(args.attempts_per_duty), 3))
+    max_attempts = max(1, min(int(args.attempts_per_duty), 2))
     for name, type_id, value in (
         ("liftoff_verify_ramp_duty_per_s", 4, LIFTOFF_NEAR_THRESHOLD_RAMP_DUTY_PER_S),
         ("ground_test_motor_balance_limit", 4, 0.06),
@@ -2175,9 +2353,9 @@ def cmd_liftoff_near_threshold(session: DeviceSession, args) -> int:
     stage_results: list[dict[str, object]] = []
     final_conclusion = "near-threshold sequence incomplete"
     for base_duty in LIFTOFF_NEAR_THRESHOLD_DUTIES:
-        clean_passes = 0
-        clean_fails = 0
-        polluted = 0
+        near_passes = 0
+        near_marginal_passes = 0
+        near_fails = 0
         invalid = 0
         duration_s = _liftoff_near_threshold_duration_s(base_duty)
         duty_records: list[dict[str, object]] = []
@@ -2195,12 +2373,13 @@ def cmd_liftoff_near_threshold(session: DeviceSession, args) -> int:
                 ready_hold_s=float(args.ready_hold_s),
             )
             sample_class = str(result.get("sample_class", LIFTOFF_SAMPLE_INVALID))
-            if sample_class == LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_PASS:
-                clean_passes += 1
-            elif sample_class == LIFTOFF_SAMPLE_CLEAN_TARGET_HIT_FAIL:
-                clean_fails += 1
-            elif sample_class in {LIFTOFF_SAMPLE_PRE_START_NOT_READY, LIFTOFF_SAMPLE_PRE_HIT_POLLUTED}:
-                polluted += 1
+            near_class = str(result.get("near_threshold_sample_class", LIFTOFF_NEAR_THRESHOLD_FAIL))
+            if near_class == LIFTOFF_NEAR_THRESHOLD_PASS:
+                near_passes += 1
+            elif near_class == LIFTOFF_NEAR_THRESHOLD_MARGINAL_PASS:
+                near_marginal_passes += 1
+            elif near_class == LIFTOFF_NEAR_THRESHOLD_FAIL:
+                near_fails += 1
             else:
                 invalid += 1
 
@@ -2211,6 +2390,7 @@ def cmd_liftoff_near_threshold(session: DeviceSession, args) -> int:
                 "result": result,
                 "round_error": round_error,
                 "sample_class": sample_class,
+                "near_class": near_class,
             }
             duty_records.append(record)
             stage_results.append(record)
@@ -2224,21 +2404,22 @@ def cmd_liftoff_near_threshold(session: DeviceSession, args) -> int:
             if int(result.get("failsafe_reason", 0)) != 0:
                 final_conclusion = f"{base_duty:.2f} stopped on failsafe"
                 break
-            if clean_passes >= 2:
+            if near_passes >= 1 or near_marginal_passes >= 2:
                 break
-            if clean_fails >= 2:
-                final_conclusion = f"{base_duty:.2f} clean target-hit repeatable fail"
+            if near_fails >= 2:
+                final_conclusion = f"{base_duty:.2f} near-threshold repeatable fail"
                 break
         if final_conclusion.endswith("failsafe") or "repeatable fail" in final_conclusion:
             break
-        if clean_passes >= 2:
+        if near_passes >= 1 or near_marginal_passes >= 2:
             if base_duty >= LIFTOFF_NEAR_THRESHOLD_DUTIES[-1]:
-                final_conclusion = "25% clean target-hit repeatable pass; do not auto-run 26%"
+                final_conclusion = "25% near-threshold pass; do not auto-run 26%"
                 break
             continue
         final_conclusion = (
-            f"{base_duty:.2f} did not reach two clean passes "
-            f"(clean_passes={clean_passes} clean_fails={clean_fails} polluted={polluted} invalid={invalid})"
+            f"{base_duty:.2f} inconclusive under near-threshold rules "
+            f"(near_passes={near_passes} marginal_passes={near_marginal_passes} "
+            f"near_fails={near_fails} invalid={invalid})"
         )
         break
 
@@ -2248,11 +2429,10 @@ def cmd_liftoff_near_threshold(session: DeviceSession, args) -> int:
         total_by_class[sample_class] = total_by_class.get(sample_class, 0) + 1
     print(
         "near_threshold_summary "
-        f"rounds={len(stage_results)} "
-        f"classes={total_by_class} "
+        f"rounds={len(stage_results)} classes={total_by_class} "
         f"conclusion={final_conclusion}"
     )
-    return 0 if "25% clean target-hit repeatable pass" in final_conclusion else 2
+    return 0 if "25% near-threshold pass" in final_conclusion else 2
 
 
 def cmd_udp_manual(session: DeviceSession, args) -> int:
@@ -2741,10 +2921,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the autonomous 22/24/25%% near-threshold target-hit sequence",
         description=(
             "Run the near-threshold target-hit ladder: 22%%, 24%%, then 25%%. "
-            "The sequence requires two clean passes at a duty before moving up and never auto-runs 26%%."
+            "The sequence accepts one near-threshold pass or two marginal passes at a duty before moving up "
+            "and never auto-runs 26%%."
         ),
     )
-    liftoff_near_p.add_argument("--attempts-per-duty", type=int, default=3)
+    liftoff_near_p.add_argument("--attempts-per-duty", type=int, default=2)
     liftoff_near_p.add_argument("--output-dir", default="logs")
     liftoff_near_p.add_argument("--ready-timeout-s", type=float, default=LIFTOFF_PRE_START_READY_TIMEOUT_S)
     liftoff_near_p.add_argument("--ready-hold-s", type=float, default=LIFTOFF_PRE_START_READY_HOLD_S)

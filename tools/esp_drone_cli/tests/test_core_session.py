@@ -1370,6 +1370,44 @@ def test_liftoff_verify_pre_hit_diagnosis_reports_output_edge_state():
     assert result["pre_hit_outer_clamp_seen"] is False
 
 
+def test_near_threshold_accepts_marginal_pre_hit_if_post_hit_stays_controlled():
+    samples = []
+    for index in range(80):
+        t_s = index * 0.02
+        base = min(0.22, 0.25 * t_s)
+        angle_roll = 1.2
+        angle_pitch = -0.4
+        if 0.70 <= t_s < 0.88:
+            angle_roll = 3.5
+        sample = make_liftoff_sample(index, base_duty_active=base, angle_roll=angle_roll, angle_pitch=angle_pitch)
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.22)
+
+    assert result["target_hit_reached"] is True
+    assert result["pre_hit_level"] == "marginal"
+    assert result["near_threshold_window_duration_s"] >= 0.25
+    assert result["near_threshold_sample_class"] == "near_threshold_marginal_pass"
+
+
+def test_near_threshold_fails_on_terminal_trip_after_target_hit():
+    samples = []
+    for index in range(80):
+        t_s = index * 0.02
+        base = min(0.22, 0.25 * t_s)
+        sample = make_liftoff_sample(index, base_duty_active=base, angle_roll=1.0, angle_pitch=-0.5)
+        if t_s >= 0.92:
+            sample.ground_trip_reason = 3
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.22)
+
+    assert result["target_hit_reached"] is True
+    assert result["pre_hit_level"] == "nominal"
+    assert result["near_threshold_terminal_trip"] == 3
+    assert result["near_threshold_sample_class"] == "near_threshold_fail"
+
+
 def test_liftoff_verify_analysis_accepts_conservative_closed_loop_attempt():
     samples = []
     for index in range(12):
@@ -2226,6 +2264,9 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert liftoff_near_args.attempts_per_duty == 3
     assert liftoff_near_args.ready_timeout_s == pytest.approx(12.0)
     assert "22/24/25%" in build_parser().format_help()
+
+    liftoff_near_default_args = build_parser().parse_args(["--serial", "COM7", "liftoff-near-threshold"])
+    assert liftoff_near_default_args.attempts_per_duty == 2
 
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
