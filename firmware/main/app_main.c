@@ -37,6 +37,7 @@
 #define UDP_MANUAL_FULL_YAW_RATE_DPS 45.0f
 #define GROUND_SATURATION_TRIP_TICKS 150u
 #define GROUND_RATE_JITTER_TRIP_TICKS 80u
+#define LOW_RISK_LIFTOFF_KALMAN_INVALID_TRIP_SAMPLES 3u
 
 static void flight_control_set_base_duty_active(float base_duty)
 {
@@ -314,6 +315,7 @@ static void flight_control_task(void *arg)
     uint64_t ground_mode_start_us = 0;
     bool ground_saturated_for_freeze = false;
     float ground_active_base_duty = 0.0f;
+    uint32_t low_risk_liftoff_kalman_invalid_samples = 0;
     axis3f_t previous_ground_pid_axis = {0};
 
     mixer_build_coeffs(mixer_coeffs);
@@ -382,6 +384,7 @@ static void flight_control_task(void *arg)
             ground_jitter_ticks = 0;
             ground_saturated_for_freeze = false;
             ground_active_base_duty = 0.0f;
+            low_risk_liftoff_kalman_invalid_samples = 0;
             previous_ground_pid_axis = (axis3f_t){0};
             ground_mode_start_us = (control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE) ? now_us : 0u;
             last_arm_state = safety_status.arm_state;
@@ -543,6 +546,8 @@ static void flight_control_task(void *arg)
             const float target_base_duty = liftoff_submode ? params->liftoff_verify_base_duty : params->ground_test_base_duty;
             const float ramp_duty_per_s = liftoff_submode ? params->liftoff_verify_ramp_duty_per_s : params->ground_test_ramp_duty_per_s;
             const uint32_t auto_disarm_ms = liftoff_submode ? params->liftoff_verify_auto_disarm_ms : params->ground_test_auto_disarm_ms;
+            const bool kalman_required = outer_required && params->ground_tune_use_kalman_attitude;
+            bool low_risk_liftoff_kalman_debouncing = false;
 
             if (ground_mode_start_us == 0u) {
                 ground_mode_start_us = now_us;
@@ -575,14 +580,33 @@ static void flight_control_task(void *arg)
                                                 false);
                 continue;
             }
-            if (outer_required &&
-                params->ground_tune_use_kalman_attitude &&
-                !estimator_state.kalman_valid) {
-                flight_control_stop_ground_tune(command_outputs,
-                                                GROUND_TUNE_TRIP_KALMAN_INVALID,
-                                                "ground tune stopped: kalman invalid",
-                                                false);
-                continue;
+            if (kalman_required && !estimator_state.kalman_valid) {
+                if (liftoff_submode && fresh_sample) {
+                    if (low_risk_liftoff_kalman_invalid_samples < LOW_RISK_LIFTOFF_KALMAN_INVALID_TRIP_SAMPLES) {
+                        low_risk_liftoff_kalman_invalid_samples++;
+                    }
+                    char msg[96];
+                    snprintf(msg,
+                             sizeof(msg),
+                             "low-risk liftoff kalman invalid debounce count=%lu",
+                             (unsigned long)low_risk_liftoff_kalman_invalid_samples);
+                    console_send_event_text(msg);
+                }
+                if (liftoff_submode &&
+                    low_risk_liftoff_kalman_invalid_samples < LOW_RISK_LIFTOFF_KALMAN_INVALID_TRIP_SAMPLES) {
+                    low_risk_liftoff_kalman_debouncing = true;
+                } else {
+                    flight_control_stop_ground_tune(command_outputs,
+                                                    GROUND_TUNE_TRIP_KALMAN_INVALID,
+                                                    "ground tune stopped: kalman invalid",
+                                                    false);
+                    continue;
+                }
+            } else {
+                low_risk_liftoff_kalman_invalid_samples = 0;
+            }
+            if (!liftoff_submode) {
+                low_risk_liftoff_kalman_invalid_samples = 0;
             }
             if ((now_us - ground_mode_start_us) >= ((uint64_t)auto_disarm_ms * 1000u)) {
                 flight_control_stop_ground_tune(command_outputs,
@@ -599,6 +623,11 @@ static void flight_control_task(void *arg)
             flight_control_set_ground_base_duty_active(ground_active_base_duty);
             if (fresh_sample) {
                 axis3f_t rate_setpoint = {0};
+                if (low_risk_liftoff_kalman_debouncing) {
+                    last_rate_update_us = sample.timestamp_us;
+                    motor_set_armed_outputs(command_outputs, false);
+                    continue;
+                }
                 if (!ground_tune_compute(&estimator_state, &rate_setpoint)) {
                     const ground_tune_trip_reason_t trip =
                         runtime_state_get_ground_tune_state().trip_reason;
