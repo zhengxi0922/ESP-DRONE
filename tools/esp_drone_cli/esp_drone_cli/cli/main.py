@@ -71,6 +71,11 @@ LIFTOFF_CONFIRMED_MIN_RISE_SAMPLES = 3
 LIFTOFF_VERIFY_MAX_BASE_DUTY = 0.18
 LIFTOFF_VERIFY_MAX_DURATION_S = 3.5
 LIFTOFF_VERIFY_AUTO_DISARM_MARGIN_MS = 400
+LIFTOFF_TARGET_HIT_DUTY_TOLERANCE = 0.001
+LIFTOFF_TARGET_HIT_WINDOW_S = 0.18
+LIFTOFF_TARGET_HIT_MIN_WINDOW_S = 0.15
+LIFTOFF_SHORT_WINDOW_MAX_TILT_DEG = 3.0
+LIFTOFF_SHORT_WINDOW_MAX_TILT_DELTA_DEG = 3.0
 UNIFIED_PATH_TOLERANCE_DPS = 0.05
 UNIFIED_PATH_MIN_RATIO = 0.98
 UNIFIED_PATH_MAX_TRANSIENT_DPS = 0.25
@@ -386,6 +391,62 @@ def format_attitude_ground_verify_summary(result: dict[str, object]) -> list[str
     return lines
 
 
+def _liftoff_segment_duration_s(segment: list[TelemetrySample]) -> float:
+    if len(segment) < 2:
+        return 0.0
+    return max(0.0, (segment[-1].timestamp_us - segment[0].timestamp_us) / 1000000.0)
+
+
+def _liftoff_segment_validity_ok(segment: list[TelemetrySample]) -> bool:
+    return bool(segment) and all(
+        sample.kalman_valid and sample.attitude_valid and sample.ground_ref_valid and sample.battery_valid
+        for sample in segment
+    )
+
+
+def _liftoff_segment_safety_ok(segment: list[TelemetrySample]) -> bool:
+    return bool(segment) and all(
+        sample.failsafe_reason == 0 and sample.ground_trip_reason == 0 for sample in segment
+    )
+
+
+def _liftoff_segment_output_ok(segment: list[TelemetrySample]) -> bool:
+    return bool(segment) and all(
+        (sample.inner_loop_clamp_flag & 0x01) == 0 and sample.motor_saturation_flag == 0
+        for sample in segment
+    )
+
+
+def _liftoff_segment_attitude_ok(
+    segment: list[TelemetrySample],
+    *,
+    max_tilt_deg: float = LIFTOFF_SHORT_WINDOW_MAX_TILT_DEG,
+    max_delta_deg: float = LIFTOFF_SHORT_WINDOW_MAX_TILT_DELTA_DEG,
+) -> tuple[bool, float, float, float, float]:
+    if not segment:
+        return False, 0.0, 0.0, 0.0, 0.0
+    rolls = [sample.angle_measured_roll for sample in segment]
+    pitches = [sample.angle_measured_pitch for sample in segment]
+    max_roll = max(abs(value) for value in rolls)
+    max_pitch = max(abs(value) for value in pitches)
+    roll_delta = max(rolls) - min(rolls)
+    pitch_delta = max(pitches) - min(pitches)
+    return (
+        max_roll <= max_tilt_deg and
+        max_pitch <= max_tilt_deg and
+        roll_delta <= max_delta_deg and
+        pitch_delta <= max_delta_deg,
+        max_roll,
+        max_pitch,
+        roll_delta,
+        pitch_delta,
+    )
+
+
+def _liftoff_segment_outer_ok(segment: list[TelemetrySample]) -> bool:
+    return bool(segment) and all(sample.outer_loop_clamp_flag == 0 for sample in segment)
+
+
 def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: float) -> dict[str, object]:
     active = [
         sample for sample in samples
@@ -418,6 +479,36 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         "yaw_ok": False,
         "tilt_ok": False,
         "control_safe_pass": False,
+        "early_ramp_safety_pass": False,
+        "early_ramp_samples": 0,
+        "early_ramp_duration_s": 0.0,
+        "early_ramp_validity_ok": False,
+        "early_ramp_safety_ok": False,
+        "early_ramp_output_ok": False,
+        "early_ramp_attitude_ok": False,
+        "early_ramp_max_roll_deg": 0.0,
+        "early_ramp_max_pitch_deg": 0.0,
+        "early_ramp_roll_delta_deg": 0.0,
+        "early_ramp_pitch_delta_deg": 0.0,
+        "target_hit_pass": False,
+        "target_hit_reached": False,
+        "target_hit_time_s": None,
+        "target_hit_base_duty": 0.0,
+        "target_hit_window_s": LIFTOFF_TARGET_HIT_WINDOW_S,
+        "target_hit_window_samples": 0,
+        "target_hit_window_duration_s": 0.0,
+        "target_hit_window_coverage_ok": False,
+        "target_hit_window_validity_ok": False,
+        "target_hit_window_safety_ok": False,
+        "target_hit_window_output_ok": False,
+        "target_hit_window_outer_ok": False,
+        "target_hit_window_attitude_ok": False,
+        "target_hit_window_max_roll_deg": 0.0,
+        "target_hit_window_max_pitch_deg": 0.0,
+        "target_hit_window_roll_delta_deg": 0.0,
+        "target_hit_window_pitch_delta_deg": 0.0,
+        "target_hit_approach_ok": False,
+        "long_ground_hold_pass": False,
         "physical_liftoff_state": LIFTOFF_STATE_NO,
         "physical_liftoff_confirmed": False,
         "free_flight_pass": False,
@@ -467,6 +558,82 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         if sample.base_duty_active < steady_threshold and
         ((sample.inner_loop_clamp_flag & 0x01) != 0 or sample.motor_saturation_flag != 0)
     )
+
+    target_threshold = max(0.0, base_duty - LIFTOFF_TARGET_HIT_DUTY_TOLERANCE)
+    target_hit_index = next(
+        (index for index, sample in enumerate(active) if sample.base_duty_active >= target_threshold),
+        None,
+    )
+    early_segment = active[:target_hit_index] if target_hit_index is not None else active
+    early_eval = [sample for sample in early_segment if sample.base_duty_active >= steady_threshold]
+    if not early_eval:
+        early_eval = early_segment
+    if early_eval:
+        early_attitude_ok, early_roll, early_pitch, early_roll_delta, early_pitch_delta = (
+            _liftoff_segment_attitude_ok(early_eval)
+        )
+        result["early_ramp_samples"] = len(early_eval)
+        result["early_ramp_duration_s"] = _liftoff_segment_duration_s(early_eval)
+        result["early_ramp_validity_ok"] = _liftoff_segment_validity_ok(early_eval)
+        result["early_ramp_safety_ok"] = _liftoff_segment_safety_ok(early_eval)
+        result["early_ramp_output_ok"] = _liftoff_segment_output_ok(early_eval)
+        result["early_ramp_attitude_ok"] = early_attitude_ok
+        result["early_ramp_max_roll_deg"] = early_roll
+        result["early_ramp_max_pitch_deg"] = early_pitch
+        result["early_ramp_roll_delta_deg"] = early_roll_delta
+        result["early_ramp_pitch_delta_deg"] = early_pitch_delta
+        result["early_ramp_safety_pass"] = bool(
+            result["early_ramp_validity_ok"] and
+            result["early_ramp_safety_ok"] and
+            result["early_ramp_output_ok"] and
+            result["early_ramp_attitude_ok"]
+        )
+
+    if target_hit_index is not None:
+        target_sample = active[target_hit_index]
+        target_hit_time_s = (target_sample.timestamp_us - active[0].timestamp_us) / 1000000.0
+        window_end_us = target_sample.timestamp_us + int(LIFTOFF_TARGET_HIT_WINDOW_S * 1000000.0)
+        target_window = [
+            sample for sample in active[target_hit_index:]
+            if sample.timestamp_us <= window_end_us
+        ]
+        target_attitude_ok, target_roll, target_pitch, target_roll_delta, target_pitch_delta = (
+            _liftoff_segment_attitude_ok(target_window)
+        )
+        result["target_hit_reached"] = True
+        result["target_hit_time_s"] = target_hit_time_s
+        result["target_hit_base_duty"] = target_sample.base_duty_active
+        result["target_hit_window_samples"] = len(target_window)
+        result["target_hit_window_duration_s"] = _liftoff_segment_duration_s(target_window)
+        result["target_hit_window_coverage_ok"] = (
+            float(result["target_hit_window_duration_s"]) >= LIFTOFF_TARGET_HIT_MIN_WINDOW_S
+        )
+        result["target_hit_window_validity_ok"] = _liftoff_segment_validity_ok(target_window)
+        result["target_hit_window_safety_ok"] = _liftoff_segment_safety_ok(target_window)
+        result["target_hit_window_output_ok"] = _liftoff_segment_output_ok(target_window)
+        result["target_hit_window_outer_ok"] = _liftoff_segment_outer_ok(target_window)
+        result["target_hit_window_attitude_ok"] = target_attitude_ok
+        result["target_hit_window_max_roll_deg"] = target_roll
+        result["target_hit_window_max_pitch_deg"] = target_pitch
+        result["target_hit_window_roll_delta_deg"] = target_roll_delta
+        result["target_hit_window_pitch_delta_deg"] = target_pitch_delta
+        result["target_hit_approach_ok"] = (
+            (
+                float(result["early_ramp_max_roll_deg"]) <= LIFTOFF_SHORT_WINDOW_MAX_TILT_DEG and
+                float(result["early_ramp_max_pitch_deg"]) <= LIFTOFF_SHORT_WINDOW_MAX_TILT_DEG
+            )
+            if early_eval else True
+        )
+        result["target_hit_pass"] = bool(
+            result["target_hit_window_coverage_ok"] and
+            result["target_hit_window_validity_ok"] and
+            result["target_hit_window_safety_ok"] and
+            result["target_hit_window_output_ok"] and
+            result["target_hit_window_outer_ok"] and
+            result["target_hit_window_attitude_ok"] and
+            result["target_hit_approach_ok"]
+        )
+
     result["failsafe_reason"] = max((int(sample.failsafe_reason) for sample in active), default=0)
     result["ground_trip_reason"] = max((int(sample.ground_trip_reason) for sample in active), default=0)
     valid_battery = [
@@ -590,11 +757,18 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         int(result["inner_motor_clamp_max"]) == 0 and
         int(result["motor_saturation_max"]) == 0
     )
-    result["passed"] = result["control_safe_pass"]
+    result["long_ground_hold_pass"] = bool(result["control_safe_pass"] and result["target_hit_reached"])
+    result["passed"] = bool(
+        result["long_ground_hold_pass"] or
+        result["target_hit_pass"] or
+        (result["early_ramp_safety_pass"] and not result["target_hit_reached"])
+    )
     return result
 
 
 def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
+    target_hit_time = result.get("target_hit_time_s")
+    target_hit_time_text = f"{float(target_hit_time):.3f}" if target_hit_time is not None else "n/a"
     lines = [
         f"samples={result['samples']} active_samples={result['active_samples']} "
         f"steady_samples={result.get('steady_samples', 0)} active_duration_s={result['active_duration_s']:.3f}",
@@ -607,6 +781,42 @@ def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
             f"unified_path_ok={result['unified_path_ok']} chain_ok={result['chain_ok']} "
             f"yaw_ok={result['yaw_ok']} tilt_ok={result['tilt_ok']} "
             f"safety_ok={result['safety_ok']} control_safe_pass={result.get('control_safe_pass', False)}"
+        ),
+        (
+            "verdicts: "
+            f"early_ramp_safety_pass={result.get('early_ramp_safety_pass', False)} "
+            f"target_hit_pass={result.get('target_hit_pass', False)} "
+            f"long_ground_hold_pass={result.get('long_ground_hold_pass', False)}"
+        ),
+        (
+            f"target_hit: reached={result.get('target_hit_reached', False)} "
+            f"hit_time_s={target_hit_time_text} "
+            f"hit_base={result.get('target_hit_base_duty', 0.0):.4f}/{result['base_duty_target']:.4f} "
+            f"window_s={result.get('target_hit_window_s', LIFTOFF_TARGET_HIT_WINDOW_S):.2f} "
+            f"window_duration_s={result.get('target_hit_window_duration_s', 0.0):.3f} "
+            f"coverage_ok={result.get('target_hit_window_coverage_ok', False)} "
+            f"approach_ok={result.get('target_hit_approach_ok', False)}"
+        ),
+        (
+            f"target_hit_window: validity_ok={result.get('target_hit_window_validity_ok', False)} "
+            f"safety_ok={result.get('target_hit_window_safety_ok', False)} "
+            f"output_ok={result.get('target_hit_window_output_ok', False)} "
+            f"outer_ok={result.get('target_hit_window_outer_ok', False)} "
+            f"attitude_ok={result.get('target_hit_window_attitude_ok', False)} "
+            f"max_roll_deg={result.get('target_hit_window_max_roll_deg', 0.0):.3f} "
+            f"max_pitch_deg={result.get('target_hit_window_max_pitch_deg', 0.0):.3f} "
+            f"roll_delta_deg={result.get('target_hit_window_roll_delta_deg', 0.0):.3f} "
+            f"pitch_delta_deg={result.get('target_hit_window_pitch_delta_deg', 0.0):.3f}"
+        ),
+        (
+            f"early_ramp: samples={result.get('early_ramp_samples', 0)} "
+            f"duration_s={result.get('early_ramp_duration_s', 0.0):.3f} "
+            f"validity_ok={result.get('early_ramp_validity_ok', False)} "
+            f"safety_ok={result.get('early_ramp_safety_ok', False)} "
+            f"output_ok={result.get('early_ramp_output_ok', False)} "
+            f"attitude_ok={result.get('early_ramp_attitude_ok', False)} "
+            f"max_roll_deg={result.get('early_ramp_max_roll_deg', 0.0):.3f} "
+            f"max_pitch_deg={result.get('early_ramp_max_pitch_deg', 0.0):.3f}"
         ),
         (
             f"unified_path_ratio={result.get('unified_path_ratio', 0.0):.3f}"
@@ -640,7 +850,9 @@ def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
         ),
         (
             "final_verdict: "
-            f"safety/control={'control-safe pass' if result.get('control_safe_pass', False) else 'not pass'} "
+            f"early_ramp_safety={'pass' if result.get('early_ramp_safety_pass', False) else 'not pass'} "
+            f"target_hit={'pass' if result.get('target_hit_pass', False) else 'not pass'} "
+            f"long_ground_hold={'pass' if result.get('long_ground_hold_pass', False) else 'not pass'} "
             f"physical_liftoff={'confirmed' if result.get('physical_liftoff_confirmed', False) else 'not confirmed'}"
         ),
     ]

@@ -1119,6 +1119,132 @@ def test_attitude_ground_verify_analysis_accepts_rate_overshoot_correction():
     assert result["passed"] is True
 
 
+def make_liftoff_sample(
+    index: int,
+    *,
+    base_duty_active: float,
+    angle_roll: float = 0.5,
+    angle_pitch: float = -0.5,
+    timestamp_start_us: int = 5_000_000,
+    step_us: int = 20_000,
+) -> TelemetrySample:
+    sample = TelemetrySample.from_payload(build_telemetry_payload_v5())
+    sample.timestamp_us = timestamp_start_us + index * step_us
+    sample.control_mode = 6
+    sample.control_submode = 2
+    sample.kalman_valid = 1
+    sample.attitude_valid = 1
+    sample.ground_ref_valid = 1
+    sample.battery_valid = 1
+    sample.failsafe_reason = 0
+    sample.ground_trip_reason = 0
+    sample.outer_loop_clamp_flag = 0
+    sample.inner_loop_clamp_flag = 0
+    sample.motor_saturation_flag = 0
+    sample.base_duty_active = base_duty_active
+    sample.angle_target_roll = 0.0
+    sample.angle_target_pitch = 0.0
+    sample.angle_target_yaw = 0.0
+    sample.angle_measured_roll = angle_roll
+    sample.angle_measured_pitch = angle_pitch
+    sample.angle_error_roll = -angle_roll
+    sample.angle_error_pitch = -angle_pitch
+    sample.angle_error_yaw = 0.0
+    sample.outer_loop_rate_target_roll = -0.8 * angle_roll
+    sample.outer_loop_rate_target_pitch = -0.8 * angle_pitch
+    sample.outer_loop_rate_target_yaw = 0.0
+    sample.rate_setpoint_roll = sample.outer_loop_rate_target_roll
+    sample.rate_setpoint_pitch = sample.outer_loop_rate_target_pitch
+    sample.rate_setpoint_yaw = 0.0
+    sample.rate_err_roll = sample.outer_loop_rate_target_roll * 0.75
+    sample.rate_err_pitch = sample.outer_loop_rate_target_pitch * 0.75
+    sample.rate_err_yaw = 0.0
+    sample.rate_pid_p_roll = sample.rate_err_roll * 0.0007
+    sample.rate_pid_p_pitch = sample.rate_err_pitch * 0.0007
+    sample.rate_pid_p_yaw = 0.0
+    sample.pid_out_roll = sample.rate_pid_p_roll
+    sample.pid_out_pitch = sample.rate_pid_p_pitch
+    sample.pid_out_yaw = 0.0
+    sample.motor1 = base_duty_active + sample.pid_out_roll - sample.pid_out_pitch
+    sample.motor2 = base_duty_active - sample.pid_out_roll - sample.pid_out_pitch
+    sample.motor3 = base_duty_active - sample.pid_out_roll + sample.pid_out_pitch
+    sample.motor4 = base_duty_active + sample.pid_out_roll + sample.pid_out_pitch
+    sample.rate_meas_yaw_filtered = 1.0
+    sample.baro_valid = 1
+    sample.baro_altitude_m = 0.001 * index
+    return sample
+
+
+def test_liftoff_verify_analysis_reports_early_ramp_only_when_target_not_reached():
+    samples = []
+    for index in range(60):
+        base = min(0.095, 0.001 + 0.08 * (index * 0.02))
+        sample = make_liftoff_sample(index, base_duty_active=base, angle_roll=1.2, angle_pitch=-0.2)
+        if index == 0:
+            sample.inner_loop_clamp_flag = 3
+            sample.motor_saturation_flag = 1
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.16)
+
+    assert result["early_ramp_safety_pass"] is True
+    assert result["target_hit_reached"] is False
+    assert result["target_hit_pass"] is False
+    assert result["long_ground_hold_pass"] is False
+    assert result["passed"] is True
+
+    summary = "\n".join(format_liftoff_verify_summary(result))
+    assert "early_ramp_safety_pass=True" in summary
+    assert "target_hit_pass=False" in summary
+    assert "long_ground_hold_pass=False" in summary
+
+
+def test_liftoff_verify_target_hit_pass_is_independent_from_full_log_validity():
+    samples = []
+    for index in range(100):
+        t_s = index * 0.02
+        base = min(0.16, 0.10 * t_s)
+        sample = make_liftoff_sample(index, base_duty_active=base, angle_roll=0.6, angle_pitch=-0.4)
+        if index > 92:
+            sample.kalman_valid = 0
+            sample.rate_setpoint_pitch = sample.outer_loop_rate_target_pitch + 0.4
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.16)
+
+    assert result["target_hit_reached"] is True
+    assert result["target_hit_time_s"] == pytest.approx(1.60)
+    assert result["target_hit_window_duration_s"] >= 0.15
+    assert result["target_hit_window_validity_ok"] is True
+    assert result["target_hit_window_output_ok"] is True
+    assert result["target_hit_window_attitude_ok"] is True
+    assert result["target_hit_pass"] is True
+    assert result["validity_ok"] is False
+    assert result["unified_path_ok"] is False
+    assert result["long_ground_hold_pass"] is False
+    assert result["passed"] is True
+
+
+def test_liftoff_verify_pre_hit_attitude_worsening_blocks_target_hit_pass():
+    samples = []
+    for index in range(120):
+        t_s = index * 0.02
+        base = min(0.16, 0.10 * t_s)
+        angle_pitch = -0.4
+        if 1.40 <= t_s < 1.60:
+            angle_pitch = -3.4
+        sample = make_liftoff_sample(index, base_duty_active=base, angle_roll=0.6, angle_pitch=angle_pitch)
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.16)
+
+    assert result["target_hit_reached"] is True
+    assert result["target_hit_approach_ok"] is False
+    assert result["target_hit_window_safety_ok"] is True
+    assert result["target_hit_window_output_ok"] is True
+    assert result["target_hit_pass"] is False
+
+
 def test_liftoff_verify_analysis_accepts_conservative_closed_loop_attempt():
     samples = []
     for index in range(12):
