@@ -1218,6 +1218,9 @@ def test_liftoff_verify_target_hit_pass_is_independent_from_full_log_validity():
     assert result["target_hit_window_validity_ok"] is True
     assert result["target_hit_window_output_ok"] is True
     assert result["target_hit_window_attitude_ok"] is True
+    assert result["pre_hit_ready_pass"] is True
+    assert result["pre_hit_roll_abs_max_deg"] == pytest.approx(0.6)
+    assert result["pre_hit_pitch_abs_max_deg"] == pytest.approx(0.4)
     assert result["target_hit_pass"] is True
     assert result["validity_ok"] is False
     assert result["unified_path_ok"] is False
@@ -1240,9 +1243,34 @@ def test_liftoff_verify_pre_hit_attitude_worsening_blocks_target_hit_pass():
 
     assert result["target_hit_reached"] is True
     assert result["target_hit_approach_ok"] is False
+    assert result["pre_hit_ready_pass"] is False
+    assert result["pre_hit_pitch_abs_max_deg"] == pytest.approx(3.4)
+    assert result["pre_hit_validity_ok"] is True
+    assert result["pre_hit_inner_clamp_seen"] is False
+    assert result["pre_hit_saturation_seen"] is False
     assert result["target_hit_window_safety_ok"] is True
     assert result["target_hit_window_output_ok"] is True
     assert result["target_hit_pass"] is False
+
+
+def test_liftoff_verify_pre_hit_diagnosis_reports_output_edge_state():
+    samples = []
+    for index in range(100):
+        t_s = index * 0.02
+        base = min(0.16, 0.10 * t_s)
+        sample = make_liftoff_sample(index, base_duty_active=base, angle_roll=0.5, angle_pitch=-0.5)
+        if 1.48 <= t_s <= 1.60:
+            sample.inner_loop_clamp_flag = 1
+            sample.motor_saturation_flag = 1
+        samples.append(sample)
+
+    result = analyze_liftoff_verify_samples(samples, base_duty=0.16)
+
+    assert result["target_hit_reached"] is True
+    assert result["pre_hit_ready_pass"] is False
+    assert result["pre_hit_inner_clamp_seen"] is True
+    assert result["pre_hit_saturation_seen"] is True
+    assert result["pre_hit_outer_clamp_seen"] is False
 
 
 def test_liftoff_verify_analysis_accepts_conservative_closed_loop_attempt():

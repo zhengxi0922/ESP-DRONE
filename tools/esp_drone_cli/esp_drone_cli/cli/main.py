@@ -74,6 +74,9 @@ LIFTOFF_VERIFY_AUTO_DISARM_MARGIN_MS = 400
 LIFTOFF_TARGET_HIT_DUTY_TOLERANCE = 0.001
 LIFTOFF_TARGET_HIT_WINDOW_S = 0.18
 LIFTOFF_TARGET_HIT_MIN_WINDOW_S = 0.15
+LIFTOFF_PRE_HIT_WINDOW_S = 0.20
+LIFTOFF_PRE_HIT_MAX_ROLL_DEG = 2.0
+LIFTOFF_PRE_HIT_MAX_PITCH_DEG = 2.0
 LIFTOFF_SHORT_WINDOW_MAX_TILT_DEG = 3.0
 LIFTOFF_SHORT_WINDOW_MAX_TILT_DELTA_DEG = 3.0
 UNIFIED_PATH_TOLERANCE_DPS = 0.05
@@ -508,6 +511,17 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         "target_hit_window_roll_delta_deg": 0.0,
         "target_hit_window_pitch_delta_deg": 0.0,
         "target_hit_approach_ok": False,
+        "pre_hit_window_s": LIFTOFF_PRE_HIT_WINDOW_S,
+        "pre_hit_ready_pass": False,
+        "pre_hit_samples": 0,
+        "pre_hit_roll_abs_max_deg": 0.0,
+        "pre_hit_pitch_abs_max_deg": 0.0,
+        "pre_hit_outer_clamp_seen": False,
+        "pre_hit_inner_clamp_seen": False,
+        "pre_hit_saturation_seen": False,
+        "pre_hit_validity_ok": False,
+        "pre_hit_roll_limit_deg": LIFTOFF_PRE_HIT_MAX_ROLL_DEG,
+        "pre_hit_pitch_limit_deg": LIFTOFF_PRE_HIT_MAX_PITCH_DEG,
         "long_ground_hold_pass": False,
         "physical_liftoff_state": LIFTOFF_STATE_NO,
         "physical_liftoff_confirmed": False,
@@ -592,6 +606,11 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
     if target_hit_index is not None:
         target_sample = active[target_hit_index]
         target_hit_time_s = (target_sample.timestamp_us - active[0].timestamp_us) / 1000000.0
+        pre_hit_start_us = target_sample.timestamp_us - int(LIFTOFF_PRE_HIT_WINDOW_S * 1000000.0)
+        pre_hit_window = [
+            sample for sample in active[:target_hit_index + 1]
+            if sample.timestamp_us >= pre_hit_start_us
+        ]
         window_end_us = target_sample.timestamp_us + int(LIFTOFF_TARGET_HIT_WINDOW_S * 1000000.0)
         target_window = [
             sample for sample in active[target_hit_index:]
@@ -603,6 +622,32 @@ def analyze_liftoff_verify_samples(samples: list[TelemetrySample], base_duty: fl
         result["target_hit_reached"] = True
         result["target_hit_time_s"] = target_hit_time_s
         result["target_hit_base_duty"] = target_sample.base_duty_active
+        if pre_hit_window:
+            result["pre_hit_samples"] = len(pre_hit_window)
+            result["pre_hit_roll_abs_max_deg"] = max(
+                abs(sample.angle_measured_roll) for sample in pre_hit_window
+            )
+            result["pre_hit_pitch_abs_max_deg"] = max(
+                abs(sample.angle_measured_pitch) for sample in pre_hit_window
+            )
+            result["pre_hit_outer_clamp_seen"] = any(
+                sample.outer_loop_clamp_flag != 0 for sample in pre_hit_window
+            )
+            result["pre_hit_inner_clamp_seen"] = any(
+                (sample.inner_loop_clamp_flag & 0x01) != 0 for sample in pre_hit_window
+            )
+            result["pre_hit_saturation_seen"] = any(
+                sample.motor_saturation_flag != 0 for sample in pre_hit_window
+            )
+            result["pre_hit_validity_ok"] = _liftoff_segment_validity_ok(pre_hit_window)
+            result["pre_hit_ready_pass"] = bool(
+                result["pre_hit_validity_ok"] and
+                not result["pre_hit_outer_clamp_seen"] and
+                not result["pre_hit_inner_clamp_seen"] and
+                not result["pre_hit_saturation_seen"] and
+                float(result["pre_hit_roll_abs_max_deg"]) <= LIFTOFF_PRE_HIT_MAX_ROLL_DEG and
+                float(result["pre_hit_pitch_abs_max_deg"]) <= LIFTOFF_PRE_HIT_MAX_PITCH_DEG
+            )
         result["target_hit_window_samples"] = len(target_window)
         result["target_hit_window_duration_s"] = _liftoff_segment_duration_s(target_window)
         result["target_hit_window_coverage_ok"] = (
@@ -807,6 +852,19 @@ def format_liftoff_verify_summary(result: dict[str, object]) -> list[str]:
             f"max_pitch_deg={result.get('target_hit_window_max_pitch_deg', 0.0):.3f} "
             f"roll_delta_deg={result.get('target_hit_window_roll_delta_deg', 0.0):.3f} "
             f"pitch_delta_deg={result.get('target_hit_window_pitch_delta_deg', 0.0):.3f}"
+        ),
+        (
+            f"pre_hit: window_s={result.get('pre_hit_window_s', LIFTOFF_PRE_HIT_WINDOW_S):.2f} "
+            f"ready_pass={result.get('pre_hit_ready_pass', False)} "
+            f"samples={result.get('pre_hit_samples', 0)} "
+            f"validity_ok={result.get('pre_hit_validity_ok', False)} "
+            f"roll_abs_max_deg={result.get('pre_hit_roll_abs_max_deg', 0.0):.3f}/"
+            f"{result.get('pre_hit_roll_limit_deg', LIFTOFF_PRE_HIT_MAX_ROLL_DEG):.3f} "
+            f"pitch_abs_max_deg={result.get('pre_hit_pitch_abs_max_deg', 0.0):.3f}/"
+            f"{result.get('pre_hit_pitch_limit_deg', LIFTOFF_PRE_HIT_MAX_PITCH_DEG):.3f} "
+            f"outer_clamp_seen={result.get('pre_hit_outer_clamp_seen', False)} "
+            f"inner_clamp_seen={result.get('pre_hit_inner_clamp_seen', False)} "
+            f"saturation_seen={result.get('pre_hit_saturation_seen', False)}"
         ),
         (
             f"early_ramp: samples={result.get('early_ramp_samples', 0)} "
