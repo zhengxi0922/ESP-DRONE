@@ -55,9 +55,9 @@ LIFTOFF_VERIFY_SAFE_PARAMS = (
     ("ground_att_rate_limit_pitch", 4, 4.0),
     ("ground_att_target_limit_deg", 4, 2.0),
     ("ground_att_error_deadband_deg", 4, 0.2),
-    ("ground_test_motor_balance_limit", 4, 0.05),
-    ("liftoff_verify_max_extra_duty", 4, 0.03),
-    ("liftoff_verify_auto_disarm_ms", 2, 2300),
+    ("ground_test_motor_balance_limit", 4, 0.06),
+    ("liftoff_verify_max_extra_duty", 4, 0.04),
+    ("liftoff_verify_auto_disarm_ms", 2, 2500),
     ("liftoff_verify_ramp_duty_per_s", 4, 0.08),
     ("liftoff_verify_att_trip_deg", 4, 7.0),
 )
@@ -69,6 +69,8 @@ LIFTOFF_CONFIRMED_BARO_DELTA_M = 0.18
 LIFTOFF_CONFIRMED_BARO_RISE_M = 0.12
 LIFTOFF_CONFIRMED_MIN_RISE_SAMPLES = 3
 LIFTOFF_VERIFY_MAX_BASE_DUTY = 0.18
+LIFTOFF_VERIFY_MAX_DURATION_S = 3.5
+LIFTOFF_VERIFY_AUTO_DISARM_MARGIN_MS = 400
 UNIFIED_PATH_TOLERANCE_DPS = 0.05
 UNIFIED_PATH_MIN_RATIO = 0.98
 UNIFIED_PATH_MAX_TRANSIENT_DPS = 0.25
@@ -1461,12 +1463,14 @@ def cmd_liftoff_verify_round(session: DeviceSession, args) -> int:
     duration_s = float(args.duration_s)
     if base_duty < 0.0 or base_duty > LIFTOFF_VERIFY_MAX_BASE_DUTY:
         raise ValueError(f"liftoff verify base duty must be <= {LIFTOFF_VERIFY_MAX_BASE_DUTY:.2f}")
-    if duration_s <= 0.0 or duration_s > 2.2:
-        raise ValueError("first liftoff verify duration must be >0 and <=2.2 seconds")
+    if duration_s <= 0.0 or duration_s > LIFTOFF_VERIFY_MAX_DURATION_S:
+        raise ValueError(f"liftoff verify duration must be >0 and <={LIFTOFF_VERIFY_MAX_DURATION_S:.1f} seconds")
 
     if not args.no_apply_safe_params:
         for name, type_id, value in LIFTOFF_VERIFY_SAFE_PARAMS:
             session.set_param(name, type_id, value)
+        auto_disarm_ms = max(2500, int(duration_s * 1000.0) + LIFTOFF_VERIFY_AUTO_DISARM_MARGIN_MS)
+        session.set_param("liftoff_verify_auto_disarm_ms", 2, auto_disarm_ms)
         session.set_param("liftoff_verify_base_duty", 4, base_duty)
 
     def on_telemetry(sample: TelemetrySample) -> None:
