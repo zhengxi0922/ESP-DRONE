@@ -38,6 +38,7 @@
 #define GROUND_SATURATION_TRIP_TICKS 150u
 #define GROUND_RATE_JITTER_TRIP_TICKS 80u
 #define LOW_RISK_LIFTOFF_KALMAN_INVALID_TRIP_SAMPLES 3u
+#define ALL_MOTOR_TEST_MAX_DUTY 0.35f
 
 static void flight_control_set_base_duty_active(float base_duty)
 {
@@ -108,6 +109,30 @@ static void flight_control_stop_ground_tune(float command_outputs[MOTOR_COUNT],
     ground_tune_set_inner_clamp_flags(0u);
     flight_control_set_ground_base_duty_active(0.0f);
     controller_set_runtime_flags(false, 0.0f, false, true);
+
+    if (command_outputs != NULL) {
+        memset(command_outputs, 0, sizeof(float) * MOTOR_COUNT);
+    }
+    motor_stop_all();
+    if (reason != NULL) {
+        console_send_event_text(reason);
+    }
+}
+
+static void flight_control_stop_all_motor_test(float command_outputs[MOTOR_COUNT],
+                                               const char *reason,
+                                               bool request_disarm)
+{
+    if (request_disarm) {
+        safety_request_disarm();
+    }
+    runtime_state_clear_all_motor_test();
+    runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+    runtime_state_set_axis_test_request((axis3f_t){0});
+    runtime_state_set_rate_setpoint_request((axis3f_t){0});
+    flight_control_set_base_duty_active(0.0f);
+    flight_control_set_ground_base_duty_active(0.0f);
+    ground_tune_set_inner_clamp_flags(0u);
 
     if (command_outputs != NULL) {
         memset(command_outputs, 0, sizeof(float) * MOTOR_COUNT);
@@ -434,6 +459,46 @@ static void flight_control_task(void *arg)
                                             GROUND_TUNE_TRIP_FAILSAFE,
                                             "ground tune stopped: battery critical or failsafe",
                                             request_disarm);
+            continue;
+        }
+
+        if (control_mode == CONTROL_MODE_ALL_MOTOR_TEST &&
+            (safety_status.arm_state != ARM_STATE_ARMED ||
+             safety_status.failsafe_reason != FAILSAFE_REASON_NONE)) {
+            const bool request_disarm =
+                safety_status.arm_state == ARM_STATE_FAILSAFE ||
+                safety_status.arm_state == ARM_STATE_FAULT_LOCK ||
+                safety_status.failsafe_reason == FAILSAFE_REASON_BATTERY_CRITICAL;
+            flight_control_stop_all_motor_test(command_outputs,
+                                               "all-motor test stopped: arm state or failsafe",
+                                               request_disarm);
+            continue;
+        }
+
+        if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_ALL_MOTOR_TEST) {
+            const all_motor_test_state_t all_motor = runtime_state_get_all_motor_test();
+            if (all_motor.duty <= 0.0f || all_motor.duration_ms == 0u || all_motor.start_us == 0u) {
+                flight_control_stop_all_motor_test(command_outputs,
+                                                   "all-motor test stopped: invalid request",
+                                                   false);
+                continue;
+            }
+            if ((now_us - all_motor.start_us) >= ((uint64_t)all_motor.duration_ms * 1000u)) {
+                flight_control_stop_all_motor_test(command_outputs,
+                                                   "all-motor test stopped: duration elapsed",
+                                                   true);
+                continue;
+            }
+
+            const float duty = fminf(fmaxf(all_motor.duty, 0.0f), ALL_MOTOR_TEST_MAX_DUTY);
+            flight_control_set_base_duty_active(duty);
+            flight_control_set_ground_base_duty_active(duty);
+            ground_tune_set_inner_clamp_flags(0u);
+            runtime_state_set_rate_setpoint_request((axis3f_t){0});
+            for (int i = 0; i < MOTOR_COUNT; ++i) {
+                command_outputs[i] = duty;
+            }
+            motor_set_armed_outputs(command_outputs, false);
             continue;
         }
 

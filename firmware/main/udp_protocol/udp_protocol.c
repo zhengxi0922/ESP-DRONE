@@ -1,6 +1,7 @@
 #include "udp_protocol.h"
 
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -10,6 +11,7 @@
 #include "freertos/task.h"
 
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 
@@ -28,6 +30,9 @@
 #define UDP_PROTOCOL_DEFAULT_PORT 2391
 #define UDP_PROTOCOL_RX_BUF_SIZE 512
 #define UDP_PROTOCOL_FRAME_BUF_SIZE 384
+#define UDP_ALL_MOTOR_TEST_MAX_DUTY 0.35f
+#define UDP_ALL_MOTOR_TEST_MIN_DURATION_MS 100u
+#define UDP_ALL_MOTOR_TEST_MAX_DURATION_MS 5000u
 
 #ifndef ESP_DRONE_BUILD_GIT_HASH
 #define ESP_DRONE_BUILD_GIT_HASH "unknown"
@@ -177,10 +182,12 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
     switch ((console_cmd_id_t)req->cmd_id) {
     case CMD_ARM:
         runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_clear_all_motor_test();
         return safety_request_arm(true) ? CMD_STATUS_OK : CMD_STATUS_REJECTED;
     case CMD_DISARM:
         safety_request_disarm();
         runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_clear_all_motor_test();
         runtime_state_set_axis_test_request((axis3f_t){0});
         runtime_state_set_rate_setpoint_request((axis3f_t){0});
         runtime_state_set_control_mode(CONTROL_MODE_IDLE);
@@ -190,6 +197,7 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
     case CMD_KILL:
         safety_request_kill();
         runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_clear_all_motor_test();
         runtime_state_set_axis_test_request((axis3f_t){0});
         runtime_state_set_rate_setpoint_request((axis3f_t){0});
         runtime_state_set_control_mode(CONTROL_MODE_IDLE);
@@ -382,6 +390,41 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
         if (req->arg_u8 > 2u || !ground_tune_set_angle_target(req->arg_u8, req->arg_f32)) {
             return CMD_STATUS_INVALID_ARGUMENT;
         }
+        return CMD_STATUS_OK;
+    case CMD_ALL_MOTOR_TEST_START: {
+        const uint32_t duration_ms = (uint32_t)req->arg_u8 * 100u;
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE) {
+            return CMD_STATUS_CONFLICT;
+        }
+        if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
+            return CMD_STATUS_ARM_REQUIRED;
+        }
+        if (!isfinite(req->arg_f32) ||
+            req->arg_f32 < 0.0f ||
+            req->arg_f32 > UDP_ALL_MOTOR_TEST_MAX_DUTY ||
+            duration_ms < UDP_ALL_MOTOR_TEST_MIN_DURATION_MS ||
+            duration_ms > UDP_ALL_MOTOR_TEST_MAX_DURATION_MS) {
+            return CMD_STATUS_INVALID_ARGUMENT;
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        ground_tune_reset_status();
+        ground_tune_set_submode(GROUND_TUNE_SUBMODE_RATE_ONLY);
+        controller_reset();
+        runtime_state_set_all_motor_test(req->arg_f32, duration_ms, (uint64_t)esp_timer_get_time());
+        runtime_state_set_control_mode(CONTROL_MODE_ALL_MOTOR_TEST);
+        console_send_event_text("all-motor test started");
+        return CMD_STATUS_OK;
+    }
+    case CMD_ALL_MOTOR_TEST_STOP:
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_clear_all_motor_test();
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+        motor_stop_all();
+        console_send_event_text("all-motor test stopped normally");
         return CMD_STATUS_OK;
     default:
         return CMD_STATUS_UNSUPPORTED;

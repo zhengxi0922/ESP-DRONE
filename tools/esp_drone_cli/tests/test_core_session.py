@@ -37,6 +37,7 @@ from esp_drone_cli.core.models import (
     DeviceInfo,
     FEATURE_ATTITUDE_GROUND_VERIFY,
     FEATURE_ATTITUDE_HANG_BENCH,
+    FEATURE_ALL_MOTOR_TEST,
     FEATURE_LOW_RISK_LIFTOFF_VERIFY,
     HELLO_RESP_STRUCT,
     HELLO_RESP_STRUCT_V2,
@@ -381,6 +382,17 @@ class FakeSession:
         self._record("motor_test", motor_index, duty)
         return 0
 
+    def require_all_motor_test(self) -> None:
+        self._record("require_all_motor_test")
+
+    def all_motor_test_start(self, duty: float, duration_s: float) -> int:
+        self._record("all_motor_test_start", duty, duration_s)
+        return 0
+
+    def all_motor_test_stop(self) -> int:
+        self._record("all_motor_test_stop")
+        return 0
+
     def calib_gyro(self) -> int:
         self._record("calib_gyro")
         return 0
@@ -640,6 +652,25 @@ def test_hello_resp_v2_decodes_attitude_ground_verify_capabilities():
     info.require_low_risk_liftoff_verify()
 
 
+def test_hello_resp_v2_decodes_all_motor_test_capability():
+    payload = HELLO_RESP_STRUCT_V2.pack(
+        9,
+        1,
+        0,
+        0,
+        0x7FF,
+        b"all-v9".ljust(16, b"\x00"),
+        b"2026-04-19T00:00:00Z".ljust(24, b"\x00"),
+    )
+
+    info = decode_device_info(payload)
+
+    assert info.protocol_version == 9
+    assert info.supports_feature(FEATURE_ALL_MOTOR_TEST)
+    assert "all_motor_test" in info.feature_names()
+    info.require_all_motor_test()
+
+
 def test_attitude_capture_ref_encodes_expected_opcode():
     session = DeviceSession()
     transport = MockTransport()
@@ -758,6 +789,40 @@ def test_device_session_attitude_ground_and_liftoff_commands_encode_expected_opc
     assert decoded[1][1] == 0
     assert decoded[1][3] == pytest.approx(1.5)
     assert decoded[3][3] == pytest.approx(0.10)
+    session.disconnect()
+
+
+def test_device_session_all_motor_test_encodes_expected_opcodes():
+    class AllMotorTransport(MockTransport):
+        def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
+            if msg_type == MsgType.HELLO_REQ:
+                self.sent.append((msg_type, payload))
+                hello = HELLO_RESP_STRUCT_V2.pack(
+                    9,
+                    1,
+                    0,
+                    0,
+                    0x7FF,
+                    b"unit-test".ljust(16, b"\x00"),
+                    b"2026-04-19T00:00:00Z".ljust(24, b"\x00"),
+                )
+                self.inject(Frame(MsgType.HELLO_RESP, flags, seq, hello))
+                return
+            super().send_message(msg_type, payload, flags=flags, seq=seq)
+
+    session = DeviceSession()
+    transport = AllMotorTransport()
+    session.connect_transport(transport)
+    transport.sent.clear()
+
+    assert session.all_motor_test_start(0.30, 2.0) == 0
+    assert session.all_motor_test_stop() == 0
+
+    cmd_frames = [payload for msg_type, payload in transport.sent if msg_type == MsgType.CMD_REQ]
+    decoded = [CMD_REQ_STRUCT.unpack(payload) for payload in cmd_frames]
+    assert [item[0] for item in decoded] == [CmdId.ALL_MOTOR_TEST_START, CmdId.ALL_MOTOR_TEST_STOP]
+    assert decoded[0][1] == 20
+    assert decoded[0][3] == pytest.approx(0.30)
     session.disconnect()
 
 
@@ -2268,6 +2333,13 @@ def test_cli_parser_compatibility_without_gui_dependency():
     liftoff_near_default_args = build_parser().parse_args(["--serial", "COM7", "liftoff-near-threshold"])
     assert liftoff_near_default_args.attempts_per_duty == 2
 
+    all_motor_args = build_parser().parse_args(
+        ["--serial", "COM7", "all-motor-test", "--duty", "0.30", "--duration-s", "2.0"]
+    )
+    assert all_motor_args.command == "all-motor-test"
+    assert all_motor_args.duty == pytest.approx(0.30)
+    assert all_motor_args.duration_s == pytest.approx(2.0)
+
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
     real_import = builtins.__import__
@@ -2427,6 +2499,36 @@ def test_cli_liftoff_round_records_and_stops_with_fake_session(monkeypatch, tmp_
     assert any(name == "start_csv_log" and args[0].name.endswith("_liftoff_verify_round.csv") for name, args, _ in session.calls)
 
 
+def test_cli_all_motor_test_records_stops_and_disarms_with_fake_session(monkeypatch, tmp_path: Path):
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+    monkeypatch.setattr(cli_main.time, "sleep", lambda _duration: None)
+
+    rc = cli_main.main(
+        [
+            "--serial",
+            "COM7",
+            "all-motor-test",
+            "--duty",
+            "0.30",
+            "--duration-s",
+            "0.1",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 0
+    assert ("require_all_motor_test", (), {}) in session.calls
+    assert ("arm", (), {}) in session.calls
+    assert ("all_motor_test_start", (0.30, 0.1), {}) in session.calls
+    assert ("all_motor_test_stop", (), {}) in session.calls
+    assert ("disarm", (), {}) in session.calls
+    assert any(name == "start_csv_log" and args[0].name.endswith("_all_motor_test_30pct.csv") for name, args, _ in session.calls)
+
+
 def test_cli_attitude_start_old_firmware_fails_before_param_write(monkeypatch, capsys):
     from esp_drone_cli.cli import main as cli_main
 
@@ -2488,19 +2590,24 @@ def test_firmware_dispatch_registers_attitude_ground_verify_and_liftoff_paths():
     ground_tune = (repo_root / "firmware" / "main" / "ground_tune" / "ground_tune.c").read_text(encoding="utf-8")
     udp_protocol = (repo_root / "firmware" / "main" / "udp_protocol" / "udp_protocol.c").read_text(encoding="utf-8")
 
-    assert "CONSOLE_PROTOCOL_VERSION 0x08u" in protocol
+    assert "CONSOLE_PROTOCOL_VERSION 0x09u" in protocol
     assert "CONSOLE_FEATURE_ATTITUDE_GROUND_VERIFY" in protocol
     assert "CONSOLE_FEATURE_LOW_RISK_LIFTOFF_VERIFY" in protocol
+    assert "CONSOLE_FEATURE_ALL_MOTOR_TEST" in protocol
     assert "CMD_ATTITUDE_GROUND_VERIFY_START = 22" in protocol
     assert "CMD_LIFTOFF_VERIFY_START = 24" in protocol
     assert "CMD_ATTITUDE_GROUND_SET_TARGET = 26" in protocol
+    assert "CMD_ALL_MOTOR_TEST_START = 27" in protocol
     assert "case CMD_ATTITUDE_GROUND_VERIFY_START:" in dispatch
     assert "case CMD_LIFTOFF_VERIFY_START:" in dispatch
     assert "case CMD_ATTITUDE_GROUND_SET_TARGET:" in dispatch
+    assert "case CMD_ALL_MOTOR_TEST_START:" in dispatch
     assert "case CMD_ATTITUDE_GROUND_VERIFY_START:" in udp_protocol
     assert "case CMD_LIFTOFF_VERIFY_START:" in udp_protocol
+    assert "case CMD_ALL_MOTOR_TEST_START:" in udp_protocol
     assert "GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY" in app_main
     assert "GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF" in app_main
+    assert "CONTROL_MODE_ALL_MOTOR_TEST" in app_main
     assert "liftoff_verify_auto_disarm_ms" in app_main
     assert "ground_att_target_limit_deg" in ground_tune
     assert "outer_clamp_flags" in ground_tune

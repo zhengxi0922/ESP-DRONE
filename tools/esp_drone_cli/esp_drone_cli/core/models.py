@@ -83,11 +83,13 @@ FEATURE_UDP_MANUAL_CONTROL = 1 << 6
 FEATURE_GROUND_TUNE = 1 << 7
 FEATURE_ATTITUDE_GROUND_VERIFY = 1 << 8
 FEATURE_LOW_RISK_LIFTOFF_VERIFY = 1 << 9
+FEATURE_ALL_MOTOR_TEST = 1 << 10
 MIN_ATTITUDE_HANG_PROTOCOL_VERSION = 3
 MIN_UDP_MANUAL_PROTOCOL_VERSION = 5
 MIN_GROUND_TUNE_PROTOCOL_VERSION = 6
 MIN_ATTITUDE_GROUND_VERIFY_PROTOCOL_VERSION = 8
 MIN_LOW_RISK_LIFTOFF_PROTOCOL_VERSION = 8
+MIN_ALL_MOTOR_TEST_PROTOCOL_VERSION = 9
 
 FEATURE_NAMES = {
     FEATURE_PARAMS: "params",
@@ -100,6 +102,7 @@ FEATURE_NAMES = {
     FEATURE_GROUND_TUNE: "ground_tune",
     FEATURE_ATTITUDE_GROUND_VERIFY: "attitude_ground_verify",
     FEATURE_LOW_RISK_LIFTOFF_VERIFY: "low_risk_liftoff_verify",
+    FEATURE_ALL_MOTOR_TEST: "all_motor_test",
 }
 
 
@@ -204,6 +207,23 @@ class DeviceInfo:
             f"build_git_hash={self.build_git_hash or 'unknown'}, "
             f"build_time_utc={self.build_time_utc or 'unknown'}). "
             "Rebuild and flash the current main firmware before running liftoff verify commands."
+        )
+
+    def require_all_motor_test(self) -> None:
+        if (
+            self.protocol_version >= MIN_ALL_MOTOR_TEST_PROTOCOL_VERSION
+            and self.supports_feature(FEATURE_ALL_MOTOR_TEST)
+        ):
+            return
+        raise CapabilityError(
+            "device firmware does not advertise independent all-motor test support "
+            f"(need protocol_version>={MIN_ALL_MOTOR_TEST_PROTOCOL_VERSION} and "
+            f"feature all_motor_test/0x{FEATURE_ALL_MOTOR_TEST:02x}; "
+            f"got protocol_version={self.protocol_version}, "
+            f"feature_bitmap=0x{self.feature_bitmap:08x}, "
+            f"build_git_hash={self.build_git_hash or 'unknown'}, "
+            f"build_time_utc={self.build_time_utc or 'unknown'}). "
+            "Rebuild and flash the current main firmware before running all-motor-test."
         )
 
 

@@ -16,6 +16,9 @@ static _Atomic uint32_t g_loop_overrun_count;
 static _Atomic bool g_stream_enabled;
 static _Atomic int g_motor_test_logical;
 static _Atomic uint32_t g_motor_test_duty_bits;
+static _Atomic uint32_t g_all_motor_test_duty_bits;
+static _Atomic uint32_t g_all_motor_test_duration_ms;
+static _Atomic uint64_t g_all_motor_test_start_us;
 static _Atomic int g_control_mode;
 static _Atomic uint32_t g_axis_test_roll_bits;
 static _Atomic uint32_t g_axis_test_pitch_bits;
@@ -84,6 +87,9 @@ void runtime_state_init(void)
     atomic_store(&g_stream_enabled, false);
     atomic_store(&g_motor_test_logical, -1);
     atomic_store(&g_motor_test_duty_bits, 0u);
+    atomic_store(&g_all_motor_test_duty_bits, 0u);
+    atomic_store(&g_all_motor_test_duration_ms, 0u);
+    atomic_store(&g_all_motor_test_start_us, 0u);
     atomic_store(&g_control_mode, CONTROL_MODE_IDLE);
     atomic_store(&g_axis_test_roll_bits, 0u);
     atomic_store(&g_axis_test_pitch_bits, 0u);
@@ -190,6 +196,27 @@ void runtime_state_get_motor_test(int *out_logical_motor, float *out_duty)
     if (out_duty != NULL) {
         *out_duty = runtime_state_bits_float(atomic_load(&g_motor_test_duty_bits));
     }
+}
+
+void runtime_state_set_all_motor_test(float duty, uint32_t duration_ms, uint64_t start_us)
+{
+    atomic_store(&g_all_motor_test_duty_bits, runtime_state_float_bits(duty));
+    atomic_store(&g_all_motor_test_duration_ms, duration_ms);
+    atomic_store(&g_all_motor_test_start_us, start_us);
+}
+
+all_motor_test_state_t runtime_state_get_all_motor_test(void)
+{
+    return (all_motor_test_state_t){
+        .duty = runtime_state_bits_float(atomic_load(&g_all_motor_test_duty_bits)),
+        .duration_ms = atomic_load(&g_all_motor_test_duration_ms),
+        .start_us = atomic_load(&g_all_motor_test_start_us),
+    };
+}
+
+void runtime_state_clear_all_motor_test(void)
+{
+    runtime_state_set_all_motor_test(0.0f, 0u, 0u);
 }
 
 void runtime_state_set_control_mode(control_mode_t mode)

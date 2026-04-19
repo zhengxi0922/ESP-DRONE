@@ -130,7 +130,14 @@ typedef enum {
     CONTROL_MODE_ATTITUDE_HANG_TEST = 4,   /**< 鍦嗘/鍚婃灦/鍙楅檺鍙版灦涓撶敤 attitude 澶栫幆 bring-up銆?*/
     CONTROL_MODE_UDP_MANUAL = 5,           /**< Experimental UDP manual control with attitude roll/pitch and rate-PID yaw. */
     CONTROL_MODE_ATTITUDE_GROUND_TUNE = 6, /**< Low-throttle flat-ground attitude tune mode. */
+    CONTROL_MODE_ALL_MOTOR_TEST = 7,        /**< Open-loop equal-duty all-motor threshold test. */
 } control_mode_t;
+
+typedef struct {
+    float duty;
+    uint32_t duration_ms;
+    uint64_t start_us;
+} all_motor_test_state_t;
 
 typedef enum {
     GROUND_TUNE_SUBMODE_RATE_ONLY = 0,

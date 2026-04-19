@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from collections import deque
 from datetime import datetime
+import math
 import sys
 import time
 from pathlib import Path
@@ -13,12 +14,14 @@ from esp_drone_cli.core import DeviceSession, TelemetrySample
 from esp_drone_cli.core.models import (
     FEATURE_ATTITUDE_HANG_BENCH,
     FEATURE_ATTITUDE_GROUND_VERIFY,
+    FEATURE_ALL_MOTOR_TEST,
     FEATURE_GROUND_TUNE,
     FEATURE_LOW_RISK_LIFTOFF_VERIFY,
     FEATURE_NAMES,
     FEATURE_UDP_MANUAL_CONTROL,
     MIN_ATTITUDE_HANG_PROTOCOL_VERSION,
     MIN_ATTITUDE_GROUND_VERIFY_PROTOCOL_VERSION,
+    MIN_ALL_MOTOR_TEST_PROTOCOL_VERSION,
     MIN_GROUND_TUNE_PROTOCOL_VERSION,
     MIN_LOW_RISK_LIFTOFF_PROTOCOL_VERSION,
     MIN_UDP_MANUAL_PROTOCOL_VERSION,
@@ -31,8 +34,12 @@ from esp_drone_cli.core.roll_bench import (
 from esp_drone_cli.core.protocol.messages import CmdId, CommandError, ensure_command_ok
 
 CONTROL_MODE_ATTITUDE_GROUND_TUNE = 6
+CONTROL_MODE_ALL_MOTOR_TEST = 7
 GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY = 1
 GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF = 2
+ALL_MOTOR_TEST_MAX_DUTY = 0.35
+ALL_MOTOR_TEST_MIN_DURATION_S = 0.1
+ALL_MOTOR_TEST_MAX_DURATION_S = 5.0
 GROUND_VERIFY_SAFE_PARAMS = (
     ("telemetry_usb_hz", 2, 50),
     ("ground_att_kp_roll", 4, 0.8),
@@ -1504,6 +1511,29 @@ def require_low_risk_liftoff_capability(session: DeviceSession) -> None:
     )
 
 
+def require_all_motor_test_capability(session: DeviceSession) -> None:
+    """Reject all-motor-test before sending its independent test opcode."""
+
+    if hasattr(session, "require_all_motor_test"):
+        session.require_all_motor_test()
+        return
+    info = session.device_info or session.hello()
+    if hasattr(info, "require_all_motor_test"):
+        info.require_all_motor_test()
+        return
+    protocol_version = int(getattr(info, "protocol_version", 0))
+    feature_bitmap = int(getattr(info, "feature_bitmap", 0))
+    if protocol_version >= MIN_ALL_MOTOR_TEST_PROTOCOL_VERSION and (feature_bitmap & FEATURE_ALL_MOTOR_TEST):
+        return
+    raise RuntimeError(
+        "device firmware does not advertise independent all-motor test support "
+        f"(need protocol_version>={MIN_ALL_MOTOR_TEST_PROTOCOL_VERSION} and "
+        f"feature all_motor_test/0x{FEATURE_ALL_MOTOR_TEST:02x}; "
+        f"got protocol_version={protocol_version}, feature_bitmap=0x{feature_bitmap:08x}). "
+        "Rebuild and flash the current main firmware before running all-motor-test."
+    )
+
+
 def cmd_arm(session: DeviceSession, _args) -> int:
     """发送解锁命令。
 
@@ -2568,6 +2598,100 @@ def cmd_motor_test(session: DeviceSession, args) -> int:
     return 0
 
 
+def cmd_all_motor_test(session: DeviceSession, args) -> int:
+    """Run an independent equal-duty all-motor test with fixed duration and CSV logging."""
+
+    require_all_motor_test_capability(session)
+    duty = float(args.duty)
+    duration_s = float(args.duration_s)
+    if not math.isfinite(duty) or duty < 0.0 or duty > ALL_MOTOR_TEST_MAX_DUTY:
+        raise ValueError(f"duty must be finite and within 0.0..{ALL_MOTOR_TEST_MAX_DUTY:.2f}")
+    if not math.isfinite(duration_s) or duration_s < ALL_MOTOR_TEST_MIN_DURATION_S or duration_s > ALL_MOTOR_TEST_MAX_DURATION_S:
+        raise ValueError(
+            f"duration-s must be finite and within "
+            f"{ALL_MOTOR_TEST_MIN_DURATION_S:.1f}..{ALL_MOTOR_TEST_MAX_DURATION_S:.1f}"
+        )
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    duty_label = f"{int(round(duty * 100)):02d}"
+    csv_path = output_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_all_motor_test_{duty_label}pct.csv"
+    samples: list[TelemetrySample] = []
+
+    def on_telemetry(sample: TelemetrySample) -> None:
+        samples.append(sample)
+
+    token = session.subscribe_telemetry(on_telemetry)
+    started = False
+    try:
+        session.start_csv_log(csv_path)
+        session.start_stream()
+        if not args.no_auto_arm:
+            ensure_command_ok(CmdId.ARM, session.arm())
+        ensure_command_ok(CmdId.ALL_MOTOR_TEST_START, session.all_motor_test_start(duty, duration_s))
+        started = True
+        time.sleep(duration_s + 0.25)
+    finally:
+        if started:
+            try:
+                session.all_motor_test_stop()
+            except Exception:
+                pass
+        try:
+            session.stop_stream()
+        except Exception:
+            pass
+        try:
+            session.stop_csv_log()
+        except Exception:
+            pass
+        if not args.no_auto_arm:
+            try:
+                session.disarm()
+            except Exception:
+                pass
+        session.unsubscribe(token)
+
+    active_samples = [
+        sample
+        for sample in samples
+        if sample.control_mode == CONTROL_MODE_ALL_MOTOR_TEST or max(sample.motor1, sample.motor2, sample.motor3, sample.motor4) > 0.0005
+    ]
+    max_motor = max((max(sample.motor1, sample.motor2, sample.motor3, sample.motor4) for sample in samples), default=0.0)
+    max_spread = max(
+        (
+            max(sample.motor1, sample.motor2, sample.motor3, sample.motor4)
+            - min(sample.motor1, sample.motor2, sample.motor3, sample.motor4)
+            for sample in active_samples
+        ),
+        default=0.0,
+    )
+    failsafe_reason_max = max((int(sample.failsafe_reason) for sample in samples), default=0)
+    ground_trip_reason_max = max((int(sample.ground_trip_reason) for sample in samples), default=0)
+    liftoff_ground_tune_seen = any(
+        sample.control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE and sample.control_submode == GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF
+        for sample in samples
+    )
+    all_motor_mode_seen = any(sample.control_mode == CONTROL_MODE_ALL_MOTOR_TEST for sample in samples)
+
+    print(f"csv={csv_path}")
+    print(f"duty={duty:.3f}")
+    print(f"duration_s={duration_s:.2f}")
+    print(f"sample_count={len(samples)}")
+    print(f"active_sample_count={len(active_samples)}")
+    print(f"all_motor_mode_seen={all_motor_mode_seen}")
+    print(f"liftoff_verify_ground_tune_seen={liftoff_ground_tune_seen}")
+    print(f"max_motor_output={max_motor:.4f}")
+    print(f"active_motor_spread_max={max_spread:.4f}")
+    print(f"failsafe_reason_max={failsafe_reason_max}")
+    print(f"ground_trip_reason_max={ground_trip_reason_max}")
+    print(
+        "independent_path_ok="
+        f"{all_motor_mode_seen and not liftoff_ground_tune_seen and failsafe_reason_max == 0}"
+    )
+    return 0 if failsafe_reason_max == 0 else 2
+
+
 def cmd_axis_test(session: DeviceSession, args) -> int:
     """执行开环轴向测试。
 
@@ -2756,6 +2880,19 @@ def build_parser() -> argparse.ArgumentParser:
     motor_p = sub.add_parser("motor-test")
     motor_p.add_argument("motor")
     motor_p.add_argument("duty")
+
+    all_motor_p = sub.add_parser(
+        "all-motor-test",
+        help="run an independent equal-duty all-motor test with hard duration and duty caps",
+        description=(
+            "Set all four motors to the same duty outside the liftoff-verify/ground-tune attitude path. "
+            "Firmware caps duty at 0.35 and stops automatically when duration elapses."
+        ),
+    )
+    all_motor_p.add_argument("--duty", type=float, required=True)
+    all_motor_p.add_argument("--duration-s", type=float, default=2.0)
+    all_motor_p.add_argument("--output-dir", default="logs")
+    all_motor_p.add_argument("--no-auto-arm", action="store_true")
 
     axis_p = sub.add_parser("axis-test")
     axis_p.add_argument("axis", choices=["roll", "pitch", "yaw"])
@@ -3044,6 +3181,7 @@ def main(argv: list[str] | None = None) -> int:
             "watch-baro": cmd_baro,
             "dump-csv": cmd_dump_csv,
             "motor-test": cmd_motor_test,
+            "all-motor-test": cmd_all_motor_test,
             "axis-test": cmd_axis_test,
             "rate-test": cmd_rate_test,
             "attitude-capture-ref": cmd_attitude_capture_ref,

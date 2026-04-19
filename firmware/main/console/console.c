@@ -16,6 +16,7 @@
 #include "freertos/semphr.h"
 
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_vfs_cdcacm.h"
 
 #include "attitude_bench.h"
@@ -35,6 +36,9 @@
 #define CONSOLE_EVENT_TEXT_MAX 120
 #define CONSOLE_AXIS_TEST_ABS_MAX 0.25f
 #define CONSOLE_RATE_TEST_ABS_MAX_DPS 200.0f
+#define CONSOLE_ALL_MOTOR_TEST_MAX_DUTY 0.35f
+#define CONSOLE_ALL_MOTOR_TEST_MIN_DURATION_MS 100u
+#define CONSOLE_ALL_MOTOR_TEST_MAX_DURATION_MS 5000u
 
 #ifndef ESP_DRONE_BUILD_GIT_HASH
 #define ESP_DRONE_BUILD_GIT_HASH "unknown"
@@ -209,6 +213,7 @@ static void console_reset_ground_state(bool clear_reference)
 static void console_stop_active_control(bool clear_attitude_reference)
 {
     runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+    runtime_state_clear_all_motor_test();
     runtime_state_set_axis_test_request((axis3f_t){0});
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
     console_reset_attitude_state(clear_attitude_reference);
@@ -307,11 +312,13 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
     switch (req.cmd_id) {
     case CMD_ARM:
         runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_clear_all_motor_test();
         console_send_cmd_resp(req.cmd_id, safety_request_arm(true) ? CMD_STATUS_OK : CMD_STATUS_REJECTED);
         break;
     case CMD_DISARM:
         safety_request_disarm();
         runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_clear_all_motor_test();
         console_stop_active_control(false);
         motor_stop_all();
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
@@ -319,6 +326,7 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
     case CMD_KILL:
         safety_request_kill();
         runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_clear_all_motor_test();
         console_stop_active_control(false);
         motor_stop_all();
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
@@ -326,6 +334,7 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
     case CMD_REBOOT:
         runtime_state_set_stream_enabled(false);
         runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_clear_all_motor_test();
         console_stop_active_control(true);
         motor_stop_all();
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
@@ -674,6 +683,45 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
             console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
             break;
         }
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
+    case CMD_ALL_MOTOR_TEST_START: {
+        const uint32_t duration_ms = (uint32_t)req.arg_u8 * 100u;
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || console_has_active_motor_test()) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_CONFLICT);
+            break;
+        }
+        if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_ARM_REQUIRED);
+            break;
+        }
+        if (!console_value_is_finite_in_range(req.arg_f32, 0.0f, CONSOLE_ALL_MOTOR_TEST_MAX_DUTY) ||
+            duration_ms < CONSOLE_ALL_MOTOR_TEST_MIN_DURATION_MS ||
+            duration_ms > CONSOLE_ALL_MOTOR_TEST_MAX_DURATION_MS) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
+            break;
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        console_reset_attitude_state(false);
+        console_reset_ground_state(false);
+        ground_tune_set_submode(GROUND_TUNE_SUBMODE_RATE_ONLY);
+        controller_reset();
+        runtime_state_set_all_motor_test(req.arg_f32, duration_ms, (uint64_t)esp_timer_get_time());
+        runtime_state_set_control_mode(CONTROL_MODE_ALL_MOTOR_TEST);
+        console_send_event_text("all-motor test started");
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
+    }
+    case CMD_ALL_MOTOR_TEST_STOP:
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_clear_all_motor_test();
+        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        motor_stop_all();
+        console_send_event_text("all-motor test stopped normally");
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
     case CMD_UDP_MANUAL_ENABLE:

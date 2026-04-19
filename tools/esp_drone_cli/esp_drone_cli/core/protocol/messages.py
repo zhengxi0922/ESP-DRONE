@@ -53,6 +53,8 @@ class CmdId:
     LIFTOFF_VERIFY_START = 24
     LIFTOFF_VERIFY_STOP = 25
     ATTITUDE_GROUND_SET_TARGET = 26
+    ALL_MOTOR_TEST_START = 27
+    ALL_MOTOR_TEST_STOP = 28
 
 
 class CmdStatus:
@@ -95,6 +97,8 @@ CMD_NAMES = {
     CmdId.LIFTOFF_VERIFY_START: "liftoff-verify start",
     CmdId.LIFTOFF_VERIFY_STOP: "liftoff-verify stop",
     CmdId.ATTITUDE_GROUND_SET_TARGET: "attitude-ground target",
+    CmdId.ALL_MOTOR_TEST_START: "all-motor-test start",
+    CmdId.ALL_MOTOR_TEST_STOP: "all-motor-test stop",
 }
 
 CMD_STATUS_TEXT = {

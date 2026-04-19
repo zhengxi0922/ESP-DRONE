@@ -85,6 +85,10 @@ void runtime_state_set_motor_test(int logical_motor, float duty);
  */
 void runtime_state_get_motor_test(int *out_logical_motor, float *out_duty);
 
+void runtime_state_set_all_motor_test(float duty, uint32_t duration_ms, uint64_t start_us);
+all_motor_test_state_t runtime_state_get_all_motor_test(void);
+void runtime_state_clear_all_motor_test(void);
+
 /**
  * @brief 设置当前控制模式。
  *

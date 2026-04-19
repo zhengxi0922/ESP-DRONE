@@ -633,6 +633,12 @@ class DeviceSession:
         info = self._device_info or self.hello()
         info.require_low_risk_liftoff_verify()
 
+    def require_all_motor_test(self) -> None:
+        """Fail before sending independent all-motor test commands to unsupported firmware."""
+
+        info = self._device_info or self.hello()
+        info.require_all_motor_test()
+
     def arm(self) -> int:
         """请求设备解锁。"""
 
@@ -668,6 +674,19 @@ class DeviceSession:
         """
 
         return self.command(CmdId.MOTOR_TEST, arg_u8=motor_index, arg_f32=duty)
+
+    def all_motor_test_start(self, duty: float, duration_s: float) -> int:
+        """Start the independent equal-duty all-motor test path."""
+
+        self.require_all_motor_test()
+        duration_ticks = int(math.ceil(float(duration_s) * 10.0 - 1e-9))
+        return self.command(CmdId.ALL_MOTOR_TEST_START, arg_u8=duration_ticks, arg_f32=float(duty))
+
+    def all_motor_test_stop(self) -> int:
+        """Stop the independent equal-duty all-motor test path."""
+
+        self.require_all_motor_test()
+        return self.command(CmdId.ALL_MOTOR_TEST_STOP)
 
     def axis_test(self, axis_index: int, value: float) -> int:
         """执行开环轴向测试。
