@@ -11,6 +11,15 @@ import time
 from pathlib import Path
 
 from esp_drone_cli.core import DeviceSession, TelemetrySample
+from esp_drone_cli.core.liftoff_threshold import (
+    DEFAULT_ANGLE_TRIP_DEG as LIFTOFF_THRESHOLD_DEFAULT_ANGLE_TRIP_DEG,
+    DEFAULT_HARD_ANGLE_TRIP_DEG as LIFTOFF_THRESHOLD_DEFAULT_HARD_ANGLE_TRIP_DEG,
+    DEFAULT_MAX_DUTY as LIFTOFF_THRESHOLD_DEFAULT_MAX_DUTY,
+    DEFAULT_TELEMETRY_HZ as LIFTOFF_THRESHOLD_DEFAULT_TELEMETRY_HZ,
+    LiftoffThresholdOptions,
+    format_liftoff_threshold_summary,
+    run_liftoff_threshold,
+)
 from esp_drone_cli.core.models import (
     FEATURE_ATTITUDE_HANG_BENCH,
     FEATURE_ATTITUDE_GROUND_VERIFY,
@@ -2116,6 +2125,23 @@ def cmd_liftoff_verify(session: DeviceSession, args) -> int:
     return 0
 
 
+def cmd_liftoff_threshold(session: DeviceSession, args) -> int:
+    require_attitude_ground_verify_capability(session)
+    options = LiftoffThresholdOptions(
+        duty=args.duty,
+        duration_s=args.duration_s,
+        max_duty=args.max_duty,
+        angle_trip_deg=args.angle_trip_deg,
+        hard_angle_trip_deg=args.hard_angle_trip_deg,
+        telemetry_hz=args.telemetry_hz,
+        output_dir=Path(args.output_dir),
+    )
+    result = run_liftoff_threshold(session, options)
+    for line in format_liftoff_threshold_summary(result):
+        print(line)
+    return result.return_code
+
+
 def _wait_for_liftoff_pre_start_ready(
     samples: list[TelemetrySample],
     *,
@@ -3067,6 +3093,26 @@ def build_parser() -> argparse.ArgumentParser:
     liftoff_near_p.add_argument("--ready-timeout-s", type=float, default=LIFTOFF_PRE_START_READY_TIMEOUT_S)
     liftoff_near_p.add_argument("--ready-hold-s", type=float, default=LIFTOFF_PRE_START_READY_HOLD_S)
 
+    liftoff_threshold_p = sub.add_parser(
+        "liftoff-threshold",
+        help="run one closed-loop single-duty liftoff-threshold test and auto-clean up",
+        description=(
+            "Connect, reduce telemetry rate, capture flat-ground reference, arm, start the "
+            "attitude-ground closed-loop path, hold one base duty, log CSV, and always stop/disarm."
+        ),
+    )
+    liftoff_threshold_p.add_argument("--duty", type=float, required=True)
+    liftoff_threshold_p.add_argument("--duration-s", type=float, required=True)
+    liftoff_threshold_p.add_argument("--max-duty", type=float, default=LIFTOFF_THRESHOLD_DEFAULT_MAX_DUTY)
+    liftoff_threshold_p.add_argument("--angle-trip-deg", type=float, default=LIFTOFF_THRESHOLD_DEFAULT_ANGLE_TRIP_DEG)
+    liftoff_threshold_p.add_argument(
+        "--hard-angle-trip-deg",
+        type=float,
+        default=LIFTOFF_THRESHOLD_DEFAULT_HARD_ANGLE_TRIP_DEG,
+    )
+    liftoff_threshold_p.add_argument("--telemetry-hz", type=int, default=LIFTOFF_THRESHOLD_DEFAULT_TELEMETRY_HZ)
+    liftoff_threshold_p.add_argument("--output-dir", default="logs")
+
     udp_manual_p = sub.add_parser(
         "udp-manual",
         help="experimental UDP manual control; not free-flight ready",
@@ -3201,6 +3247,7 @@ def main(argv: list[str] | None = None) -> int:
             "liftoff-round": cmd_liftoff_verify_round,
             "liftoff-auto16": cmd_liftoff_auto16,
             "liftoff-near-threshold": cmd_liftoff_near_threshold,
+            "liftoff-threshold": cmd_liftoff_threshold,
             "udp-manual": cmd_udp_manual,
             "calib": cmd_calib,
             "axis-bench": cmd_axis_bench,

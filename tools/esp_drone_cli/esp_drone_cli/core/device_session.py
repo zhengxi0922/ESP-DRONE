@@ -1083,11 +1083,19 @@ class DeviceSession:
             self.save_params()
         return applied
 
-    def start_csv_log(self, output_path: Path) -> None:
+    def start_csv_log(
+        self,
+        output_path: Path,
+        *,
+        fieldnames: list[str] | None = None,
+        extra_row_fn: Callable[[TelemetrySample], dict[str, object]] | None = None,
+    ) -> None:
         """开始将后续遥测样本写入 CSV。
 
         Args:
             output_path: 输出文件路径。再次调用时会先关闭已有日志文件。
+            fieldnames: 可选 CSV 列名列表；默认使用标准遥测列。
+            extra_row_fn: 可选附加列提供器；用于为每行添加命令侧上下文列。
 
         Raises:
             OSError: 输出文件无法创建或写入时抛出。
@@ -1095,7 +1103,11 @@ class DeviceSession:
 
         if self._csv_logger is not None:
             self._csv_logger.close()
-        self._csv_logger = CsvTelemetryLogger(output_path)
+        self._csv_logger = CsvTelemetryLogger(
+            output_path,
+            fieldnames=fieldnames,
+            extra_row_fn=extra_row_fn,
+        )
         self._last_log_path = output_path
 
     def stop_csv_log(self) -> Path | None:

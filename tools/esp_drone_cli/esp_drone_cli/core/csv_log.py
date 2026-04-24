@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import threading
 from pathlib import Path
+from typing import Callable
 
 from .models import TELEMETRY_CSV_FIELDS, TelemetrySample
 
@@ -15,20 +16,30 @@ class CsvTelemetryLogger:
     该类只负责文件写入与线程安全，不负责启动或停止设备侧遥测流。
     """
 
-    def __init__(self, output_path: Path) -> None:
+    def __init__(
+        self,
+        output_path: Path,
+        *,
+        fieldnames: list[str] | None = None,
+        extra_row_fn: Callable[[TelemetrySample], dict[str, object]] | None = None,
+    ) -> None:
         """创建日志写入器并立即写入表头。
 
         Args:
             output_path: 输出 CSV 文件路径。父目录需要已存在。
+            fieldnames: 可选 CSV 列名列表；默认使用标准遥测列。
+            extra_row_fn: 可选附加列提供器；会在每行写入前合并到显示映射。
 
         Raises:
             OSError: 目标文件无法创建时抛出。
         """
 
         self._output_path = output_path
+        self._fieldnames = list(fieldnames or TELEMETRY_CSV_FIELDS)
+        self._extra_row_fn = extra_row_fn
         self._handle = output_path.open("w", newline="", encoding="utf-8")
         self._writer = csv.writer(self._handle)
-        self._writer.writerow(TELEMETRY_CSV_FIELDS)
+        self._writer.writerow(self._fieldnames)
         self._lock = threading.Lock()
         self._rows = 0
 
@@ -56,7 +67,10 @@ class CsvTelemetryLogger:
         """
 
         with self._lock:
-            self._writer.writerow(sample.to_csv_row())
+            row_map = sample.to_display_map()
+            if self._extra_row_fn is not None:
+                row_map.update(self._extra_row_fn(sample))
+            self._writer.writerow([row_map[name] for name in self._fieldnames])
             self._handle.flush()
             self._rows += 1
 
