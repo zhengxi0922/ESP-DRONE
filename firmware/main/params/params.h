@@ -39,7 +39,7 @@
  *
  * @note 参数布局发生不兼容变化时应递增。
  */
-#define PARAMS_SCHEMA_VERSION 8u
+#define PARAMS_SCHEMA_VERSION 9u
 
 /**
  * @brief 参数值类型编号。
@@ -169,6 +169,8 @@ typedef struct {
     uint32_t liftoff_verify_auto_disarm_ms;
     float liftoff_verify_ramp_duty_per_s;
     float liftoff_verify_att_trip_deg;
+    float motor_trim_scale[4];
+    float motor_trim_offset[4];
 } params_store_t;
 
 /**

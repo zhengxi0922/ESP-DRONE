@@ -485,8 +485,8 @@ class FakeSession:
         self._record("udp_manual_setpoint", throttle, pitch, roll, yaw, timeout)
         return 0
 
-    def start_csv_log(self, output_path: Path) -> None:
-        self._record("start_csv_log", output_path)
+    def start_csv_log(self, output_path: Path, **kwargs) -> None:
+        self._record("start_csv_log", output_path, **kwargs)
         self.last_log_path = output_path
 
     def stop_csv_log(self) -> Path | None:
@@ -2340,6 +2340,20 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert all_motor_args.duty == pytest.approx(0.30)
     assert all_motor_args.duration_s == pytest.approx(2.0)
 
+    motor_balance_args = build_parser().parse_args(["--serial", "COM7", "motor-thrust-balance"])
+    assert motor_balance_args.command == "motor-thrust-balance"
+    assert motor_balance_args.duties == "0.20,0.25,0.30,0.35"
+    assert motor_balance_args.duration_s == pytest.approx(0.9)
+    assert motor_balance_args.rest_s == pytest.approx(3.0)
+
+    motor_trim_args = build_parser().parse_args(["--serial", "COM7", "motor-trim-estimate", "summary.csv"])
+    assert motor_trim_args.command == "motor-trim-estimate"
+    assert motor_trim_args.summary_csv == "summary.csv"
+    assert motor_trim_args.max_adjust == pytest.approx(0.10)
+
+    short_hop_profile_args = build_parser().parse_args(["--serial", "COM7", "apply-short-hop-tuned-profile"])
+    assert short_hop_profile_args.command == "apply-short-hop-tuned-profile"
+
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
     real_import = builtins.__import__
@@ -2529,6 +2543,104 @@ def test_cli_all_motor_test_records_stops_and_disarms_with_fake_session(monkeypa
     assert any(name == "start_csv_log" and args[0].name.endswith("_all_motor_test_30pct.csv") for name, args, _ in session.calls)
 
 
+def test_cli_motor_thrust_balance_uses_single_motor_path_and_logs(monkeypatch, tmp_path: Path):
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+    monkeypatch.setattr(cli_main.time, "sleep", lambda _duration: None)
+
+    rc = cli_main.main(
+        [
+            "--serial",
+            "COM7",
+            "motor-thrust-balance",
+            "--duties",
+            "0.20",
+            "--duration-s",
+            "0.2",
+            "--rest-s",
+            "0",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 0
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "start_csv_log" in call_names
+    assert "start_stream" in call_names
+    assert "stop_stream" in call_names
+    assert "stop_csv_log" in call_names
+    assert "arm" not in call_names
+    assert "all_motor_test_start" not in call_names
+    for motor_index in range(4):
+        assert ("motor_test", (motor_index, 0.20), {}) in session.calls
+        assert ("motor_test", (motor_index, 0.0), {}) in session.calls
+    assert ("disarm", (), {}) in session.calls
+    assert any(path.name.endswith("_motor_thrust_balance_summary.csv") for path in tmp_path.iterdir())
+
+
+def test_cli_motor_trim_estimate_applies_conservative_ram_params(monkeypatch, tmp_path: Path, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    summary = tmp_path / "summary.csv"
+    summary.write_text(
+        "\n".join(
+            [
+                "trial_id,motor,duty,sample_count,battery_min_v,battery_mean_v,gyro_rms_dps,gyro_peak_dps,gyro_x_mean_dps,gyro_y_mean_dps,gyro_z_mean_dps,acc_rms_g,acc_std_g,response_score,relative_to_duty_mean,classification",
+                "1,M1,0.30,80,4.0,4.0,40,80,0,0,0,0,0,100,1.0,normal",
+                "2,M2,0.30,80,4.0,4.0,80,120,0,0,0,0,0,160,1.6,strong_response",
+                "3,M3,0.30,80,4.0,4.0,10,30,0,0,0,0,0,20,0.2,weak_response",
+                "4,M4,0.30,80,4.0,4.0,45,80,0,0,0,0,0,100,1.0,normal",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    session = FakeSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+
+    rc = cli_main.main(["--serial", "COM7", "motor-trim-estimate", str(summary), "--apply"])
+
+    assert rc == 0
+    assert ("set_param", ("motor_trim_scale_m1", 4, 1.0), {}) in session.calls
+    assert ("set_param", ("motor_trim_scale_m2", 4, 0.9), {}) in session.calls
+    assert ("set_param", ("motor_trim_scale_m3", 4, 1.1), {}) in session.calls
+    assert ("set_param", ("motor_trim_offset_m3", 4, 0.0), {}) in session.calls
+    output = capsys.readouterr().out
+    assert "M2 ratio_to_M1=1.600 scale=0.9000" in output
+    assert "M3 ratio_to_M1=0.200 scale=1.1000" in output
+
+
+def test_cli_apply_short_hop_tuned_profile_writes_ram_only(monkeypatch, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+
+    rc = cli_main.main(["--serial", "COM7", "apply-short-hop-tuned-profile"])
+
+    assert rc == 0
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "require_attitude_ground_verify" in call_names
+    assert ("set_param", ("rate_kp_roll", 4, 0.00077), {}) in session.calls
+    assert ("set_param", ("rate_kp_pitch", 4, 0.00077), {}) in session.calls
+    assert ("set_param", ("ground_att_rate_limit_roll", 4, 6.0), {}) in session.calls
+    assert ("set_param", ("ground_att_trip_deg", 4, 10.0), {}) in session.calls
+    assert ("set_param", ("ground_test_base_duty", 4, 0.35), {}) in session.calls
+    assert ("set_param", ("ground_test_max_extra_duty", 4, 0.1), {}) in session.calls
+    assert ("set_param", ("ground_test_motor_balance_limit", 4, 0.3), {}) in session.calls
+    assert ("set_param", ("ground_test_ramp_duty_per_s", 4, 0.25), {}) in session.calls
+    assert "save_params" not in call_names
+
+    output = capsys.readouterr().out
+    assert "profile=short_hop_tuned_ram" in output
+    assert "persisted=False" in output
+    assert "motor_trim=unchanged" in output
+    assert "ground_att_rate_limit_roll=6.0" in output
+
+
 def test_cli_attitude_start_old_firmware_fails_before_param_write(monkeypatch, capsys):
     from esp_drone_cli.cli import main as cli_main
 
@@ -2651,6 +2763,24 @@ def test_firmware_registers_softap_udp_transport():
     assert "WIFI_EVENT_AP_STACONNECTED" in wifi_ap
     assert "INADDR_ANY" in udp_protocol
     assert "params_get()->wifi_udp_port" in udp_protocol
+
+
+def test_firmware_registers_motor_trim_params_and_applies_before_motor_clamp():
+    repo_root = Path(__file__).resolve().parents[3]
+    params_h = (repo_root / "firmware" / "main" / "params" / "params.h").read_text(encoding="utf-8")
+    params_c = (repo_root / "firmware" / "main" / "params" / "params.c").read_text(encoding="utf-8")
+    motor_c = (repo_root / "firmware" / "main" / "motor" / "motor.c").read_text(encoding="utf-8")
+
+    assert "#define PARAMS_SCHEMA_VERSION 9u" in params_h
+    assert "float motor_trim_scale[4];" in params_h
+    assert "float motor_trim_offset[4];" in params_h
+    assert '"motor_trim_scale_m3"' in params_c
+    assert '"motor_trim_offset_m3"' in params_c
+    assert "store->motor_trim_scale[i] = 1.0f;" in params_c
+    assert "store->motor_trim_offset[i] = 0.0f;" in params_c
+    assert "PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_TRIM 8u" in params_c
+    assert "duty = duty * params->motor_trim_scale[i] + params->motor_trim_offset[i];" in motor_c
+    assert "duty = motor_clampf(duty, 0.0f, params->motor_max_duty);" in motor_c
 
 
 def test_firmware_telemetry_battery_read_does_not_emit_transient_zero():
