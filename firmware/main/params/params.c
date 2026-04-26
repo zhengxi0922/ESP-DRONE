@@ -27,10 +27,10 @@ typedef struct {
 
 static params_store_t s_params;
 
-#define PARAMS_RATE_KP_ROLL_DEFAULT 0.0007f
+#define PARAMS_RATE_KP_ROLL_DEFAULT 0.000770f
 #define PARAMS_RATE_KI_ROLL_DEFAULT 0.0f
 #define PARAMS_RATE_KD_ROLL_DEFAULT 0.0f
-#define PARAMS_RATE_KP_PITCH_DEFAULT 0.0007f
+#define PARAMS_RATE_KP_PITCH_DEFAULT 0.000770f
 #define PARAMS_RATE_KI_PITCH_DEFAULT 0.0f
 #define PARAMS_RATE_KD_PITCH_DEFAULT 0.0f
 #define PARAMS_RATE_KP_YAW_DEFAULT 0.0005f
@@ -40,6 +40,7 @@ static params_store_t s_params;
 #define PARAMS_SCHEMA_VERSION_BEFORE_GROUND_TUNE 5u
 #define PARAMS_SCHEMA_VERSION_BEFORE_RATE_FIRST_GROUND_TUNE 6u
 #define PARAMS_SCHEMA_VERSION_BEFORE_ATTITUDE_VERIFY 7u
+#define PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_TRIM 8u
 
 /* 参数系统采用“单 blob + schema_version + CRC32”保存策略。
  * 运行时所有参数写入都必须先过 params_try_set() 的合法性校验。 */
@@ -100,6 +101,14 @@ static const param_descriptor_t s_param_descs[] = {
     {"motor_spin_is_cw1", PARAM_TYPE_BOOL, offsetof(params_store_t, motor_spin_is_cw[1])},
     {"motor_spin_is_cw2", PARAM_TYPE_BOOL, offsetof(params_store_t, motor_spin_is_cw[2])},
     {"motor_spin_is_cw3", PARAM_TYPE_BOOL, offsetof(params_store_t, motor_spin_is_cw[3])},
+    {"motor_trim_scale_m1", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_trim_scale[0])},
+    {"motor_trim_scale_m2", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_trim_scale[1])},
+    {"motor_trim_scale_m3", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_trim_scale[2])},
+    {"motor_trim_scale_m4", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_trim_scale[3])},
+    {"motor_trim_offset_m1", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_trim_offset[0])},
+    {"motor_trim_offset_m2", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_trim_offset[1])},
+    {"motor_trim_offset_m3", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_trim_offset[2])},
+    {"motor_trim_offset_m4", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_trim_offset[3])},
     {"rate_kp_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_kp_roll)},
     {"rate_ki_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_ki_roll)},
     {"rate_kd_roll", PARAM_TYPE_FLOAT, offsetof(params_store_t, rate_kd_roll)},
@@ -222,6 +231,10 @@ static void params_apply_defaults(params_store_t *store)
     store->motor_spin_is_cw[1] = true;
     store->motor_spin_is_cw[2] = false;
     store->motor_spin_is_cw[3] = true;
+    for (size_t i = 0; i < 4; ++i) {
+        store->motor_trim_scale[i] = 1.0f;
+        store->motor_trim_offset[i] = 0.0f;
+    }
 
     params_apply_rate_pid_defaults(store);
     store->rate_integral_limit = 100.0f;
@@ -428,6 +441,17 @@ static bool params_float_in_range(float value, float min_value, float max_value)
     return isfinite(value) && value >= min_value && value <= max_value;
 }
 
+static bool params_validate_motor_trim_limits(const params_store_t *store)
+{
+    for (size_t i = 0; i < 4; ++i) {
+        if (!params_float_in_range(store->motor_trim_scale[i], 0.50f, 1.50f) ||
+            !params_float_in_range(store->motor_trim_offset[i], -0.20f, 0.20f)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool params_validate_rate_pid_limits(const params_store_t *store)
 {
     const float max_kp = 0.050f;
@@ -531,6 +555,7 @@ static bool params_validate_store(const params_store_t *store)
            params_validate_network(store) &&
            params_validate_battery_thresholds(store) &&
            params_validate_motor_duty_limits(store) &&
+           params_validate_motor_trim_limits(store) &&
            params_validate_rate_pid_limits(store) &&
            params_validate_attitude_bench_limits(store) &&
            params_validate_udp_manual_limits(store) &&
@@ -564,9 +589,11 @@ static bool params_try_load_from_nvs(params_store_t *store)
         header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_RATE_FIRST_GROUND_TUNE;
     const bool pre_attitude_verify_schema =
         header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_ATTITUDE_VERIFY;
+    const bool pre_motor_trim_schema =
+        header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_TRIM;
     const size_t payload_len = len - sizeof(header);
     if (header.magic != PARAMS_BLOB_MAGIC ||
-        (!current_schema && !pre_motor_remap_schema && !pre_ground_tune_schema && !pre_rate_first_ground_tune_schema && !pre_attitude_verify_schema) ||
+        (!current_schema && !pre_motor_remap_schema && !pre_ground_tune_schema && !pre_rate_first_ground_tune_schema && !pre_attitude_verify_schema && !pre_motor_trim_schema) ||
         header.payload_len != payload_len ||
         header.payload_len > sizeof(params_store_t)) {
         return false;

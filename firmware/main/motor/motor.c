@@ -109,6 +109,9 @@ void motor_set_armed_outputs(const float normalized[MOTOR_COUNT], bool kill_over
 
     for (int i = 0; i < MOTOR_COUNT; ++i) {
         float duty = normalized != NULL ? normalized[i] : 0.0f;
+        if (duty > 0.0f) {
+            duty = duty * params->motor_trim_scale[i] + params->motor_trim_offset[i];
+        }
         duty = motor_clampf(duty, 0.0f, params->motor_max_duty);
 
         if (duty > 0.0f && duty < params->motor_idle_duty) {

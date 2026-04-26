@@ -12,13 +12,51 @@ from pathlib import Path
 
 from esp_drone_cli.core import DeviceSession, TelemetrySample
 from esp_drone_cli.core.liftoff_threshold import (
+    ANGLE_RATE_LIMIT_DPS_CHOICES as LIFTOFF_THRESHOLD_ANGLE_RATE_LIMIT_DPS_CHOICES,
     DEFAULT_ANGLE_TRIP_DEG as LIFTOFF_THRESHOLD_DEFAULT_ANGLE_TRIP_DEG,
+    DEFAULT_ANGLE_RATE_LIMIT_DPS as LIFTOFF_THRESHOLD_DEFAULT_ANGLE_RATE_LIMIT_DPS,
+    DEFAULT_GROUND_TEST_MOTOR_BALANCE_LIMIT as LIFTOFF_THRESHOLD_DEFAULT_MOTOR_BALANCE_LIMIT,
+    DEFAULT_GROUND_TEST_RAMP_DUTY_PER_S as LIFTOFF_THRESHOLD_DEFAULT_GROUND_RAMP_DUTY_PER_S,
+    DEFAULT_GROUND_TEST_MAX_EXTRA_DUTY as LIFTOFF_THRESHOLD_DEFAULT_MAX_EXTRA_DUTY,
     DEFAULT_HARD_ANGLE_TRIP_DEG as LIFTOFF_THRESHOLD_DEFAULT_HARD_ANGLE_TRIP_DEG,
     DEFAULT_MAX_DUTY as LIFTOFF_THRESHOLD_DEFAULT_MAX_DUTY,
     DEFAULT_TELEMETRY_HZ as LIFTOFF_THRESHOLD_DEFAULT_TELEMETRY_HZ,
     LiftoffThresholdOptions,
+    SHORT_HOP_CSV_STEM,
+    SHORT_HOP_DEFAULT_ANGLE_RATE_LIMIT_DPS,
+    SHORT_HOP_DEFAULT_ANGLE_TRIP_DEG,
+    SHORT_HOP_DEFAULT_DUTY,
+    SHORT_HOP_DEFAULT_DURATION_S,
+    SHORT_HOP_DEFAULT_HARD_ANGLE_TRIP_DEG,
+    SHORT_HOP_DEFAULT_MAX_DUTY,
+    SHORT_HOP_DEFAULT_MAX_EXTRA_DUTY,
+    SHORT_HOP_DEFAULT_MOTOR_LIMIT_TRIP_S,
+    SHORT_HOP_DEFAULT_MOTOR_STEP_TRIP,
+    SHORT_HOP_DEFAULT_PID_STEP_TRIP,
+    SHORT_HOP_DETECT_CSV_STEM,
+    SHORT_HOP_DETECT_DEFAULT_ATTITUDE_JUMP_TRIP_DEG,
+    SHORT_HOP_DETECT_DEFAULT_END_DUTY,
+    SHORT_HOP_DETECT_DEFAULT_MAX_DUTY,
+    SHORT_HOP_DETECT_DEFAULT_POST_LIFTOFF_S,
+    SHORT_HOP_DETECT_DEFAULT_RAMP_S,
+    SHORT_HOP_DETECT_DEFAULT_START_DUTY,
     format_liftoff_threshold_summary,
     run_liftoff_threshold,
+)
+from esp_drone_cli.core.motor_balance import (
+    MOTOR_BALANCE_DEFAULT_DURATION_S,
+    MOTOR_BALANCE_DEFAULT_DUTIES,
+    MOTOR_BALANCE_DEFAULT_REST_S,
+    MOTOR_BALANCE_DEFAULT_TELEMETRY_HZ,
+    MOTOR_BALANCE_MAX_DUTY,
+    MotorBalanceOptions,
+    apply_motor_trim_estimate,
+    estimate_motor_trim_from_summary,
+    format_motor_balance_summary,
+    format_motor_trim_estimate,
+    parse_duties,
+    parse_motors,
+    run_motor_thrust_balance,
 )
 from esp_drone_cli.core.models import (
     FEATURE_ATTITUDE_HANG_BENCH,
@@ -76,6 +114,30 @@ LIFTOFF_VERIFY_SAFE_PARAMS = (
     ("liftoff_verify_auto_disarm_ms", 2, 2500),
     ("liftoff_verify_ramp_duty_per_s", 4, 0.08),
     ("liftoff_verify_att_trip_deg", 4, 7.0),
+)
+SHORT_HOP_TUNED_RATE_KP_ROLL_PITCH = 0.000770
+SHORT_HOP_TUNED_RAM_PARAMS = (
+    ("rate_kp_roll", 4, SHORT_HOP_TUNED_RATE_KP_ROLL_PITCH),
+    ("rate_ki_roll", 4, 0.0),
+    ("rate_kd_roll", 4, 0.0),
+    ("rate_kp_pitch", 4, SHORT_HOP_TUNED_RATE_KP_ROLL_PITCH),
+    ("rate_ki_pitch", 4, 0.0),
+    ("rate_kd_pitch", 4, 0.0),
+    ("rate_kp_yaw", 4, 0.0005),
+    ("rate_ki_yaw", 4, 0.0),
+    ("rate_kd_yaw", 4, 0.0),
+    ("ground_tune_use_kalman_attitude", 0, False),
+    ("ground_att_kp_roll", 4, 0.8),
+    ("ground_att_kp_pitch", 4, 0.8),
+    ("ground_att_rate_limit_roll", 4, SHORT_HOP_DEFAULT_ANGLE_RATE_LIMIT_DPS),
+    ("ground_att_rate_limit_pitch", 4, SHORT_HOP_DEFAULT_ANGLE_RATE_LIMIT_DPS),
+    ("ground_att_target_limit_deg", 4, 2.0),
+    ("ground_att_error_deadband_deg", 4, 0.2),
+    ("ground_att_trip_deg", 4, SHORT_HOP_DEFAULT_ANGLE_TRIP_DEG),
+    ("ground_test_base_duty", 4, SHORT_HOP_DEFAULT_DUTY),
+    ("ground_test_max_extra_duty", 4, SHORT_HOP_DEFAULT_MAX_EXTRA_DUTY),
+    ("ground_test_motor_balance_limit", 4, LIFTOFF_THRESHOLD_DEFAULT_MOTOR_BALANCE_LIMIT),
+    ("ground_test_ramp_duty_per_s", 4, LIFTOFF_THRESHOLD_DEFAULT_GROUND_RAMP_DUTY_PER_S),
 )
 LIFTOFF_STATE_NO = "no liftoff"
 LIFTOFF_STATE_NEAR = "near liftoff / unloading"
@@ -2135,11 +2197,88 @@ def cmd_liftoff_threshold(session: DeviceSession, args) -> int:
         hard_angle_trip_deg=args.hard_angle_trip_deg,
         telemetry_hz=args.telemetry_hz,
         output_dir=Path(args.output_dir),
+        ground_test_max_extra_duty=args.max_extra_duty,
+        angle_rate_limit_dps=args.angle_rate_limit_dps,
     )
     result = run_liftoff_threshold(session, options)
     for line in format_liftoff_threshold_summary(result):
         print(line)
     return result.return_code
+
+
+def cmd_short_hop_verify(session: DeviceSession, args) -> int:
+    require_attitude_ground_verify_capability(session)
+    options = LiftoffThresholdOptions(
+        duty=args.duty,
+        duration_s=args.duration_s,
+        max_duty=args.max_duty,
+        angle_trip_deg=args.angle_trip_deg,
+        hard_angle_trip_deg=args.hard_angle_trip_deg,
+        telemetry_hz=args.telemetry_hz,
+        output_dir=Path(args.output_dir),
+        motor_limit_trip_s=SHORT_HOP_DEFAULT_MOTOR_LIMIT_TRIP_S,
+        ground_test_max_extra_duty=args.max_extra_duty,
+        angle_rate_limit_dps=args.angle_rate_limit_dps,
+        csv_stem=SHORT_HOP_CSV_STEM,
+        max_motor_step_trip=SHORT_HOP_DEFAULT_MOTOR_STEP_TRIP,
+        max_pid_step_trip=SHORT_HOP_DEFAULT_PID_STEP_TRIP,
+        trip_on_inner_loop_clamp=False,
+        include_motor_trim=True,
+    )
+    result = run_liftoff_threshold(session, options)
+    for line in format_liftoff_threshold_summary(result):
+        print(line)
+    return result.return_code
+
+
+def cmd_short_hop_detect(session: DeviceSession, args) -> int:
+    require_attitude_ground_verify_capability(session)
+    max_runtime_s = (
+        args.start_duty / LIFTOFF_THRESHOLD_DEFAULT_GROUND_RAMP_DUTY_PER_S
+        + args.ramp_s
+        + args.post_liftoff_s
+        + 1.0
+    )
+    options = LiftoffThresholdOptions(
+        duty=args.end_duty,
+        duration_s=max_runtime_s,
+        max_duty=args.max_duty,
+        angle_trip_deg=SHORT_HOP_DEFAULT_ANGLE_TRIP_DEG,
+        hard_angle_trip_deg=SHORT_HOP_DEFAULT_HARD_ANGLE_TRIP_DEG,
+        telemetry_hz=args.telemetry_hz,
+        output_dir=Path(args.output_dir),
+        motor_limit_trip_s=SHORT_HOP_DEFAULT_MOTOR_LIMIT_TRIP_S,
+        ground_test_max_extra_duty=args.max_extra_duty,
+        angle_rate_limit_dps=args.angle_rate_limit_dps,
+        csv_stem=SHORT_HOP_DETECT_CSV_STEM,
+        max_motor_step_trip=SHORT_HOP_DEFAULT_MOTOR_STEP_TRIP,
+        max_pid_step_trip=SHORT_HOP_DEFAULT_PID_STEP_TRIP,
+        trip_on_inner_loop_clamp=False,
+        ramp_start_duty=args.start_duty,
+        ramp_end_duty=args.end_duty,
+        ramp_s=args.ramp_s,
+        post_liftoff_s=args.post_liftoff_s,
+        observed_liftoff_time_s=args.observed_liftoff_time,
+        max_attitude_jump_trip_deg=SHORT_HOP_DETECT_DEFAULT_ATTITUDE_JUMP_TRIP_DEG,
+        include_motor_trim=True,
+    )
+    result = run_liftoff_threshold(session, options)
+    for line in format_liftoff_threshold_summary(result):
+        print(line)
+    return result.return_code
+
+
+def cmd_apply_short_hop_tuned_profile(session: DeviceSession, _args) -> int:
+    """Apply the current short-hop tuned profile to device RAM only."""
+
+    require_attitude_ground_verify_capability(session)
+    applied = [session.set_param(name, type_id, value) for name, type_id, value in SHORT_HOP_TUNED_RAM_PARAMS]
+    print("profile=short_hop_tuned_ram")
+    print("persisted=False")
+    print("motor_trim=unchanged")
+    for item in applied:
+        print(f"{item.name}={item.value}")
+    return 0
 
 
 def _wait_for_liftoff_pre_start_ready(
@@ -2718,6 +2857,37 @@ def cmd_all_motor_test(session: DeviceSession, args) -> int:
     return 0 if failsafe_reason_max == 0 else 2
 
 
+def cmd_motor_thrust_balance(session: DeviceSession, args) -> int:
+    """Run a single-motor thrust/vibration balance sequence with CSV logging."""
+
+    options = MotorBalanceOptions(
+        duties=parse_duties(args.duties),
+        duration_s=args.duration_s,
+        rest_s=args.rest_s,
+        telemetry_hz=args.telemetry_hz,
+        output_dir=Path(args.output_dir),
+        motors=parse_motors(args.motors),
+    )
+    result = run_motor_thrust_balance(session, options)
+    for line in format_motor_balance_summary(result):
+        print(line)
+    return result.return_code
+
+
+def cmd_motor_trim_estimate(session: DeviceSession, args) -> int:
+    """Estimate conservative motor trim scales from a motor-thrust-balance summary CSV."""
+
+    estimate = estimate_motor_trim_from_summary(
+        Path(args.summary_csv),
+        max_adjust=args.max_adjust,
+    )
+    if args.apply:
+        apply_motor_trim_estimate(session, estimate)
+    for line in format_motor_trim_estimate(estimate):
+        print(line)
+    return 0
+
+
 def cmd_axis_test(session: DeviceSession, args) -> int:
     """执行开环轴向测试。
 
@@ -2920,6 +3090,48 @@ def build_parser() -> argparse.ArgumentParser:
     all_motor_p.add_argument("--output-dir", default="logs")
     all_motor_p.add_argument("--no-auto-arm", action="store_true")
 
+    motor_balance_p = sub.add_parser(
+        "motor-thrust-balance",
+        help="run a single-motor thrust/vibration balance sweep and record CSV",
+        description=(
+            "Runs M1..M4 one at a time at the requested duty levels, records telemetry, "
+            "stops each motor, disarms, waits between trials, and prints relative gyro/acc response. "
+            "This does not arm all motors or run a liftoff path."
+        ),
+    )
+    motor_balance_p.add_argument(
+        "--duties",
+        default=",".join(f"{duty:.2f}" for duty in MOTOR_BALANCE_DEFAULT_DUTIES),
+        help=f"comma-separated duty list, each <= {MOTOR_BALANCE_MAX_DUTY:.2f}",
+    )
+    motor_balance_p.add_argument("--duration-s", type=float, default=MOTOR_BALANCE_DEFAULT_DURATION_S)
+    motor_balance_p.add_argument("--rest-s", type=float, default=MOTOR_BALANCE_DEFAULT_REST_S)
+    motor_balance_p.add_argument("--telemetry-hz", type=int, default=MOTOR_BALANCE_DEFAULT_TELEMETRY_HZ)
+    motor_balance_p.add_argument("--motors", default="M1,M2,M3,M4")
+    motor_balance_p.add_argument("--output-dir", default="logs")
+
+    motor_trim_p = sub.add_parser(
+        "motor-trim-estimate",
+        help="estimate conservative motor trim scales from a motor-thrust-balance summary CSV",
+        description=(
+            "Uses M1 as the reference motor and computes conservative scale-only trims. "
+            "Each scale is clipped to 1 +/- max-adjust; offsets stay at 0 by default."
+        ),
+    )
+    motor_trim_p.add_argument("summary_csv")
+    motor_trim_p.add_argument("--max-adjust", type=float, default=0.10)
+    motor_trim_p.add_argument("--apply", action="store_true", help="apply the estimated trims as RAM params")
+
+    short_hop_profile_p = sub.add_parser(
+        "apply-short-hop-tuned-profile",
+        help="apply the current short-hop tuned profile to RAM only",
+        description=(
+            "Writes the current recommended short-hop rate/ground parameters to device RAM only. "
+            "This command does not save to NVS, does not touch params.c defaults, and leaves motor trim unchanged."
+        ),
+    )
+    short_hop_profile_p.set_defaults(command="apply-short-hop-tuned-profile")
+
     axis_p = sub.add_parser("axis-test")
     axis_p.add_argument("axis", choices=["roll", "pitch", "yaw"])
     axis_p.add_argument("value")
@@ -3104,6 +3316,19 @@ def build_parser() -> argparse.ArgumentParser:
     liftoff_threshold_p.add_argument("--duty", type=float, required=True)
     liftoff_threshold_p.add_argument("--duration-s", type=float, required=True)
     liftoff_threshold_p.add_argument("--max-duty", type=float, default=LIFTOFF_THRESHOLD_DEFAULT_MAX_DUTY)
+    liftoff_threshold_p.add_argument(
+        "--max-extra-duty",
+        type=float,
+        default=LIFTOFF_THRESHOLD_DEFAULT_MAX_EXTRA_DUTY,
+        help="liftoff-threshold only: maximum closed-loop motor correction above/below base duty",
+    )
+    liftoff_threshold_p.add_argument(
+        "--angle-rate-limit-dps",
+        type=float,
+        choices=LIFTOFF_THRESHOLD_ANGLE_RATE_LIMIT_DPS_CHOICES,
+        default=LIFTOFF_THRESHOLD_DEFAULT_ANGLE_RATE_LIMIT_DPS,
+        help="liftoff-threshold only: roll/pitch outer-loop angle-to-rate clamp in deg/s",
+    )
     liftoff_threshold_p.add_argument("--angle-trip-deg", type=float, default=LIFTOFF_THRESHOLD_DEFAULT_ANGLE_TRIP_DEG)
     liftoff_threshold_p.add_argument(
         "--hard-angle-trip-deg",
@@ -3112,6 +3337,79 @@ def build_parser() -> argparse.ArgumentParser:
     )
     liftoff_threshold_p.add_argument("--telemetry-hz", type=int, default=LIFTOFF_THRESHOLD_DEFAULT_TELEMETRY_HZ)
     liftoff_threshold_p.add_argument("--output-dir", default="logs")
+
+    short_hop_p = sub.add_parser(
+        "short-hop-verify",
+        help="run one closed-loop short-hop verification and auto-clean up",
+        description=(
+            "Connect, reduce telemetry rate, capture flat-ground reference, arm, run the "
+            "attitude-ground closed-loop path for the validated short-hop window, log CSV, "
+            "and always stop/disarm."
+        ),
+    )
+    short_hop_p.add_argument("--duty", type=float, default=SHORT_HOP_DEFAULT_DUTY)
+    short_hop_p.add_argument("--duration-s", type=float, default=SHORT_HOP_DEFAULT_DURATION_S)
+    short_hop_p.add_argument("--max-duty", type=float, default=SHORT_HOP_DEFAULT_MAX_DUTY)
+    short_hop_p.add_argument(
+        "--max-extra-duty",
+        type=float,
+        default=SHORT_HOP_DEFAULT_MAX_EXTRA_DUTY,
+        help="short-hop-verify only: maximum closed-loop motor correction above/below base duty",
+    )
+    short_hop_p.add_argument(
+        "--angle-rate-limit-dps",
+        type=float,
+        choices=LIFTOFF_THRESHOLD_ANGLE_RATE_LIMIT_DPS_CHOICES,
+        default=SHORT_HOP_DEFAULT_ANGLE_RATE_LIMIT_DPS,
+        help="short-hop-verify only: roll/pitch outer-loop angle-to-rate clamp in deg/s",
+    )
+    short_hop_p.add_argument("--angle-trip-deg", type=float, default=SHORT_HOP_DEFAULT_ANGLE_TRIP_DEG)
+    short_hop_p.add_argument(
+        "--hard-angle-trip-deg",
+        type=float,
+        default=SHORT_HOP_DEFAULT_HARD_ANGLE_TRIP_DEG,
+    )
+    short_hop_p.add_argument("--telemetry-hz", type=int, default=LIFTOFF_THRESHOLD_DEFAULT_TELEMETRY_HZ)
+    short_hop_p.add_argument("--output-dir", default="logs")
+
+    short_hop_detect_p = sub.add_parser(
+        "short-hop-detect",
+        help="ramp closed-loop duty until suspected liftoff/unload, then stop after a short post-liftoff window",
+        description=(
+            "Connect, reduce telemetry rate, capture flat-ground reference, arm, ramp the "
+            "attitude-ground closed-loop base duty, detect suspected liftoff/unload, hold "
+            "briefly for post-liftoff analysis, log CSV, and always stop/disarm."
+        ),
+    )
+    short_hop_detect_p.add_argument("--start-duty", type=float, default=SHORT_HOP_DETECT_DEFAULT_START_DUTY)
+    short_hop_detect_p.add_argument("--end-duty", type=float, default=SHORT_HOP_DETECT_DEFAULT_END_DUTY)
+    short_hop_detect_p.add_argument("--ramp-s", type=float, default=SHORT_HOP_DETECT_DEFAULT_RAMP_S)
+    short_hop_detect_p.add_argument(
+        "--post-liftoff-s",
+        type=float,
+        default=SHORT_HOP_DETECT_DEFAULT_POST_LIFTOFF_S,
+    )
+    short_hop_detect_p.add_argument("--max-duty", type=float, default=SHORT_HOP_DETECT_DEFAULT_MAX_DUTY)
+    short_hop_detect_p.add_argument(
+        "--max-extra-duty",
+        type=float,
+        default=SHORT_HOP_DEFAULT_MAX_EXTRA_DUTY,
+        help="short-hop-detect only: maximum closed-loop motor correction above/below base duty",
+    )
+    short_hop_detect_p.add_argument(
+        "--angle-rate-limit-dps",
+        type=float,
+        choices=LIFTOFF_THRESHOLD_ANGLE_RATE_LIMIT_DPS_CHOICES,
+        default=SHORT_HOP_DEFAULT_ANGLE_RATE_LIMIT_DPS,
+        help="short-hop-detect only: roll/pitch outer-loop angle-to-rate clamp in deg/s",
+    )
+    short_hop_detect_p.add_argument(
+        "--observed-liftoff-time",
+        type=float,
+        help="manual marker in seconds after entering attitude-ground verify; forces liftoff window analysis",
+    )
+    short_hop_detect_p.add_argument("--telemetry-hz", type=int, default=LIFTOFF_THRESHOLD_DEFAULT_TELEMETRY_HZ)
+    short_hop_detect_p.add_argument("--output-dir", default="logs")
 
     udp_manual_p = sub.add_parser(
         "udp-manual",
@@ -3228,6 +3526,9 @@ def main(argv: list[str] | None = None) -> int:
             "dump-csv": cmd_dump_csv,
             "motor-test": cmd_motor_test,
             "all-motor-test": cmd_all_motor_test,
+            "motor-thrust-balance": cmd_motor_thrust_balance,
+            "motor-trim-estimate": cmd_motor_trim_estimate,
+            "apply-short-hop-tuned-profile": cmd_apply_short_hop_tuned_profile,
             "axis-test": cmd_axis_test,
             "rate-test": cmd_rate_test,
             "attitude-capture-ref": cmd_attitude_capture_ref,
@@ -3248,6 +3549,8 @@ def main(argv: list[str] | None = None) -> int:
             "liftoff-auto16": cmd_liftoff_auto16,
             "liftoff-near-threshold": cmd_liftoff_near_threshold,
             "liftoff-threshold": cmd_liftoff_threshold,
+            "short-hop-verify": cmd_short_hop_verify,
+            "short-hop-detect": cmd_short_hop_detect,
             "udp-manual": cmd_udp_manual,
             "calib": cmd_calib,
             "axis-bench": cmd_axis_bench,

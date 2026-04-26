@@ -10,12 +10,29 @@ import pytest
 from esp_drone_cli.cli import main as cli_main
 from esp_drone_cli.core.csv_log import CsvTelemetryLogger
 from esp_drone_cli.core.liftoff_threshold import (
+    DEFAULT_ANGLE_RATE_LIMIT_DPS,
     DEFAULT_ANGLE_TRIP_DEG,
+    DEFAULT_GROUND_TEST_MAX_EXTRA_DUTY,
     DEFAULT_HARD_ANGLE_TRIP_DEG,
     DEFAULT_MAX_DUTY,
     DEFAULT_TELEMETRY_HZ,
     LIFTOFF_THRESHOLD_CSV_FIELDS,
     LiftoffThresholdTracker,
+    SHORT_HOP_CSV_FIELDS,
+    SHORT_HOP_CSV_STEM,
+    SHORT_HOP_DEFAULT_ANGLE_RATE_LIMIT_DPS,
+    SHORT_HOP_DEFAULT_ANGLE_TRIP_DEG,
+    SHORT_HOP_DEFAULT_DUTY,
+    SHORT_HOP_DEFAULT_DURATION_S,
+    SHORT_HOP_DEFAULT_HARD_ANGLE_TRIP_DEG,
+    SHORT_HOP_DEFAULT_MAX_DUTY,
+    SHORT_HOP_DEFAULT_MAX_EXTRA_DUTY,
+    SHORT_HOP_DETECT_CSV_STEM,
+    SHORT_HOP_DETECT_DEFAULT_END_DUTY,
+    SHORT_HOP_DETECT_DEFAULT_MAX_DUTY,
+    SHORT_HOP_DETECT_DEFAULT_POST_LIFTOFF_S,
+    SHORT_HOP_DETECT_DEFAULT_RAMP_S,
+    SHORT_HOP_DETECT_DEFAULT_START_DUTY,
 )
 from esp_drone_cli.core.models import ParamValue, TelemetrySample
 
@@ -60,7 +77,12 @@ def make_sample(**overrides) -> TelemetrySample:
 
 
 class LiftoffThresholdFakeSession:
-    def __init__(self, *, fail_on_verify_start: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        fail_on_verify_start: bool = False,
+        simulate_liftoff_duty: float | None = None,
+    ) -> None:
         self.calls: list[tuple[str, tuple, dict]] = []
         self.last_log_path: Path | None = None
         self._telemetry_callbacks: dict[int, object] = {}
@@ -79,6 +101,7 @@ class LiftoffThresholdFakeSession:
         self._sample_seq = 0
         self._active_base_duty = 0.0
         self._fail_on_verify_start = fail_on_verify_start
+        self._simulate_liftoff_duty = simulate_liftoff_duty
         self.device_info = type(
             "DeviceInfoStub",
             (),
@@ -94,11 +117,21 @@ class LiftoffThresholdFakeSession:
             "telemetry_usb_hz": ParamValue("telemetry_usb_hz", 2, 100),
             "ground_tune_use_kalman_attitude": ParamValue("ground_tune_use_kalman_attitude", 0, True),
             "ground_att_trip_deg": ParamValue("ground_att_trip_deg", 4, 12.0),
+            "ground_att_rate_limit_roll": ParamValue("ground_att_rate_limit_roll", 4, 4.0),
+            "ground_att_rate_limit_pitch": ParamValue("ground_att_rate_limit_pitch", 4, 4.0),
             "ground_test_base_duty": ParamValue("ground_test_base_duty", 4, 0.08),
             "ground_test_max_extra_duty": ParamValue("ground_test_max_extra_duty", 4, 0.03),
             "ground_test_motor_balance_limit": ParamValue("ground_test_motor_balance_limit", 4, 0.06),
             "ground_test_auto_disarm_ms": ParamValue("ground_test_auto_disarm_ms", 2, 15000),
             "ground_test_ramp_duty_per_s": ParamValue("ground_test_ramp_duty_per_s", 4, 0.15),
+            "motor_trim_scale_m1": ParamValue("motor_trim_scale_m1", 4, 1.0),
+            "motor_trim_scale_m2": ParamValue("motor_trim_scale_m2", 4, 1.0),
+            "motor_trim_scale_m3": ParamValue("motor_trim_scale_m3", 4, 1.0),
+            "motor_trim_scale_m4": ParamValue("motor_trim_scale_m4", 4, 1.0),
+            "motor_trim_offset_m1": ParamValue("motor_trim_offset_m1", 4, 0.0),
+            "motor_trim_offset_m2": ParamValue("motor_trim_offset_m2", 4, 0.0),
+            "motor_trim_offset_m3": ParamValue("motor_trim_offset_m3", 4, 0.0),
+            "motor_trim_offset_m4": ParamValue("motor_trim_offset_m4", 4, 0.0),
         }
 
     def _record(self, name: str, *args, **kwargs) -> None:
@@ -154,6 +187,11 @@ class LiftoffThresholdFakeSession:
                     self._active_base_duty = max(self._active_base_duty - max_delta, target_duty)
                 self._sample_seq += 1
                 self._timestamp_us += int(dt_s * 1_000_000.0)
+                liftoff_effect = (
+                    self._verify_active
+                    and self._simulate_liftoff_duty is not None
+                    and self._active_base_duty >= self._simulate_liftoff_duty
+                )
 
                 sample = make_sample(
                     timestamp_us=self._timestamp_us,
@@ -164,13 +202,22 @@ class LiftoffThresholdFakeSession:
                     base_duty_active=self._active_base_duty,
                     ground_ref_valid=1 if self._ground_ref_valid else 0,
                     reference_valid=1 if self._ground_ref_valid else 0,
-                    angle_measured_roll=1.25 if self._verify_active else 0.0,
-                    angle_measured_pitch=-1.75 if self._verify_active else 0.0,
+                    angle_measured_roll=3.0 if liftoff_effect else (1.25 if self._verify_active else 0.0),
+                    angle_measured_pitch=-3.5 if liftoff_effect else (-1.75 if self._verify_active else 0.0),
+                    outer_loop_rate_target_roll=6.0 if liftoff_effect else 0.0,
+                    outer_loop_rate_target_pitch=-6.0 if liftoff_effect else 0.0,
+                    rate_meas_roll_filtered=24.0 if liftoff_effect else 0.0,
+                    rate_meas_pitch_filtered=-26.0 if liftoff_effect else 0.0,
+                    rate_err_roll=-18.0 if liftoff_effect else 0.0,
+                    rate_err_pitch=20.0 if liftoff_effect else 0.0,
+                    pid_out_roll=0.018 if liftoff_effect else 0.0,
+                    pid_out_pitch=-0.019 if liftoff_effect else 0.0,
+                    filtered_acc_z=0.82 if liftoff_effect else 1.0,
                     attitude_ref_qw=1.0,
-                    motor1=self._active_base_duty,
-                    motor2=self._active_base_duty + 0.002,
-                    motor3=self._active_base_duty + 0.004,
-                    motor4=self._active_base_duty + 0.001,
+                    motor1=self._active_base_duty + (0.06 if liftoff_effect else 0.0),
+                    motor2=max(0.0, self._active_base_duty - (0.02 if liftoff_effect else -0.002)),
+                    motor3=self._active_base_duty + (0.03 if liftoff_effect else 0.004),
+                    motor4=max(0.0, self._active_base_duty - (0.01 if liftoff_effect else -0.001)),
                 )
                 self._emit_telemetry(sample)
                 REAL_SLEEP(dt_s)
@@ -286,6 +333,8 @@ def test_liftoff_threshold_help_and_parse_single_point_args():
     assert command_help.duty == pytest.approx(0.13)
     assert command_help.duration_s == pytest.approx(1.0)
     assert args.max_duty == DEFAULT_MAX_DUTY
+    assert args.max_extra_duty == DEFAULT_GROUND_TEST_MAX_EXTRA_DUTY
+    assert args.angle_rate_limit_dps == DEFAULT_ANGLE_RATE_LIMIT_DPS
     assert args.angle_trip_deg == DEFAULT_ANGLE_TRIP_DEG
     assert args.hard_angle_trip_deg == DEFAULT_HARD_ANGLE_TRIP_DEG
     assert args.telemetry_hz == DEFAULT_TELEMETRY_HZ
@@ -366,6 +415,10 @@ def test_liftoff_threshold_records_csv_by_default_and_uses_closed_loop_path(monk
             "0.13",
             "--duration-s",
             "0.08",
+            "--max-extra-duty",
+            "0.12",
+            "--angle-rate-limit-dps",
+            "8",
             "--output-dir",
             str(tmp_path),
         ]
@@ -383,6 +436,9 @@ def test_liftoff_threshold_records_csv_by_default_and_uses_closed_loop_path(monk
     assert "start_csv_log" in call_names
     assert session.last_log_path is not None
     assert session.last_log_path.exists()
+    assert ("set_param", ("ground_test_max_extra_duty", 4, 0.12), {}) in session.calls
+    assert ("set_param", ("ground_att_rate_limit_roll", 4, 8.0), {}) in session.calls
+    assert ("set_param", ("ground_att_rate_limit_pitch", 4, 8.0), {}) in session.calls
 
     output = capsys.readouterr().out
     assert "csv=" in output
@@ -423,6 +479,205 @@ def test_liftoff_threshold_sets_telemetry_rate_before_logging(monkeypatch, tmp_p
     )
     log_index = next(index for index, (name, _args, _kwargs) in enumerate(session.calls) if name == "start_csv_log")
     assert telemetry_index < log_index
+    assert ("set_param", ("ground_test_max_extra_duty", 4, DEFAULT_GROUND_TEST_MAX_EXTRA_DUTY), {}) in session.calls
+    assert ("set_param", ("ground_att_rate_limit_roll", 4, DEFAULT_ANGLE_RATE_LIMIT_DPS), {}) in session.calls
+    assert ("set_param", ("ground_att_rate_limit_pitch", 4, DEFAULT_ANGLE_RATE_LIMIT_DPS), {}) in session.calls
+
+
+def test_short_hop_verify_help_and_parse_defaults():
+    parser = cli_main.build_parser()
+    args = parser.parse_args(["--serial", "COM7", "short-hop-verify"])
+    help_text = parser.format_help()
+
+    assert args.command == "short-hop-verify"
+    assert args.duty == pytest.approx(SHORT_HOP_DEFAULT_DUTY)
+    assert args.duration_s == pytest.approx(SHORT_HOP_DEFAULT_DURATION_S)
+    assert args.max_duty == pytest.approx(SHORT_HOP_DEFAULT_MAX_DUTY)
+    assert args.max_extra_duty == pytest.approx(SHORT_HOP_DEFAULT_MAX_EXTRA_DUTY)
+    assert args.angle_rate_limit_dps == pytest.approx(SHORT_HOP_DEFAULT_ANGLE_RATE_LIMIT_DPS)
+    assert args.angle_trip_deg == pytest.approx(SHORT_HOP_DEFAULT_ANGLE_TRIP_DEG)
+    assert args.hard_angle_trip_deg == pytest.approx(SHORT_HOP_DEFAULT_HARD_ANGLE_TRIP_DEG)
+    assert args.telemetry_hz == DEFAULT_TELEMETRY_HZ
+    assert "short-hop-verify" in help_text
+
+
+def test_short_hop_verify_records_csv_and_uses_closed_loop_path(monkeypatch, tmp_path: Path, capsys):
+    session = LiftoffThresholdFakeSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda _args: session)
+
+    rc = cli_main.main(
+        [
+            "--serial",
+            "COM7",
+            "short-hop-verify",
+            "--duration-s",
+            "0.08",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 0
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "require_attitude_ground_verify" in call_names
+    assert "ground_capture_ref" in call_names
+    assert "arm" in call_names
+    assert ("attitude_ground_verify_start", (SHORT_HOP_DEFAULT_DUTY,), {}) in session.calls
+    assert "attitude_ground_verify_stop" in call_names
+    assert "disarm" in call_names
+    assert "all_motor_test_start" not in call_names
+    assert "all_motor_test_stop" not in call_names
+    assert session.last_log_path is not None
+    assert session.last_log_path.name.endswith(f"_{SHORT_HOP_CSV_STEM}.csv")
+    assert session.last_log_path.exists()
+    assert ("set_param", ("ground_att_trip_deg", 4, SHORT_HOP_DEFAULT_ANGLE_TRIP_DEG), {}) in session.calls
+    assert ("set_param", ("ground_test_max_extra_duty", 4, SHORT_HOP_DEFAULT_MAX_EXTRA_DUTY), {}) in session.calls
+    assert (
+        "set_param",
+        ("ground_att_rate_limit_roll", 4, SHORT_HOP_DEFAULT_ANGLE_RATE_LIMIT_DPS),
+        {},
+    ) in session.calls
+    assert (
+        "set_param",
+        ("ground_att_rate_limit_pitch", 4, SHORT_HOP_DEFAULT_ANGLE_RATE_LIMIT_DPS),
+        {},
+    ) in session.calls
+
+    output = capsys.readouterr().out
+    assert "csv=" in output
+    assert "duty=0.350" in output
+    assert "duration_s=0.080" in output
+    assert "stop_reason=completed_requested_duration" in output
+    assert "max_roll_deg=" in output
+    assert "max_pitch_deg=" in output
+    assert "sat_run_ms=" in output
+    assert "attitude_jump_deg=" in output
+    assert "late_drift=" in output
+    assert "motor_trim_scales=1.000000,1.000000,1.000000,1.000000" in output
+    assert "motor_trim_offsets=0.000000,0.000000,0.000000,0.000000" in output
+
+    with session.last_log_path.open("r", encoding="utf-8", newline="") as handle:
+        header = next(csv.reader(handle))
+    assert header == SHORT_HOP_CSV_FIELDS
+
+
+def test_short_hop_detect_help_and_parse_defaults():
+    parser = cli_main.build_parser()
+    args = parser.parse_args(["--serial", "COM7", "short-hop-detect"])
+    help_text = parser.format_help()
+
+    assert args.command == "short-hop-detect"
+    assert args.start_duty == pytest.approx(SHORT_HOP_DETECT_DEFAULT_START_DUTY)
+    assert args.end_duty == pytest.approx(SHORT_HOP_DETECT_DEFAULT_END_DUTY)
+    assert args.ramp_s == pytest.approx(SHORT_HOP_DETECT_DEFAULT_RAMP_S)
+    assert args.post_liftoff_s == pytest.approx(SHORT_HOP_DETECT_DEFAULT_POST_LIFTOFF_S)
+    assert args.max_duty == pytest.approx(SHORT_HOP_DETECT_DEFAULT_MAX_DUTY)
+    assert args.max_extra_duty == pytest.approx(SHORT_HOP_DEFAULT_MAX_EXTRA_DUTY)
+    assert args.angle_rate_limit_dps == pytest.approx(SHORT_HOP_DEFAULT_ANGLE_RATE_LIMIT_DPS)
+    assert args.telemetry_hz == DEFAULT_TELEMETRY_HZ
+    assert "short-hop-detect" in help_text
+
+
+def test_short_hop_detect_ramps_detects_liftoff_and_uses_closed_loop_path(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    session = LiftoffThresholdFakeSession(simulate_liftoff_duty=0.02)
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda _args: session)
+
+    rc = cli_main.main(
+        [
+            "--serial",
+            "COM7",
+            "short-hop-detect",
+            "--start-duty",
+            "0.01",
+            "--end-duty",
+            "0.03",
+            "--ramp-s",
+            "0.05",
+            "--post-liftoff-s",
+            "0.03",
+            "--max-duty",
+            "0.10",
+            "--telemetry-hz",
+            "100",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 0
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "require_attitude_ground_verify" in call_names
+    assert "ground_capture_ref" in call_names
+    assert "arm" in call_names
+    assert ("attitude_ground_verify_start", (0.01,), {}) in session.calls
+    assert "attitude_ground_verify_stop" in call_names
+    assert "disarm" in call_names
+    assert "all_motor_test_start" not in call_names
+    assert "all_motor_test_stop" not in call_names
+
+    duty_sets = [
+        float(args[2])
+        for name, args, _kwargs in session.calls
+        if name == "set_param" and args[0] == "ground_test_base_duty"
+    ]
+    assert min(duty_sets) <= 0.01
+    assert max(duty_sets) > 0.01
+    assert session.last_log_path is not None
+    assert session.last_log_path.name.endswith(f"_{SHORT_HOP_DETECT_CSV_STEM}.csv")
+    assert session.last_log_path.exists()
+
+    output = capsys.readouterr().out
+    assert "motor_trim_scales=1.000000,1.000000,1.000000,1.000000" in output
+    assert "motor_trim_offsets=0.000000,0.000000,0.000000,0.000000" in output
+    assert "liftoff_detected=True" in output
+    assert "liftoff_reason=" in output
+    assert "liftoff_window=" in output
+    assert "diagnosis=" in output
+
+    with session.last_log_path.open("r", encoding="utf-8", newline="") as handle:
+        header = next(csv.reader(handle))
+    assert header == SHORT_HOP_CSV_FIELDS
+
+
+def test_short_hop_detect_no_liftoff_returns_nonzero_and_disarms(monkeypatch, tmp_path: Path, capsys):
+    session = LiftoffThresholdFakeSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda _args: session)
+
+    rc = cli_main.main(
+        [
+            "--serial",
+            "COM7",
+            "short-hop-detect",
+            "--start-duty",
+            "0.01",
+            "--end-duty",
+            "0.02",
+            "--ramp-s",
+            "0.04",
+            "--post-liftoff-s",
+            "0.02",
+            "--max-duty",
+            "0.10",
+            "--telemetry-hz",
+            "100",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert rc == 2
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "attitude_ground_verify_stop" in call_names
+    assert "disarm" in call_names
+    assert session.last_log_path is not None
+    assert session.last_log_path.exists()
+    output = capsys.readouterr().out
+    assert "liftoff_detected=False" in output
+    assert "diagnosis=no_liftoff_detected" in output
 
 
 def test_liftoff_threshold_tracker_debounce_and_anomaly_flags():
@@ -481,3 +736,52 @@ def test_liftoff_threshold_tracker_debounce_and_anomaly_flags():
             kalman_valid=0,
         )
     ) == "sustained_kalman_invalid"
+
+
+def test_short_hop_tracker_does_not_trip_on_inner_loop_clamp_only():
+    tracker = LiftoffThresholdTracker(
+        max_duty=0.45,
+        angle_trip_deg=10.0,
+        hard_angle_trip_deg=10.0,
+        motor_limit_trip_s=0.10,
+        kalman_invalid_trip_s=0.30,
+        trip_on_inner_loop_clamp=False,
+    )
+
+    for timestamp_us in (0, 50_000, 100_000, 150_000, 250_000):
+        stop_reason = tracker.update(
+            make_sample(
+                timestamp_us=timestamp_us,
+                base_duty_active=0.04,
+                inner_loop_clamp_flag=2,
+                motor_saturation_flag=0,
+            )
+        )
+        assert stop_reason is None
+
+    assert tracker.clamp_seen is True
+    assert tracker.saturation_seen is False
+    assert tracker.max_inner_loop_clamp_run_s >= 0.20
+
+    assert (
+        tracker.update(
+            make_sample(
+                timestamp_us=400_000,
+                base_duty_active=0.35,
+                inner_loop_clamp_flag=0,
+                motor_saturation_flag=1,
+            )
+        )
+        is None
+    )
+    assert (
+        tracker.update(
+            make_sample(
+                timestamp_us=510_000,
+                base_duty_active=0.35,
+                inner_loop_clamp_flag=0,
+                motor_saturation_flag=1,
+            )
+        )
+        == "sustained_motor_limit"
+    )
