@@ -1,25 +1,28 @@
 # Documentation
 
-**Language / 语言:** **English** | [简体中文](./README.zh-CN.md)
+Language / 语言: English | [简体中文](./README.zh-CN.md)
 
-This directory contains the repository's locked conventions, bring-up notes, and Python tool documentation.
+This directory contains locked conventions, bring-up notes, docs-code sync notes, and Python tool documentation.
 
-## Core Conventions
+## Start Here
 
-- [Hardware Extract](./hardware_extract.md)
+- [CODEX_STATE](./CODEX_STATE.md): short current project memory for Codex
+- [TUNING_DECISIONS](./TUNING_DECISIONS.md): decisions that should not be re-litigated every run
 - [Axis Truth Table](./axis_truth_table.md)
 - [Motor Map](./motor_map.md)
-- [Runtime Frequency Plan](./runtime_frequency_plan.md)
-- [IMU Protocol Extract](./imu_protocol_extract.md)
 
 ## Firmware And Bring-Up
 
 - [ESP-IDF Environment](./esp_idf_env.md)
 - [Bring-Up Checklist](./bringup_checklist.md)
 - [Hang Attitude Bring-Up Plan](./hang_attitude_bringup_plan.md)
+- [Ground Tune Bring-Up Plan](./ground_tune_bringup_plan.md)
+- [Ground Tune Manual Workflow](./ground_tune_manual_workflow.md)
+- [Ground Tune Log Fields](./ground_tune_log_fields.md)
 - [Attitude Ground Verify And Low-Risk Liftoff Plan](./attitude_ground_verify_liftoff_plan.md)
 - [Roll Rate Bench Workflow](./roll_rate_bench_workflow.md)
-- [Roll Bench Summary Sample](./roll_bench_summary_sample.md)
+- [Pitch Rate Bench Workflow](./pitch_rate_bench_workflow.md)
+- [Yaw Rate Bench Workflow](./yaw_rate_bench_workflow.md)
 - [Rate Bring-Up Results](./rate_bringup_results.md)
 - [RAW Mode Attitude Plan](./raw_mode_attitude_plan.md)
 - [Barometer Framework](./barometer_framework.md)
@@ -36,3 +39,11 @@ This directory contains the repository's locked conventions, bring-up notes, and
 - [Python Tool GUI + CLI Refactor Plan](./python_tool_gui_refactor_plan.md)
 - [CLI Live Test Matrix](./cli_live_test_matrix.md)
 - [CLI Live Test Results](./cli_live_test_results.md)
+
+## Docs-Code Sync Rules
+
+- Protocol version, feature bits, and command IDs must match `firmware/main/console/console_protocol.h`.
+- Current firmware parameter defaults must match `firmware/main/params/params.c`.
+- Documentation must clearly distinguish implemented features from TODO/planned features.
+- `motor_output_map` is channel mapping, not per-motor thrust compensation.
+- Current `motor.c` uses fixed 8-bit LEDC PWM resolution and parameterized PWM frequency.

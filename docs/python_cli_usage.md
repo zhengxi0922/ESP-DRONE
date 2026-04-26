@@ -1,6 +1,6 @@
 # Python CLI Usage
 
-**Language / 语言:** **English** | [简体中文](./python_cli_usage.zh-CN.md)
+Language / 语言: English | [简体中文](./python_cli_usage.zh-CN.md)
 
 ## Goal
 
@@ -19,12 +19,17 @@ The project does not maintain a second host protocol stack.
 
 ## Scope Boundary
 
-The CLI now covers two constrained bench workflows:
+The CLI covers more than the original two constrained bench workflows. Current supported areas include:
 
 - rate-loop bench work for `roll / pitch / yaw`
 - bench-only hang-attitude bring-up for a constrained rig
+- ground tune / attitude ground verify diagnostics
+- low-risk liftoff verify diagnostics
+- experimental UDP manual control
+- all-motor test
+- params / telemetry / capability / device-info workflows
 
-It does not declare any free-flight stabilize or angle mode ready for prop-on use.
+The CLI still does not declare any free-flight stabilize or angle mode ready for prop-on use. Ground and liftoff verification commands are diagnostics and safety checks, not proof that a finished free-flight mode exists.
 
 ## Install
 
@@ -44,10 +49,11 @@ pip install -e .[gui]
 
 ## Transport Rules
 
-Bench bring-up is expected to use `USB CDC`.
+Bench bring-up is expected to use `USB CDC` first.
 
 - `UART0` remains reserved for `ATK-MS901M`
 - CLI examples below therefore use `--serial COMx`
+- UDP examples use the SoftAP binary protocol on `192.168.4.1:2391`
 
 Generic connection examples:
 
@@ -58,7 +64,7 @@ python -m esp_drone_cli --udp 192.168.4.1:2391 connect
 
 ## Common Commands
 
-Connection and stream:
+Connection, capability, and stream:
 
 ```powershell
 python -m esp_drone_cli --serial COM7 connect
@@ -68,248 +74,79 @@ python -m esp_drone_cli --serial COM7 stream off
 python -m esp_drone_cli --serial COM7 log --timeout 3 --telemetry
 ```
 
-Single-axis roll bench commands:
+Parameter inspection and editing:
+
+```powershell
+python -m esp_drone_cli --serial COM7 param-list
+python -m esp_drone_cli --serial COM7 get-param rate_kp_roll
+python -m esp_drone_cli --serial COM7 set-param rate_kp_roll 0.0030
+python -m esp_drone_cli --serial COM7 save-params
+python -m esp_drone_cli --serial COM7 reset-params
+```
+
+Current GitHub firmware default rate PID values in `params.c` are:
+
+- `rate_kp_roll = 0.0030`
+- `rate_kp_pitch = 0.0030`
+- `rate_kp_yaw = 0.0030`
+- `rate_ki_* = 0`
+- `rate_kd_* = 0`
+
+If lower values such as `0.0007 / 0.0007 / 0.0005` are used, document them as local tuning candidates or RAM/NVS overrides, not current firmware defaults.
+
+Rate-loop bench commands:
 
 ```powershell
 python -m esp_drone_cli --serial COM7 rate-test roll 20
-python -m esp_drone_cli --serial COM7 rate-test roll -20
+python -m esp_drone_cli --serial COM7 rate-test pitch 20
+python -m esp_drone_cli --serial COM7 rate-test yaw 20
 python -m esp_drone_cli --serial COM7 rate-test roll 0
-python -m esp_drone_cli --serial COM7 rate-status roll --timeout 5
-python -m esp_drone_cli --serial COM7 watch-rate all --timeout 5 --interval 0.2
-python -m esp_drone_cli --serial COM7 axis-bench roll --auto-arm --small-step 10 --large-step 15
 ```
 
-Bench-only hang-attitude commands:
+Hang-attitude bench commands:
 
 ```powershell
-python -m esp_drone_cli --serial COM7 capabilities
 python -m esp_drone_cli --serial COM7 attitude-capture-ref
-python -m esp_drone_cli --serial COM7 arm
 python -m esp_drone_cli --serial COM7 attitude-test start --base-duty 0.05
-python -m esp_drone_cli --serial COM7 attitude-status --timeout 5
-python -m esp_drone_cli --serial COM7 watch-attitude all --timeout 5 --interval 0.2
+python -m esp_drone_cli --serial COM7 attitude-status
 python -m esp_drone_cli --serial COM7 attitude-test stop
-python -m esp_drone_cli --serial COM7 disarm
 ```
 
-Flat-ground attitude verification commands:
+Ground tune / attitude ground verify commands:
 
 ```powershell
-python -m esp_drone_cli --serial COM4 capabilities
-python -m esp_drone_cli --serial COM4 ground-capture-ref
-python -m esp_drone_cli --serial COM4 arm
-python -m esp_drone_cli --serial COM4 attitude-ground-verify start --base-duty 0.08
-python -m esp_drone_cli --serial COM4 attitude-ground-verify target roll 1.0
-python -m esp_drone_cli --serial COM4 attitude-ground-log --duration 10
-python -m esp_drone_cli --serial COM4 attitude-ground-verify stop
-python -m esp_drone_cli --serial COM4 disarm
+python -m esp_drone_cli --serial COM7 ground-capture-ref
+python -m esp_drone_cli --serial COM7 ground-test start --base-duty 0.05
+python -m esp_drone_cli --serial COM7 ground-test stop
+python -m esp_drone_cli --serial COM7 attitude-ground-verify start --base-duty 0.05
+python -m esp_drone_cli --serial COM7 attitude-ground-verify stop
 ```
 
-One-command very small attitude ground verification:
+Low-risk liftoff verify commands:
 
 ```powershell
-python -m esp_drone_cli --serial COM4 attitude-ground-round --target-deg 1.0 --base-duty 0.08 --auto-arm
+python -m esp_drone_cli --serial COM7 liftoff-verify start --base-duty 0.10
+python -m esp_drone_cli --serial COM7 liftoff-verify stop
 ```
 
-Low-risk liftoff verification entry commands:
+All-motor test commands:
 
 ```powershell
-python -m esp_drone_cli --serial COM4 ground-capture-ref
-python -m esp_drone_cli --serial COM4 arm
-python -m esp_drone_cli --serial COM4 liftoff-verify start --base-duty 0.10
-python -m esp_drone_cli --serial COM4 liftoff-verify stop
-python -m esp_drone_cli --serial COM4 disarm
+python -m esp_drone_cli --serial COM7 all-motor-test start --duty 0.05 --duration-ms 1000
+python -m esp_drone_cli --serial COM7 all-motor-test stop
 ```
 
-One-command first low-risk liftoff verification round:
+Experimental UDP manual examples:
 
 ```powershell
-python -m esp_drone_cli --serial COM4 liftoff-round --base-duty 0.10 --duration-s 2.0
+python -m esp_drone_cli --udp 192.168.4.1:2391 connect
+python -m esp_drone_cli --udp 192.168.4.1:2391 udp-manual enable
+python -m esp_drone_cli --udp 192.168.4.1:2391 udp-manual setpoint --throttle 0.05 --roll 0 --pitch 0 --yaw 0
+python -m esp_drone_cli --udp 192.168.4.1:2391 udp-manual stop
 ```
 
-## Rate-Status Output
+## Notes
 
-`rate-status roll` prints explicit roll bench fields:
-
-- `rate_setpoint_roll`
-- `roll_rate`
-- `source_expr=-gyro_y`
-- `raw_gyro_y`
-- `rate_pid_p_roll`
-- `rate_pid_i_roll`
-- `rate_pid_d_roll`
-- `pid_out_roll`
-- `motor1..motor4`
-- `arm_state`
-- `control_mode`
-- `imu_age_us`
-- `loop_dt_us`
-
-This is the intended rate-only chain:
-
-```text
-commanded roll rate -> mapped roll feedback -> PID p/i/d -> pid_out_roll -> motor1..motor4
-```
-
-## Axis Meaning
-
-Project rate mapping is fixed:
-
-- `pitch_rate = gyro_x`
-- `roll_rate = -gyro_y`
-- `yaw_rate = -gyro_z`
-
-Positive motor expectations are fixed:
-
-- `+roll` -> `M1/M4` up, `M2/M3` down
-- `-roll` -> `M2/M3` up, `M1/M4` down
-- `+pitch` -> `M3/M4` up, `M1/M2` down
-- `+yaw` -> `M1/M3` up, `M2/M4` down
-
-For the bench-only hang-attitude outer loop, the required corrective sign checks are:
-
-- disturb to `right side down` (`+roll`) -> controller must command `-roll` correction -> `M2/M3` increase, `M1/M4` decrease
-- disturb to `nose up` (`+pitch`) -> controller must command `-pitch` correction -> `M1/M2` increase, `M3/M4` decrease
-
-## Roll Bench Workflow
-
-Use this order on the constrained bench:
-
-1. Power on and connect over USB CDC.
-2. Run `stream on`.
-3. Move the frame by hand and verify the sign chain:
-   `roll_rate = -gyro_y`.
-4. Run `rate-test roll +30` and `rate-test roll -30`.
-5. Observe `rate-status roll` and `watch-rate all`.
-6. Run `axis-bench roll` or `rate-bench roll` to generate telemetry CSV, JSON summary, and Markdown summary.
-7. Only if `sign_ok` and `motor_split_ok` are both true, consider a small `rate_kp_roll` change.
-8. Re-run the same roll workflow after each change.
-
-The dedicated workflow is documented in:
-
-- [roll_rate_bench_workflow.md](./roll_rate_bench_workflow.md)
-- [roll_bench_summary_sample.md](./roll_bench_summary_sample.md)
-
-## Bench Automation
-
-`axis-bench` and `rate-bench` are the same shared command. They use the same core logic as the GUI/session layer and save:
-
-- telemetry CSV
-- JSON summary
-- Markdown summary
-
-The bench summary reports:
-
-- `setpoint_path_ok`
-- `sign_ok`
-- `motor_split_ok`
-- `measurable_response`
-- `saturation_risk`
-- `return_to_zero_quality`
-- `noise_or_jitter_risk`
-- `low_duty_motor_stability`
-- `safe_to_continue`
-- `kp_tuning_allowed`
-- `axis_result`
-
-`kp_tuning_allowed` is intentionally strict:
-
-- if `sign_ok` is false, stop and inspect axis mapping or rate feedback first
-- if `motor_split_ok` is false, stop and inspect roll motor split first
-- only when `kp_tuning_allowed` is true may you continue with `rate_kp_roll` tuning
-
-CSV capture:
-
-```powershell
-python -m esp_drone_cli --serial COM7 dump-csv telemetry.csv --duration 5
-```
-
-## Parameter Tuning Flow
-
-Parameter reads, writes, save, export, and import remain shared with firmware storage:
-
-```powershell
-python -m esp_drone_cli --serial COM7 get rate_kp_roll
-python -m esp_drone_cli --serial COM7 set rate_kp_roll float 0.0026
-python -m esp_drone_cli --serial COM7 get rate_ki_roll
-python -m esp_drone_cli --serial COM7 get rate_kd_roll
-python -m esp_drone_cli --serial COM7 save
-python -m esp_drone_cli --serial COM7 export params.json
-python -m esp_drone_cli --serial COM7 import params.json --save
-```
-
-Relevant rate parameters for the roll bench stage:
-
-- `rate_kp_roll`
-- `rate_ki_roll`
-- `rate_kd_roll`
-- `rate_integral_limit`
-- `rate_output_limit`
-- `bringup_test_base_duty`
-
-Relevant hang-attitude parameters:
-
-- `attitude_kp_roll`
-- `attitude_kp_pitch`
-- `attitude_rate_limit_roll`
-- `attitude_rate_limit_pitch`
-- `attitude_error_deadband_deg`
-- `attitude_trip_deg`
-- `attitude_test_base_duty`
-- `attitude_ref_valid`
-
-For the documented live roll session:
-
-- `rate_kp_roll = 0.0026`
-- `rate_ki_roll = 0.0`
-- `rate_kd_roll = 0.0`
-
-If the device rejects a write, the CLI reports the failure explicitly.
-
-## Roll Kp Criteria
-
-Treat the roll-bench results like this:
-
-- acceptable:
-  - positive and negative roll commands keep the correct sign
-  - motor split stays correct
-  - measurable response exists
-  - return-to-zero stays clean
-  - no obvious low-duty instability
-- `kp` too low:
-  - `measurable_response` is weak
-  - setpoint is present, but `pid_out_roll` and actual response stay too small
-  - return to zero feels slow
-- `kp` too high:
-  - `saturation_risk` rises
-  - `return_to_zero_quality` degrades
-  - `noise_or_jitter_risk` rises
-  - you see fighting, oscillation, or overshoot
-- if anything abnormal appears:
-  - stop the test
-  - do not continue increasing `rate_kp_roll`
-
-## Hang-Attitude Notes
-
-The hang-attitude path remains constrained-rig only:
-
-- do not use it on a prop-on free-flight vehicle
-- yaw is not in the attitude outer loop for that stage
-- reference capture is required before `attitude-test start`
-- `capabilities` must report `attitude_hang_bench=True` before running hang-attitude commands
-- old firmware that reports a lower protocol version or lacks the hang-attitude feature bit is rejected by the host before `attitude-capture-ref`, `attitude-test`, `attitude-status`, or `watch-attitude`
-- `connect` and `capabilities` expose firmware build identity when the device supports the extended `HELLO_RESP`
-
-## Error Handling
-
-Device command rejections surface as clear CLI errors, including cases such as:
-
-- invalid argument
-- arm required
-- disarm required
-- IMU not ready
-- reference not captured
-- unsupported command
-- firmware does not advertise a required capability
-
-The process exit code follows the firmware status code for rejected commands, which makes bench scripts easier to diagnose.
+- Use `capabilities` before running newer workflows against an older firmware image.
+- Do not assume old protocol versions or command IDs. The protocol source of truth is `firmware/main/console/console_protocol.h`.
+- Do not treat diagnostic passes as free-flight readiness.

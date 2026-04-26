@@ -1,56 +1,59 @@
-# 电机映射
+﻿# 鐢垫満鏄犲皠
 
-**语言 / Language：** [English](./motor_map.md) | **简体中文**
+璇█ / Language: 绠€浣撲腑鏂?| [English](./motor_map.md)
 
-## 物理布局
+## 鏈轰綋绯?
+- `+Y` = 鏈哄ご / 鍓嶆柟
+- `+X` = 鍙充晶
+- `+Z` = 鍚戜笂
+- `+pitch` = 鎶ご
+- `+roll` = 鍙充晶涓嬫矇
+- `+yaw` = 鏈哄ご鍙宠浆
 
-俯视布局如下：
+## 鏈熸湜閫昏緫鐢垫満椤哄簭
 
-```text
-        Nose (+Y)
+椋炴帶鏂囨。浣跨敤浠ヤ笅閫昏緫椤哄簭锛?
+- `M1` = 宸﹀墠
+- `M2` = 鍙冲墠
+- `M3` = 鍙冲悗
+- `M4` = 宸﹀悗
 
-   M1 (LF, CCW)     M2 (RF, CW)
+鎵€鏈夋柟鍚戞晱鎰熼€昏緫閮藉繀椤诲拰 `axis_truth_table.zh-CN.md` 淇濇寔涓€鑷淬€?
+## 宸插疄鐜扮殑鏄犲皠鍔熻兘
 
-   M4 (LR, CW)      M3 (RR, CCW)
+鍥轰欢閫氳繃鍙傛暟鏆撮湶 `motor_output_map[4]`锛?
+- `motor_output_map0`
+- `motor_output_map1`
+- `motor_output_map2`
+- `motor_output_map3`
 
-        Tail (-Y)
-```
+`motor.c` 鍦ㄨ皟鐢?`ledc_set_duty()` 涔嬪墠锛屼細閫氳繃杩欎釜鏄犲皠鎶婇€昏緫鐢垫満鏄犲皠鍒板疄闄?LEDC 閫氶亾銆?
+杩欐槸閫氶亾鏄犲皠鍔熻兘锛屽彲浠ュ湪杞欢灞傚惛鏀剁數鏈洪€氶亾/鎺ョ嚎椤哄簭宸紓銆?
+## 褰撳墠鐢垫満杈撳嚭鎺у埗
 
-## 逻辑到硬件映射
+褰撳墠宸茬粡瀹炵幇鐨勮緭鍑烘帶鍒跺寘鎷細
 
-| 电机 | 物理位置 | 旋向 | GPIO |
-|---|---|---|---|
-| `M1` | 左前 | CCW | `IO5` |
-| `M2` | 右前 | CW | `IO6` |
-| `M3` | 右后 | CCW | `IO3` |
-| `M4` | 左后 | CW | `IO4` |
+- `motor_output_map[4]`
+- 鍏ㄥ眬 `motor_idle_duty`
+- 鍏ㄥ眬 `motor_max_duty`
+- 鍏ㄥ眬 `motor_startup_boost_duty`
+- 鍏ㄥ眬 `motor_slew_limit_per_tick`
+- 鍙傛暟鍖?`motor_pwm_freq_hz`
 
-## Mixer 方向真值表
+`motor.c` 褰撳墠浣跨敤鍥哄畾 `LEDC_TIMER_8_BIT` PWM 鍒嗚鲸鐜囥€侾WM 棰戠巼宸茬粡鍙傛暟鍖栵紝浣?PWM 鍒嗚鲸鐜囨病鏈夊弬鏁板寲銆?
+## 灏氭湭瀹炵幇
 
-| 指令 | 增大 | 减小 |
-|---|---|---|
-| `+roll` | `M1`、`M4` | `M2`、`M3` |
-| `-roll` | `M2`、`M3` | `M1`、`M4` |
-| `+pitch` | `M3`、`M4` | `M1`、`M2` |
-| `-pitch` | `M1`、`M2` | `M3`、`M4` |
-| `+yaw` | `M1`、`M3` | `M2`、`M4` |
-| `-yaw` | `M2`、`M4` | `M1`、`M3` |
+褰撳墠浠ｇ爜灏氭湭瀹炵幇姣忕數鏈烘帹鍔涜ˉ鍋匡細
 
-## Bring-up 验证路径
+- 姣忕數鏈?`scale`
+- 姣忕數鏈?`offset`
+- 姣忕數鏈?`min_start`
+- 姣忕數鏈?`deadband`
+- 姣忕數鏈?`gamma`
 
-- `motor-test m1..m4 <duty>`：逐通道验证逻辑电机顺序
-- `axis-test roll|pitch|yaw <value>`：在未解锁状态下验证开环 mixer 方向
-- `rate-test roll|pitch|yaw <dps>`：在解锁状态下验证最小 fresh-sample rate loop
+涓嶈鎶?`motor_output_map` 鎻忚堪涓烘瘡鐢垫満鎺ㄥ姏琛ュ伩銆傞€氶亾鏄犲皠鍜屾帹鍔涜ˉ鍋挎槸涓嶅悓灞傜骇銆?
+## Current motor output implementation note
 
-前两项属于阶段 2.5 的闸门项，第三项是 bring-up 闸门接通后的第一个允许阶段 3 控制检查。
+Current `motor.c` uses fixed 8-bit LEDC PWM resolution (`LEDC_TIMER_8_BIT`). `motor_pwm_freq_hz` parameterizes PWM frequency only; PWM resolution is not parameterized.
 
-## 实现规则
-
-固件必须严格区分以下概念：
-
-- 物理输出通道
-- 逻辑电机编号
-- 物理位置
-- 旋向
-
-Mixer 只能依据位置和旋向计算，GPIO 编号不属于 mixer 数学的一部分。
+`motor_output_map` maps logical motor order to physical outputs. It is not per-motor thrust compensation. The current firmware does not yet implement per-motor `scale`, `offset`, `min_start`, `deadband`, or `gamma` compensation.

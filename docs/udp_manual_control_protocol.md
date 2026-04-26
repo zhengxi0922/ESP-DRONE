@@ -1,4 +1,4 @@
-# Experimental UDP Manual Control
+﻿# Experimental UDP Manual Control
 
 This feature is experimental bench/manual control only. It is not a mature free-flight mode, not closed-loop altitude hold, not heading hold, and not a stabilize/angle-ready workflow.
 
@@ -12,13 +12,15 @@ This feature is experimental bench/manual control only. It is not a mature free-
 
 ## Capability Gate
 
-The firmware advertises:
+The firmware advertises the current protocol and feature bitmap through `console_hello_resp_t`.
 
-- `protocol_version=5`
+Current code facts from `firmware/main/console/console_protocol.h`:
+
+- `CONSOLE_PROTOCOL_VERSION = 0x0A`
 - `CONSOLE_FEATURE_UDP_MANUAL_CONTROL = 1 << 6`
-- feature name in host tools: `udp_manual_control`
+- host feature name: `udp_manual_control`
 
-Host tools must reject UDP manual commands when the device does not advertise this capability.
+Host tools must reject UDP manual commands when the device does not advertise this capability. Do not hard-code an older protocol version v5 in documentation or host checks.
 
 ## Protocol Additions
 
@@ -64,8 +66,8 @@ These parameters are exposed through normal CLI/GUI parameter read/write and sav
 - `udp_manual_max_pwm`: max manual collective/base duty fraction.
 - `udp_takeoff_pwm`: takeoff collective/base duty ramp target.
 - `udp_land_min_pwm`: landing/timeout safe duty floor.
-- `udp_manual_timeout_ms`: setpoint watchdog timeout, valid range `200..1000 ms`, default `1000 ms`.
-- `udp_manual_axis_limit`: normalized command clamp for manual inputs. In current firmware, yaw at the clamp limit maps to about `45 dps`; roll/pitch inputs are not mixed directly while attitude hold is active.
+- `udp_manual_timeout_ms`: setpoint watchdog timeout, valid range `200..1000 ms`.
+- `udp_manual_axis_limit`: normalized command clamp for manual inputs.
 
 The GUI displays max duty as `Max PWM (%)`, but firmware stores normalized duty fractions.
 
@@ -78,41 +80,34 @@ The GUI displays max duty as `Max PWM (%)`, but firmware stores normalized duty 
 - After `UDP_LAND` has entered the landing stage, later manual setpoint frames are acknowledged but ignored so they cannot cancel the descent.
 - `UDP_MANUAL_STOP` and `UDP_MANUAL_DISABLE` clear setpoints, stop motors, leave manual mode, and request disarm.
 - Setpoints are finite-checked and clamped by firmware.
-- During `CONTROL_MODE_UDP_MANUAL`, throttle is the collective/base duty target. Roll/pitch rate setpoints come from `ground_tune_compute()` using the captured flat-ground reference and then pass through the existing rate PID. Yaw keeps the manual normalized-input-to-rate-setpoint path before the same rate PID.
-- UDP manual enable/takeoff requires a valid flat-ground reference. If one is not already captured, firmware captures the current IMU quaternion through the ground-tune reference path.
-- If no setpoint arrives for `udp_manual_timeout_ms`, firmware zeros manual yaw, keeps roll/pitch on the attitude outer loop, and reduces throttle toward `udp_land_min_pwm`.
-- If the timeout persists for `3 * udp_manual_timeout_ms`, firmware requests disarm and stops the manual mode.
-- Kill remains highest priority through the existing `CMD_KILL` path.
+- During `CONTROL_MODE_UDP_MANUAL`, throttle is the collective/base duty target.
 
-## GUI Behavior
+Roll/pitch rate setpoints come from `ground_tune_compute()` using the captured flat-ground reference and then pass through the existing rate PID. Yaw keeps the manual normalized-input-to-rate-setpoint path before the same rate PID.
 
-The `UDP Control` tab includes:
+## Ground Reference Requirement
 
-- Red experimental safety warning.
-- Enable/Disable/Stop buttons.
-- Takeoff/Land buttons.
-- Forward/Backward, Yaw Left/Yaw Right, Up/Down controls.
-- Max PWM and setpoint inputs.
-- Watchdog, mode, armed, and battery status labels.
-- Event log entries for every manual action.
+UDP manual depends on a valid flat-ground reference.
 
-Directional buttons send bounded manual setpoints through `DeviceSession`; they do not write private GUI-only protocol.
+- `UDP_MANUAL_ENABLE` / `UDP_TAKEOFF` may attempt to capture the current IMU quaternion through the ground-tune reference path if no reference has already been captured.
+- The runtime control loop does **not** continuously auto-recapture the reference.
+- If `CONTROL_MODE_UDP_MANUAL` is running and `runtime_state_get_ground_tune_state().ref_valid` becomes false, `app_main.c` stops UDP manual immediately with `udp manual stopped: ground reference missing`.
+- If estimator/attitude validity fails during runtime, UDP manual is also stopped rather than silently falling back to an unsafe mode.
 
-Screenshot: `docs/images/udp_control_tab.png`.
+This means a valid reference is a preflight/entry requirement and a runtime safety gate. Do not document it as an automatic in-flight recovery mechanism.
 
-## Manual Verification Steps
+## Not A Finished Flight Mode
 
-1. Build and flash firmware that advertises `protocol_version=5` and `udp_manual_control=True`.
-2. Connect the PC Wi-Fi to the default `ESP-DRONE` SoftAP.
-3. Start the Python GUI with `pip install -e tools/esp_drone_cli[gui]` installed.
-4. Connect using UDP host `192.168.4.1`, port `2391`, or the target network endpoint.
-5. Confirm capabilities show `udp_manual_control=True`.
-6. Set a conservative `Max PWM (%)`, for example `10..12`.
-7. Click `Enable UDP Manual`.
-8. Verify repeated setpoint frames are visible in the event log and that watchdog age stays below the timeout while enabled.
-9. Press and release `Forward`, `Backward`, `Yaw Left`, `Yaw Right`, `Up`, and `Down`; confirm setpoints return to zero when expected.
-10. Click `Takeoff` only for the bounded low-risk verification workflow with prop safety handled; confirm ramp behavior, not a step jump.
-11. Click `Land`; confirm ramp-down and auto-disarm behavior.
-12. Click `Stop / Zero` and then `Kill`; confirm both override any previous setpoint and no high throttle continues after disconnect or timeout.
+Current UDP manual is experimental bench/manual control. It should not be described as:
 
-Do not use this workflow as proof that the vehicle is free-flight ready.
+- finished free-flight stabilize mode
+- autonomous takeoff
+- altitude hold
+- heading hold
+- position hold
+
+Use it as a controlled bring-up path only.
+
+
+## Runtime ground reference rule
+
+UDP manual enable/takeoff may try to capture a ground reference before the mode starts. During runtime, the firmware does not keep recapturing it automatically. If `ground_ref_valid` becomes false, `app_main.c` stops UDP manual immediately instead of continuing with a missing reference.
