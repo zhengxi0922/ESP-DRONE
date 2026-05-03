@@ -10,6 +10,7 @@
 typedef struct {
     axis3f_t integral;
     axis3f_t prev_error;
+    axis3f_t prev_measured;
     axis3f_t d_lpf;
     bool roll_initialized;
     bool pitch_initialized;
@@ -98,6 +99,7 @@ static void controller_update_axis(float setpoint,
                                    bool freeze_integrator,
                                    float *integral_state,
                                    float *prev_error,
+                                   float *prev_measured,
                                    float *d_lpf_state,
                                    bool *axis_initialized,
                                    float *out_error,
@@ -119,14 +121,16 @@ static void controller_update_axis(float setpoint,
     }
     const float i_term = ki * (*integral_state);
 
+    /* D-on-Measurement: 基于测量值变化率而非误差变化率，避免 setpoint 阶跃产生的 derivative kick */
     float derivative_raw = 0.0f;
     if (*axis_initialized && dt_s > 0.0f) {
-        derivative_raw = (error - *prev_error) / dt_s;
+        derivative_raw = -(measured - *prev_measured) / dt_s;
     }
     *d_lpf_state += derivative_alpha * (derivative_raw - *d_lpf_state);
     const float d_term = kd * (*d_lpf_state);
 
     *prev_error = error;
+    *prev_measured = measured;
     *axis_initialized = true;
 
     const float total = controller_clampf(p_term + i_term + d_term, -output_limit, output_limit);
@@ -165,6 +169,7 @@ rate_controller_status_t controller_update_rate(const axis3f_t *rate_setpoint_dp
                            freeze_integrator,
                            &s_state.integral.roll,
                            &s_state.prev_error.roll,
+                           &s_state.prev_measured.roll,
                            &s_state.d_lpf.roll,
                            &s_state.roll_initialized,
                            &status.error.roll,
@@ -184,6 +189,7 @@ rate_controller_status_t controller_update_rate(const axis3f_t *rate_setpoint_dp
                            freeze_integrator,
                            &s_state.integral.pitch,
                            &s_state.prev_error.pitch,
+                           &s_state.prev_measured.pitch,
                            &s_state.d_lpf.pitch,
                            &s_state.pitch_initialized,
                            &status.error.pitch,
@@ -203,6 +209,7 @@ rate_controller_status_t controller_update_rate(const axis3f_t *rate_setpoint_dp
                            freeze_integrator,
                            &s_state.integral.yaw,
                            &s_state.prev_error.yaw,
+                           &s_state.prev_measured.yaw,
                            &s_state.d_lpf.yaw,
                            &s_state.yaw_initialized,
                            &status.error.yaw,

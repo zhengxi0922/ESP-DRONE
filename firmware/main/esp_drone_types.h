@@ -128,9 +128,10 @@ typedef enum {
     CONTROL_MODE_RATE_TEST = 2,            /**< 速率环测试。 */
     CONTROL_MODE_HEIGHT_HOLD_RESERVED = 3, /**< 预留定高模式。 */
     CONTROL_MODE_ATTITUDE_HANG_TEST = 4,   /**< 鍦嗘/鍚婃灦/鍙楅檺鍙版灦涓撶敤 attitude 澶栫幆 bring-up銆?*/
-    CONTROL_MODE_UDP_MANUAL = 5,           /**< Experimental UDP manual control with attitude roll/pitch and rate-PID yaw. */
+    CONTROL_MODE_UDP_MANUAL = 5,           /**< Legacy disabled UDP-manual flight path; protocol input now feeds STABILIZE_MIN. */
     CONTROL_MODE_ATTITUDE_GROUND_TUNE = 6, /**< Low-throttle flat-ground attitude tune mode. */
     CONTROL_MODE_ALL_MOTOR_TEST = 7,        /**< Open-loop equal-duty all-motor threshold test. */
+    CONTROL_MODE_STABILIZE_MIN = 8,         /**< Minimal free-flight stabilize mode with manual throttle. */
 } control_mode_t;
 
 typedef struct {
@@ -195,12 +196,24 @@ typedef struct {
 } altitude_hold_reserved_state_t;
 
 /**
+ * @brief IMU 帧同步状态。
+ *
+ * @note 描述 sample 内部不同帧的时间一致性。
+ */
+typedef enum {
+    IMU_SYNC_OK = 0,          /**< 所有帧足够新鲜，时间一致。 */
+    IMU_SYNC_STALE_ATTITUDE,  /**< attitude/quaternion 帧相对于 gyro+acc 太旧。 */
+    IMU_SYNC_NO_ATTITUDE,     /**< 缺少姿态帧，但 gyro+acc 可用。 */
+    IMU_SYNC_PARTIAL,         /**< 仅有部分帧到达，不足以生成完整样本。 */
+} imu_sync_status_t;
+
+/**
  * @brief IMU 样本快照。
  *
  * @note 所有向量与姿态字段都已经映射到项目机体系语义。
  */
 typedef struct {
-    uint64_t timestamp_us;         /**< 样本时间戳，单位为 us。 */
+    uint64_t timestamp_us;         /**< 样本时间戳，对齐到 gyro+acc 帧接收完成时刻，非传感器内部时间戳。 */
     vec3f_t gyro_xyz_dps;          /**< 机体系角速度，单位为 deg/s。 */
     vec3f_t acc_xyz_g;             /**< 机体系加速度，单位为 g。 */
     quatf_t quat_wxyz;             /**< 机体系到世界系四元数。 */
@@ -210,6 +223,8 @@ typedef struct {
     bool has_attitude;             /**< 是否包含姿态角。 */
     bool has_quaternion;           /**< 是否包含四元数。 */
     bool has_gyro_acc;             /**< 是否包含陀螺与加速度。 */
+    imu_sync_status_t sync_status; /**< 帧同步状态。 */
+    uint32_t stale_frame_drop_count; /**< 因帧过旧而未发布样本的累计次数（仅调试用）。 */
 } imu_sample_t;
 
 /**

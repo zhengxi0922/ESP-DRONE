@@ -53,6 +53,8 @@ typedef struct {
     uint8_t checksum;
 } frame_parser_t;
 
+#define IMU_FRAME_SYNC_MAX_AGE_US 10000
+
 typedef struct {
     float roll_deg;
     float pitch_deg;
@@ -62,6 +64,9 @@ typedef struct {
     vec3f_t acc_module;
     bool have_quat;
     bool have_gyro_acc;
+    int64_t last_attitude_us;
+    int64_t last_quat_us;
+    int64_t last_gyro_acc_us;
 } partial_sample_t;
 
 static frame_parser_t s_parser;
@@ -73,6 +78,7 @@ static _Atomic uint32_t s_good_frames;
 static _Atomic uint32_t s_parse_errors;
 static _Atomic uint32_t s_consecutive_parse_errors;
 static _Atomic uint64_t s_last_frame_us;
+static _Atomic uint32_t s_stale_drop_count;
 static bool s_initialized;
 static vec3f_t s_gyro_bias_body_dps;
 static eulerf_t s_level_trim_deg;
@@ -425,6 +431,26 @@ static void imu_publish_sample(imu_sample_t sample)
     atomic_fetch_add(&s_sample_seq, 1u);
 }
 
+static bool imu_attitude_stale_from_gyro_acc(void)
+{
+    if (!s_partial.have_gyro_acc) {
+        return true;
+    }
+    const int64_t now = (int64_t)esp_timer_get_time();
+    const int64_t age_attitude = now - s_partial.last_attitude_us;
+    const int64_t age_quat = now - s_partial.last_quat_us;
+
+    /* 如果两者都有且任一足够新，不算 stale */
+    if (s_partial.have_quat && age_quat <= IMU_FRAME_SYNC_MAX_AGE_US) {
+        return false;
+    }
+    if (age_attitude <= IMU_FRAME_SYNC_MAX_AGE_US) {
+        /* 没有四元数但有足够新的 attitude，可以接受 */
+        return false;
+    }
+    return true;
+}
+
 static void imu_handle_completed_frame(uint8_t frame_id, const uint8_t *payload, uint8_t len)
 {
     if (frame_id == IMU_FRAME_BARO) {
@@ -441,20 +467,20 @@ static void imu_handle_completed_frame(uint8_t frame_id, const uint8_t *payload,
         return;
     }
 
-    imu_sample_t sample = {
-        .quat_wxyz = {1.0f, 0.0f, 0.0f, 0.0f},
-        .health = IMU_HEALTH_OK,
-    };
+    const int64_t now_us = (int64_t)esp_timer_get_time();
 
     switch (frame_id) {
     case IMU_FRAME_ATTITUDE:
+        s_partial.last_attitude_us = now_us;
         if (len >= 6) {
             s_partial.roll_deg = ((float)imu_read_s16_le(&payload[0]) / 32768.0f) * 180.0f;
             s_partial.pitch_deg = ((float)imu_read_s16_le(&payload[2]) / 32768.0f) * 180.0f;
             s_partial.yaw_deg = ((float)imu_read_s16_le(&payload[4]) / 32768.0f) * 180.0f;
         }
-        break;
+        /* attitude 帧不触发 publish */
+        return;
     case IMU_FRAME_QUATERNION:
+        s_partial.last_quat_us = now_us;
         if (len >= 8) {
             s_partial.quat_module.w = (float)imu_read_s16_le(&payload[0]) / 32768.0f;
             s_partial.quat_module.x = (float)imu_read_s16_le(&payload[2]) / 32768.0f;
@@ -462,8 +488,10 @@ static void imu_handle_completed_frame(uint8_t frame_id, const uint8_t *payload,
             s_partial.quat_module.z = (float)imu_read_s16_le(&payload[6]) / 32768.0f;
             s_partial.have_quat = true;
         }
-        break;
+        /* quaternion 帧不触发 publish */
+        return;
     case IMU_FRAME_GYRO_ACC:
+        s_partial.last_gyro_acc_us = now_us;
         if (len >= 12) {
             s_partial.acc_module.x = ((float)imu_read_s16_le(&payload[0]) / 32768.0f) * 4.0f;
             s_partial.acc_module.y = ((float)imu_read_s16_le(&payload[2]) / 32768.0f) * 4.0f;
@@ -473,20 +501,52 @@ static void imu_handle_completed_frame(uint8_t frame_id, const uint8_t *payload,
             s_partial.gyro_module.z = ((float)imu_read_s16_le(&payload[10]) / 32768.0f) * 2000.0f;
             s_partial.have_gyro_acc = true;
         }
+        /* gyro+acc 帧是唯一触发 publish 的帧 */
         break;
     case IMU_FRAME_MAG:
     default:
-        break;
+        return;
     }
+
+    if (!s_partial.have_gyro_acc) {
+        return;
+    }
+
+    imu_sample_t sample = {
+        .quat_wxyz = {1.0f, 0.0f, 0.0f, 0.0f},
+        .health = IMU_HEALTH_OK,
+        .sync_status = IMU_SYNC_OK,
+    };
+
+    /* 检查姿态帧是否太旧 */
+    const bool stale = imu_attitude_stale_from_gyro_acc();
 
     imu_map_partial_to_project_sample(&s_partial, &sample);
     imu_apply_runtime_calibration(&sample);
 
+    /* 如果姿态太旧，设置同步状态和有效性标志 */
+    if (stale) {
+        sample.sync_status = IMU_SYNC_STALE_ATTITUDE;
+        if (!s_partial.have_quat) {
+            sample.has_attitude = false;
+        }
+        atomic_fetch_add(&s_stale_drop_count, 1u);
+    } else if (!sample.has_attitude) {
+        sample.sync_status = IMU_SYNC_NO_ATTITUDE;
+    }
+
     const params_store_t *params = params_get();
-    if (params->imu_mode == IMU_MODE_RAW && !s_partial.have_gyro_acc) {
+    if (params->imu_mode == IMU_MODE_RAW) {
+        /* RAW 模式下 gyro+acc 已经足够 */
+        imu_publish_sample(sample);
+        atomic_fetch_add(&s_good_frames, 1u);
+        atomic_store(&s_consecutive_parse_errors, 0u);
+        atomic_store(&s_last_frame_us, (uint64_t)esp_timer_get_time());
         return;
     }
+    /* DIRECT 模式仍然要求有姿态 */
     if (params->imu_mode == IMU_MODE_DIRECT && !sample.has_attitude) {
+        /* 姿态不可用也不发布 */
         return;
     }
 
@@ -592,10 +652,12 @@ esp_err_t imu_init(void)
     atomic_store(&s_parse_errors, 0u);
     atomic_store(&s_consecutive_parse_errors, 0u);
     atomic_store(&s_last_frame_us, 0u);
+    atomic_store(&s_stale_drop_count, 0u);
 
     s_samples[0] = (imu_sample_t){
         .quat_wxyz = {1.0f, 0.0f, 0.0f, 0.0f},
         .health = IMU_HEALTH_INIT,
+        .sync_status = IMU_SYNC_PARTIAL,
     };
     s_samples[1] = s_samples[0];
     s_gyro_bias_body_dps = (vec3f_t){0};
@@ -614,6 +676,8 @@ esp_err_t imu_reconfigure_from_params(void)
     return ESP_OK;
 }
 
+#define IMU_CALIBRATE_GYRO_SAMPLES 20
+
 esp_err_t imu_calibrate_gyro(void)
 {
     imu_sample_t sample = {0};
@@ -621,9 +685,10 @@ esp_err_t imu_calibrate_gyro(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    s_gyro_bias_body_dps.x += sample.gyro_xyz_dps.x;
-    s_gyro_bias_body_dps.y += sample.gyro_xyz_dps.y;
-    s_gyro_bias_body_dps.z += sample.gyro_xyz_dps.z;
+    /* 单样本版本：直接用当前样本替换 bias，不累加 */
+    s_gyro_bias_body_dps.x = sample.gyro_xyz_dps.x;
+    s_gyro_bias_body_dps.y = sample.gyro_xyz_dps.y;
+    s_gyro_bias_body_dps.z = sample.gyro_xyz_dps.z;
     return ESP_OK;
 }
 
@@ -634,10 +699,42 @@ esp_err_t imu_calibrate_level(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    s_level_trim_deg.roll_deg += sample.roll_pitch_yaw_deg.roll_deg;
-    s_level_trim_deg.pitch_deg += sample.roll_pitch_yaw_deg.pitch_deg;
+    /* 用当前样本替换 roll/pitch trim，不累加 */
+    s_level_trim_deg.roll_deg = sample.roll_pitch_yaw_deg.roll_deg;
+    s_level_trim_deg.pitch_deg = sample.roll_pitch_yaw_deg.pitch_deg;
     s_level_trim_deg.yaw_deg = 0.0f;
     return ESP_OK;
+}
+
+void imu_reset_gyro_calibration(void)
+{
+    s_gyro_bias_body_dps = (vec3f_t){0};
+}
+
+void imu_reset_level_calibration(void)
+{
+    s_level_trim_deg = (eulerf_t){0};
+}
+
+void imu_reset_all_calibration(void)
+{
+    s_gyro_bias_body_dps = (vec3f_t){0};
+    s_level_trim_deg = (eulerf_t){0};
+}
+
+uint32_t imu_get_stale_drop_count(void)
+{
+    return atomic_load(&s_stale_drop_count);
+}
+
+vec3f_t imu_get_gyro_bias_body_dps(void)
+{
+    return s_gyro_bias_body_dps;
+}
+
+eulerf_t imu_get_level_trim_deg(void)
+{
+    return s_level_trim_deg;
 }
 
 void imu_service_rx(void)

@@ -61,12 +61,53 @@ void mixer_mix(const mixer_coeffs_t coeffs[MIXER_MOTOR_COUNT], const mixer_input
         return;
     }
 
+    const float base = input->throttle;
+    float axis_mix[MIXER_MOTOR_COUNT];
+    float raw[MIXER_MOTOR_COUNT];
+
+    /* 先计算各轴分量 */
     for (int i = 0; i < MIXER_MOTOR_COUNT; ++i) {
-        const float output =
-            input->throttle +
+        axis_mix[i] =
             coeffs[i].roll_coeff * input->axis.roll +
             coeffs[i].pitch_coeff * input->axis.pitch +
             coeffs[i].yaw_coeff * input->axis.yaw;
+        raw[i] = base + axis_mix[i];
+    }
+
+    /* 检查是否有电机超限，如有则按比例缩放 axis_mix */
+    float desat_scale = 1.0f;
+    bool any_saturated = false;
+    for (int i = 0; i < MIXER_MOTOR_COUNT; ++i) {
+        if (raw[i] > 1.0f) {
+            const float excess = raw[i] - 1.0f;
+            if (axis_mix[i] > 0.001f) {
+                const float scale_i = 1.0f - excess / axis_mix[i];
+                if (scale_i < desat_scale) {
+                    desat_scale = scale_i;
+                }
+            } else {
+                desat_scale = 0.0f;
+            }
+            any_saturated = true;
+        } else if (raw[i] < 0.0f) {
+            const float deficit = -raw[i];
+            if (axis_mix[i] < -0.001f) {
+                const float scale_i = 1.0f - deficit / (-axis_mix[i]);
+                if (scale_i < desat_scale) {
+                    desat_scale = scale_i;
+                }
+            } else {
+                desat_scale = 0.0f;
+            }
+            any_saturated = true;
+        }
+    }
+
+    desat_scale = mixer_clampf(desat_scale, 0.0f, 1.0f);
+
+    /* 缩放后输出，最后做一次 clamp 作为安全保护 */
+    for (int i = 0; i < MIXER_MOTOR_COUNT; ++i) {
+        const float output = base + desat_scale * axis_mix[i];
         out_outputs[i] = mixer_clampf(output, 0.0f, 1.0f);
     }
 }

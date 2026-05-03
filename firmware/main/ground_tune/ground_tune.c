@@ -114,10 +114,17 @@ bool ground_tune_capture_reference(const imu_sample_t *sample, const estimator_s
         return false;
     }
 
-    if (params->ground_tune_use_kalman_attitude &&
-        !estimator_state->kalman_valid) {
-        ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
-        return false;
+    if (params->ground_tune_use_kalman_attitude) {
+        /* 通过统一接口获取 Kalman 姿态以验证有效性 */
+        eulerf_t kalman_att = {0};
+        bool kalman_ok = estimator_get_control_attitude(
+            estimator_state,
+            ESTIMATOR_ATTITUDE_SOURCE_KALMAN_RP_RAW_YAW,
+            &kalman_att, NULL, NULL);
+        if (!kalman_ok) {
+            ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
+            return false;
+        }
     }
 
     const quatf_t normalized = ground_tune_quat_normalize(sample->quat_wxyz, &valid);
@@ -245,9 +252,16 @@ bool ground_tune_compute(const estimator_state_t *estimator_state, axis3f_t *out
     }
 
     const bool outer_enabled = params->ground_tune_enable_attitude_outer || ground_tune_outer_forced(state.submode);
-    if (params->ground_tune_use_kalman_attitude && !estimator_state->kalman_valid) {
-        ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
-        return false;
+    if (params->ground_tune_use_kalman_attitude) {
+        eulerf_t kalman_att = {0};
+        bool kalman_ok = estimator_get_control_attitude(
+            estimator_state,
+            ESTIMATOR_ATTITUDE_SOURCE_KALMAN_RP_RAW_YAW,
+            &kalman_att, NULL, NULL);
+        if (!kalman_ok) {
+            ground_tune_set_trip_reason(GROUND_TUNE_TRIP_KALMAN_INVALID);
+            return false;
+        }
     }
 
     bool current_valid = false;

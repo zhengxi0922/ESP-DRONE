@@ -42,20 +42,46 @@ esp_err_t imu_init(void);
 esp_err_t imu_reconfigure_from_params(void);
 
 /**
- * @brief 采集当前角速度并累加到陀螺零偏补偿。
+ * @brief 采集当前角速度样本并替换陀螺零偏补偿（不再累加）。
  *
  * @return `ESP_OK` 表示成功，当前样本无效时返回 `ESP_ERR_INVALID_STATE`。
- * @warning 该实现每调用一次都会继续累加补偿量，而不是自动求平均。
+ * @note 每次调用都会用当前样本重新计算 bias，不会在旧 bias 上继续叠加。
  */
 esp_err_t imu_calibrate_gyro(void);
 
 /**
- * @brief 采集当前姿态并累加到水平修正量。
+ * @brief 采集当前姿态并替换水平修正量（不再累加）。
  *
  * @return `ESP_OK` 表示成功，当前姿态无效时返回 `ESP_ERR_INVALID_STATE`。
  * @note 当前实现只修正 roll/pitch，yaw 修正始终清零。
  */
 esp_err_t imu_calibrate_level(void);
+
+/**
+ * @brief 重置陀螺零偏为零。
+ */
+void imu_reset_gyro_calibration(void);
+
+/**
+ * @brief 重置水平修正为零。
+ */
+void imu_reset_level_calibration(void);
+
+/**
+ * @brief 重置所有校准量。
+ */
+void imu_reset_all_calibration(void);
+
+vec3f_t imu_get_gyro_bias_body_dps(void);
+
+eulerf_t imu_get_level_trim_deg(void);
+
+/**
+ * @brief 获取 IMU 内部丢帧计数器。
+ *
+ * @return 因姿态帧过旧而未触发 publish 的累计次数。
+ */
+uint32_t imu_get_stale_drop_count(void);
 
 /**
  * @brief 轮询串口接收并推进协议解析。

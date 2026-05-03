@@ -146,6 +146,63 @@ axis3f_t estimator_project_rates_from_body_gyro(vec3f_t gyro_body_xyz_dps)
     };
 }
 
+bool estimator_get_control_attitude(const estimator_state_t *state,
+                                    estimator_attitude_source_t source,
+                                    eulerf_t *attitude_rpy_deg,
+                                    quatf_t *quat_body_to_world,
+                                    bool *attitude_valid)
+{
+    if (state == NULL) {
+        return false;
+    }
+
+    switch (source) {
+    case ESTIMATOR_ATTITUDE_SOURCE_RAW_MODULE:
+        if (attitude_rpy_deg != NULL) {
+            *attitude_rpy_deg = state->raw_attitude_rpy_deg;
+        }
+        if (quat_body_to_world != NULL) {
+            *quat_body_to_world = state->raw_quat_body_to_world;
+        }
+        if (attitude_valid != NULL) {
+            *attitude_valid = state->attitude_valid;
+        }
+        return state->attitude_valid;
+
+    case ESTIMATOR_ATTITUDE_SOURCE_FILTERED_RAW:
+        if (attitude_rpy_deg != NULL) {
+            *attitude_rpy_deg = state->attitude_rpy_deg;
+        }
+        if (quat_body_to_world != NULL) {
+            *quat_body_to_world = state->quat_body_to_world;
+        }
+        if (attitude_valid != NULL) {
+            *attitude_valid = state->attitude_valid;
+        }
+        return state->attitude_valid;
+
+    case ESTIMATOR_ATTITUDE_SOURCE_KALMAN_RP_RAW_YAW:
+        if (!state->kalman_valid || !state->attitude_valid) {
+            return false;
+        }
+        if (attitude_rpy_deg != NULL) {
+            attitude_rpy_deg->roll_deg = state->kalman_roll_deg;
+            attitude_rpy_deg->pitch_deg = state->kalman_pitch_deg;
+            attitude_rpy_deg->yaw_deg = state->raw_attitude_rpy_deg.yaw_deg;
+        }
+        if (quat_body_to_world != NULL) {
+            *quat_body_to_world = state->raw_quat_body_to_world;
+        }
+        if (attitude_valid != NULL) {
+            *attitude_valid = true;
+        }
+        return true;
+
+    default:
+        return false;
+    }
+}
+
 void estimator_init(void)
 {
     estimator_reset();
