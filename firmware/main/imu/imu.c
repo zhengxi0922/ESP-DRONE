@@ -72,13 +72,15 @@ typedef struct {
 static frame_parser_t s_parser;
 static partial_sample_t s_partial;
 static imu_sample_t s_samples[2];
+static imu_sample_t s_latest_raw_sample;
+static bool s_latest_raw_sample_valid;
 static _Atomic uint32_t s_sample_seq;
 static _Atomic uint32_t s_sample_index;
 static _Atomic uint32_t s_good_frames;
 static _Atomic uint32_t s_parse_errors;
 static _Atomic uint32_t s_consecutive_parse_errors;
 static _Atomic uint64_t s_last_frame_us;
-static _Atomic uint32_t s_stale_drop_count;
+static _Atomic uint32_t s_stale_frame_count;
 static bool s_initialized;
 static vec3f_t s_gyro_bias_body_dps;
 static eulerf_t s_level_trim_deg;
@@ -431,24 +433,28 @@ static void imu_publish_sample(imu_sample_t sample)
     atomic_fetch_add(&s_sample_seq, 1u);
 }
 
-static bool imu_attitude_stale_from_gyro_acc(void)
+/* attitude 和 quaternion 分别判断，不混合。
+ * attitude 可能来自 raw angle frame 或通过 quaternion 映射得到，
+ * 但它们的年龄是独立计算的。 */
+static bool imu_attitude_is_stale(void)
 {
     if (!s_partial.have_gyro_acc) {
         return true;
     }
     const int64_t now = (int64_t)esp_timer_get_time();
-    const int64_t age_attitude = now - s_partial.last_attitude_us;
-    const int64_t age_quat = now - s_partial.last_quat_us;
+    /* attitude 帧来自 IMU_FRAME_ATTITUDE，年龄按该帧计算 */
+    const int64_t age = now - s_partial.last_attitude_us;
+    return (age > (int64_t)IMU_FRAME_SYNC_MAX_AGE_US);
+}
 
-    /* 如果两者都有且任一足够新，不算 stale */
-    if (s_partial.have_quat && age_quat <= IMU_FRAME_SYNC_MAX_AGE_US) {
-        return false;
+static bool imu_quaternion_is_stale(void)
+{
+    if (!s_partial.have_gyro_acc || !s_partial.have_quat) {
+        return true;
     }
-    if (age_attitude <= IMU_FRAME_SYNC_MAX_AGE_US) {
-        /* 没有四元数但有足够新的 attitude，可以接受 */
-        return false;
-    }
-    return true;
+    const int64_t now = (int64_t)esp_timer_get_time();
+    const int64_t age = now - s_partial.last_quat_us;
+    return (age > (int64_t)IMU_FRAME_SYNC_MAX_AGE_US);
 }
 
 static void imu_handle_completed_frame(uint8_t frame_id, const uint8_t *payload, uint8_t len)
@@ -518,35 +524,57 @@ static void imu_handle_completed_frame(uint8_t frame_id, const uint8_t *payload,
         .sync_status = IMU_SYNC_OK,
     };
 
-    /* 检查姿态帧是否太旧 */
-    const bool stale = imu_attitude_stale_from_gyro_acc();
-
+    /* 先构建 raw sample（补偿前），给校准函数使用 */
     imu_map_partial_to_project_sample(&s_partial, &sample);
+
+    /* 保存未补偿的 raw sample 供校准使用 */
+    s_latest_raw_sample = sample;
+    s_latest_raw_sample_valid = true;
+
+    /* 再施加运行时补偿，得到控制回路使用的 sample */
     imu_apply_runtime_calibration(&sample);
 
-    /* 如果姿态太旧，设置同步状态和有效性标志 */
-    if (stale) {
-        sample.sync_status = IMU_SYNC_STALE_ATTITUDE;
-        if (!s_partial.have_quat) {
+    /* 分别判断 attitude 和 quaternion 是否独立 stale */
+    const bool attitude_stale = imu_attitude_is_stale();
+    const bool quat_stale = imu_quaternion_is_stale();
+
+    if (attitude_stale || quat_stale) {
+        uint32_t stale_count = 0;
+        /* attitude 太旧：标记无效，DIRECT 姿态控制不能使用 */
+        if (attitude_stale) {
             sample.has_attitude = false;
+            sample.sync_status = IMU_SYNC_STALE_ATTITUDE;
+            stale_count++;
         }
-        atomic_fetch_add(&s_stale_drop_count, 1u);
-    } else if (!sample.has_attitude) {
+        /* quaternion 太旧：标记无效 */
+        if (quat_stale) {
+            sample.has_quaternion = false;
+            /* 如果 attitude 本身不 stale 但 quat stale，单独标记 */
+            if (!attitude_stale) {
+                sample.sync_status = IMU_SYNC_STALE_QUATERNION;
+            }
+            stale_count++;
+        }
+        if (stale_count > 0) {
+            atomic_fetch_add(&s_stale_frame_count, stale_count);
+        }
+    } else if (!sample.has_attitude && !sample.has_quaternion) {
+        /* 姿态和四元数都从未到达过 */
         sample.sync_status = IMU_SYNC_NO_ATTITUDE;
     }
 
     const params_store_t *params = params_get();
     if (params->imu_mode == IMU_MODE_RAW) {
-        /* RAW 模式下 gyro+acc 已经足够 */
+        /* RAW 模式：rate-only，gyro+acc 足够，即使姿态无效也发布 */
         imu_publish_sample(sample);
         atomic_fetch_add(&s_good_frames, 1u);
         atomic_store(&s_consecutive_parse_errors, 0u);
         atomic_store(&s_last_frame_us, (uint64_t)esp_timer_get_time());
         return;
     }
-    /* DIRECT 模式仍然要求有姿态 */
+    /* DIRECT 模式：要求有姿态才发布 */
     if (params->imu_mode == IMU_MODE_DIRECT && !sample.has_attitude) {
-        /* 姿态不可用也不发布 */
+        /* 姿态不可用，不发布给 DIRECT 消费者 —— 防止旧姿态进入控制回路 */
         return;
     }
 
@@ -652,7 +680,8 @@ esp_err_t imu_init(void)
     atomic_store(&s_parse_errors, 0u);
     atomic_store(&s_consecutive_parse_errors, 0u);
     atomic_store(&s_last_frame_us, 0u);
-    atomic_store(&s_stale_drop_count, 0u);
+    atomic_store(&s_stale_frame_count, 0u);
+    s_latest_raw_sample_valid = false;
 
     s_samples[0] = (imu_sample_t){
         .quat_wxyz = {1.0f, 0.0f, 0.0f, 0.0f},
@@ -680,28 +709,27 @@ esp_err_t imu_reconfigure_from_params(void)
 
 esp_err_t imu_calibrate_gyro(void)
 {
-    imu_sample_t sample = {0};
-    if (!imu_get_latest(&sample, NULL) || sample.health != IMU_HEALTH_OK || !sample.has_gyro_acc) {
+    /* 必须使用 raw sample（未补偿），否则第二次校准时 sample 已被补偿到接近零，
+     * 导致前一次校准被静默清零。 */
+    if (!s_latest_raw_sample_valid || !s_latest_raw_sample.has_gyro_acc) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    /* 单样本版本：直接用当前样本替换 bias，不累加 */
-    s_gyro_bias_body_dps.x = sample.gyro_xyz_dps.x;
-    s_gyro_bias_body_dps.y = sample.gyro_xyz_dps.y;
-    s_gyro_bias_body_dps.z = sample.gyro_xyz_dps.z;
+    s_gyro_bias_body_dps.x = s_latest_raw_sample.gyro_xyz_dps.x;
+    s_gyro_bias_body_dps.y = s_latest_raw_sample.gyro_xyz_dps.y;
+    s_gyro_bias_body_dps.z = s_latest_raw_sample.gyro_xyz_dps.z;
     return ESP_OK;
 }
 
 esp_err_t imu_calibrate_level(void)
 {
-    imu_sample_t sample = {0};
-    if (!imu_get_latest(&sample, NULL) || sample.health != IMU_HEALTH_OK || !sample.has_attitude) {
+    /* 必须使用 raw attitude（未补偿），原因同上。 */
+    if (!s_latest_raw_sample_valid || !s_latest_raw_sample.has_attitude) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    /* 用当前样本替换 roll/pitch trim，不累加 */
-    s_level_trim_deg.roll_deg = sample.roll_pitch_yaw_deg.roll_deg;
-    s_level_trim_deg.pitch_deg = sample.roll_pitch_yaw_deg.pitch_deg;
+    s_level_trim_deg.roll_deg = s_latest_raw_sample.roll_pitch_yaw_deg.roll_deg;
+    s_level_trim_deg.pitch_deg = s_latest_raw_sample.roll_pitch_yaw_deg.pitch_deg;
     s_level_trim_deg.yaw_deg = 0.0f;
     return ESP_OK;
 }
@@ -724,7 +752,7 @@ void imu_reset_all_calibration(void)
 
 uint32_t imu_get_stale_drop_count(void)
 {
-    return atomic_load(&s_stale_drop_count);
+    return atomic_load(&s_stale_frame_count);
 }
 
 vec3f_t imu_get_gyro_bias_body_dps(void)

@@ -36,6 +36,16 @@ typedef struct {
 } mixer_coeffs_t;
 
 /**
+ * @brief mixer desaturation 可观测状态。
+ *
+ * @note 暴露给 telemetry / CSV 日志，用于判断是否因电机饱和而缩放了控制量。
+ */
+typedef struct {
+    float desat_scale; /**< 最近一次混控的 axis_mix 缩放系数 (0..1)，1.0 表示未缩放。 */
+    bool saturated;    /**< 最近一次混控至少有任一路电机达到上下限。 */
+} mixer_desat_state_t;
+
+/**
  * @brief 初始化 mixer 缓存。
  */
 void mixer_init(void);
@@ -66,3 +76,10 @@ void mixer_mix(const mixer_coeffs_t coeffs[MIXER_MOTOR_COUNT], const mixer_input
  * @retval false 当前系数与文档真值表不一致。
  */
 bool mixer_self_test(void);
+
+/**
+ * @brief 获取最近一次混控的 desaturation 状态。
+ *
+ * @return desat_scale 与 saturated 快照。
+ */
+mixer_desat_state_t mixer_get_desat_state(void);

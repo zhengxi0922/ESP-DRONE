@@ -198,13 +198,14 @@ typedef struct {
 /**
  * @brief IMU 帧同步状态。
  *
- * @note 描述 sample 内部不同帧的时间一致性。
+ * @note 描述 sample 内部不同帧的时间一致性。CSV/telemetry 可据此判断姿态是否可信。
  */
 typedef enum {
-    IMU_SYNC_OK = 0,          /**< 所有帧足够新鲜，时间一致。 */
-    IMU_SYNC_STALE_ATTITUDE,  /**< attitude/quaternion 帧相对于 gyro+acc 太旧。 */
-    IMU_SYNC_NO_ATTITUDE,     /**< 缺少姿态帧，但 gyro+acc 可用。 */
-    IMU_SYNC_PARTIAL,         /**< 仅有部分帧到达，不足以生成完整样本。 */
+    IMU_SYNC_OK = 0,               /**< 所有需要的帧足够新鲜。 */
+    IMU_SYNC_STALE_ATTITUDE = 1,   /**< attitude 帧相对于 gyro+acc 太旧。 */
+    IMU_SYNC_STALE_QUATERNION = 2, /**< quaternion 帧相对于 gyro+acc 太旧。 */
+    IMU_SYNC_NO_ATTITUDE = 3,      /**< 缺少姿态帧，但 gyro+acc 可用 (rate-only 可继续)。 */
+    IMU_SYNC_PARTIAL = 4,          /**< 仅有部分帧到达，不足以生成完整样本。 */
 } imu_sync_status_t;
 
 /**
@@ -220,11 +221,11 @@ typedef struct {
     eulerf_t roll_pitch_yaw_deg;   /**< 项目语义姿态角，单位为 deg。 */
     imu_health_t health;           /**< 当前样本健康状态。 */
     uint32_t update_age_us;        /**< 数据年龄，单位为 us。 */
-    bool has_attitude;             /**< 是否包含姿态角。 */
-    bool has_quaternion;           /**< 是否包含四元数。 */
+    bool has_attitude;             /**< 是否包含足够新鲜的姿态角。 */
+    bool has_quaternion;           /**< 是否包含足够新鲜的四元数。 */
     bool has_gyro_acc;             /**< 是否包含陀螺与加速度。 */
-    imu_sync_status_t sync_status; /**< 帧同步状态。 */
-    uint32_t stale_frame_drop_count; /**< 因帧过旧而未发布样本的累计次数（仅调试用）。 */
+    imu_sync_status_t sync_status; /**< 帧同步状态，CSV/telemetry 可观测。 */
+    uint32_t stale_frame_count;    /**< 检测到姿态帧过旧的累计次数。 */
 } imu_sample_t;
 
 /**

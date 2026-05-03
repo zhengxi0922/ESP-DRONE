@@ -77,9 +77,10 @@ vec3f_t imu_get_gyro_bias_body_dps(void);
 eulerf_t imu_get_level_trim_deg(void);
 
 /**
- * @brief 获取 IMU 内部丢帧计数器。
+ * @brief 获取姿态帧过旧计数器。
  *
- * @return 因姿态帧过旧而未触发 publish 的累计次数。
+ * @return 检测到 attitude 或 quaternion 帧相对于 gyro+acc 太旧的累计次数。
+ * @note 不是"丢弃样本"次数——样本可能仍被 rate-only 路径使用。
  */
 uint32_t imu_get_stale_drop_count(void);
 

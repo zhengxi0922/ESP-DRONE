@@ -12,6 +12,7 @@
 #include "params.h"
 
 static mixer_coeffs_t s_coeffs[MIXER_MOTOR_COUNT];
+static mixer_desat_state_t s_desat_state;
 
 static float mixer_clampf(float value, float min_value, float max_value)
 {
@@ -105,11 +106,20 @@ void mixer_mix(const mixer_coeffs_t coeffs[MIXER_MOTOR_COUNT], const mixer_input
 
     desat_scale = mixer_clampf(desat_scale, 0.0f, 1.0f);
 
+    /* 保存可观测状态供 telemetry / CSV 使用 */
+    s_desat_state.desat_scale = desat_scale;
+    s_desat_state.saturated = any_saturated;
+
     /* 缩放后输出，最后做一次 clamp 作为安全保护 */
     for (int i = 0; i < MIXER_MOTOR_COUNT; ++i) {
         const float output = base + desat_scale * axis_mix[i];
         out_outputs[i] = mixer_clampf(output, 0.0f, 1.0f);
     }
+}
+
+mixer_desat_state_t mixer_get_desat_state(void)
+{
+    return s_desat_state;
 }
 
 static bool mixer_check_direction(const float outputs[MIXER_MOTOR_COUNT], int inc_a, int inc_b, int dec_a, int dec_b)

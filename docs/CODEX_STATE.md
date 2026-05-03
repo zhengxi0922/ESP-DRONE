@@ -20,18 +20,23 @@ This file is the short project memory for Codex. Keep it current and short. Do n
 - User-verified GUI motor-test physical result from previous bring-up: `motor1=right-front`, `motor2=right-rear`, `motor3=left-rear`, `motor4=left-front`.
 - Hardware should not be rewired in the current phase. Prefer software mapping/parameters.
 
-## Current code facts checked during docs sync
+## Current code facts
 
 - `CONSOLE_PROTOCOL_VERSION` in `firmware/main/console/console_protocol.h` is `0x09`.
 - `CONSOLE_FEATURE_UDP_MANUAL_CONTROL` is bit `1 << 6`.
 - Current UDP manual command IDs are `13..18` for enable/disable/setpoint/takeoff/land/stop.
 - Current firmware default rate PID in `params.c` is `rate_kp_roll=0.0007`, `rate_kp_pitch=0.0007`, `rate_kp_yaw=0.0005`, and all rate I/D terms are `0`.
-- `motor.c` uses parameterized PWM resolution via `motor_pwm_resolution_bits`. Default is `10` (LEDC_TIMER_10_BIT). Can be set to 8, 10, or 12 bits.
-- IMU publish now syncs to gyro+acc frame arrival. Attitude/quaternion frames alone do not trigger publish. Stale attitude frames (>10ms older than gyro+acc) are flagged with IMU_SYNC_STALE_ATTITUDE.
-- Gyro and level calibration no longer accumulate (`=` replaces `+=`). New `imu_reset_*_calibration()` functions available.
-- PID D term uses D-on-Measurement (derivative of measured, not error).
-- Mixer uses axis desaturation scaling before final clamp.
-- Biquad filter framework available (`biquad/`) but not wired into estimator by default.
+- `motor.c` uses parameterized PWM resolution via `motor_pwm_resolution_bits`. Default is `10` (LEDC_TIMER_10_BIT). Supports 8/10/12 bits.
+- `motor_pwm_resolution_bits` is intended to be changed only while disarmed / on bench. Do not change during flight or while motors are actively driving.
+- IMU publish remains gyro+acc-triggered. Attitude/quaternion frames alone do not trigger publish.
+- Attitude and quaternion staleness tracked independently by per-frame update timestamps (`last_attitude_us` / `last_quat_us`).
+- Stale attitude and quaternion (>10ms older than gyro+acc) are marked invalid (`has_attitude=false`, `has_quaternion=false`) and sync_status set to IMU_SYNC_STALE_ATTITUDE / IMU_SYNC_STALE_QUATERNION. DIRECT mode rejects samples without valid attitude.
+- Gyro/level calibration uses raw/uncompensated samples (`s_latest_raw_sample`), not already-compensated samples. Repeated calibration keeps the same bias/trim (not accumulating, not clearing to zero).
+- Calibration reset functions available: `imu_reset_gyro_calibration()`, `imu_reset_level_calibration()`, `imu_reset_all_calibration()`.
+- PID D term uses D-on-Measurement (derivative of measured, not error). `kd=0` produces same output as before.
+- Mixer uses unified desaturation scaling (proportional reduction of axis_mix when any motor hits limits) before final clamp. Reports `mixer_desat_scale` and `mixer_saturated` via `mixer_get_desat_state()`.
+- `estimator_get_control_attitude(source, ...)` provides unified attitude source selection. `ground_tune.c` uses it for Kalman validity checks, but full migration of all control paths is deferred.
+- Biquad filter framework available (`biquad/`), with self-test (`biquad_self_test()`), but NOT wired into estimator by default. Default filter behavior unchanged.
 
 ## Current implemented paths
 
@@ -49,5 +54,9 @@ This file is the short project memory for Codex. Keep it current and short. Do n
 - Autonomous takeoff controller.
 - Closed-loop altitude hold.
 - Position hold.
-- Biquad/notch filter integration into estimator signal chain (framework exists but not wired).
+- Biquad/notch filter integration into estimator signal chain (framework exists with smoke test, not wired).
 - Kalman magnetometer fusion.
+- Roll/pitch/yaw priority mixer (simple proportional desaturation only).
+- Full migration of all control paths to `estimator_get_control_attitude()` (only ground_tune uses it currently).
+- Attitude outer-loop I term.
+- Rate feedforward.

@@ -83,3 +83,12 @@ void biquad_reset(biquad_filter_t *filt);
  * @param[in,out] filt 滤波器状态指针。
  */
 void biquad_set_bypass(biquad_filter_t *filt);
+
+/**
+ * @brief Biquad smoke test —— 验证系数生成与 step response 不产生 NaN/Inf。
+ *
+ * @retval true 所有检查通过，滤波器框架基本健全。
+ * @retval false 某项检查失败。
+ * @note 不修改任何全局状态，不接入 estimator。
+ */
+bool biquad_self_test(void);

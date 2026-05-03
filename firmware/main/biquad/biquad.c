@@ -179,3 +179,95 @@ void biquad_reset(biquad_filter_t *filt)
     filt->y2 = 0.0f;
     filt->initialized = false;
 }
+
+bool biquad_self_test(void)
+{
+    biquad_filter_t filt;
+
+    /* 1. init 后状态为 bypass，系数安全 */
+    biquad_init(&filt);
+    if (filt.mode != BIQUAD_MODE_BYPASS || filt.b0 != 1.0f) {
+        return false;
+    }
+
+    /* 2. 输入直接通过 bypass */
+    const float bypass_out = biquad_update(&filt, 3.0f);
+    if (fabsf(bypass_out - 3.0f) > 1e-6f) {
+        return false;
+    }
+
+    /* 3. LPF 设计无 NaN/Inf */
+    biquad_design_lpf(&filt, 40.0f, 1000.0f);
+    if (!isfinite(filt.b0) || !isfinite(filt.b1) || !isfinite(filt.b2) ||
+        !isfinite(filt.a1) || !isfinite(filt.a2)) {
+        return false;
+    }
+    if (filt.mode != BIQUAD_MODE_LOWPASS) {
+        return false;
+    }
+
+    /* 4. LPF step response 输出有限 */
+    biquad_reset(&filt);
+    biquad_design_lpf(&filt, 40.0f, 1000.0f);
+    float lpf_out = 0.0f;
+    for (int i = 0; i < 100; ++i) {
+        lpf_out = biquad_update(&filt, 1.0f);
+        if (!isfinite(lpf_out)) {
+            return false;
+        }
+    }
+    /* 100 步后应接近稳态值 1.0 */
+    if (fabsf(lpf_out - 1.0f) > 0.3f) {
+        return false;
+    }
+
+    /* 5. Notch 设计无 NaN/Inf */
+    biquad_design_notch(&filt, 150.0f, 30.0f, 1000.0f);
+    if (!isfinite(filt.b0) || !isfinite(filt.b1) || !isfinite(filt.b2) ||
+        !isfinite(filt.a1) || !isfinite(filt.a2)) {
+        return false;
+    }
+    if (filt.mode != BIQUAD_MODE_NOTCH) {
+        return false;
+    }
+
+    /* 6. Notch step response 输出有限 */
+    biquad_reset(&filt);
+    biquad_design_notch(&filt, 150.0f, 30.0f, 1000.0f);
+    for (int i = 0; i < 50; ++i) {
+        const float notch_out = biquad_update(&filt, 0.5f);
+        if (!isfinite(notch_out)) {
+            return false;
+        }
+    }
+
+    /* 7. reset 后状态归零 */
+    biquad_reset(&filt);
+    if (filt.x1 != 0.0f || filt.x2 != 0.0f || filt.y1 != 0.0f || filt.y2 != 0.0f) {
+        return false;
+    }
+    if (filt.initialized) {
+        return false;
+    }
+
+    /* 8. 极端参数自动 fallback 到 bypass */
+    biquad_design_lpf(&filt, -1.0f, 1000.0f);
+    if (filt.mode != BIQUAD_MODE_BYPASS) {
+        return false;
+    }
+    biquad_design_notch(&filt, 0.0f, 0.0f, 1000.0f);
+    if (filt.mode != BIQUAD_MODE_BYPASS) {
+        return false;
+    }
+
+    /* 9. NaN 输入自动 bypass/reset */
+    biquad_design_lpf(&filt, 40.0f, 1000.0f);
+    biquad_update(&filt, 1.0f);
+    const float nan_out = biquad_update(&filt, NAN);
+    /* NaN 输入后应返回 0 并重置 */
+    if (filt.initialized) {
+        return false;
+    }
+
+    return true;
+}
