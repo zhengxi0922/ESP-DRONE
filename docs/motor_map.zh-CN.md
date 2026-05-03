@@ -40,20 +40,25 @@
 - 鍏ㄥ眬 `motor_slew_limit_per_tick`
 - 鍙傛暟鍖?`motor_pwm_freq_hz`
 
-`motor.c` 褰撳墠浣跨敤鍥哄畾 `LEDC_TIMER_8_BIT` PWM 鍒嗚鲸鐜囥€侾WM 棰戠巼宸茬粡鍙傛暟鍖栵紝浣?PWM 鍒嗚鲸鐜囨病鏈夊弬鏁板寲銆?
-## 灏氭湭瀹炵幇
+`motor.c` 使用参数化 PWM 分辨率（`motor_pwm_resolution_bits`，默认 10-bit）。支持 8/10/12 bit。PWM 频率也已参数化。
+## 每电机推力补偿
 
-褰撳墠浠ｇ爜灏氭湭瀹炵幇姣忕數鏈烘帹鍔涜ˉ鍋匡細
+每电机推力补偿已在 `motor_apply_compensation()` 中实现：
 
-- 姣忕數鏈?`scale`
-- 姣忕數鏈?`offset`
-- 姣忕數鏈?`min_start`
-- 姣忕數鏈?`deadband`
-- 姣忕數鏈?`gamma`
+- 每电机 `motor_trim` — gamma 前的加性 trim
+- 每电机 `motor_gamma` — 幂律 gamma 校正
+- 每电机 `motor_scale` — 乘性缩放
+- 每电机 `motor_offset` — 加性偏移
+- 每电机 `motor_deadband` — 死区阈值（低于此值为零输出）
+- 每电机 `motor_min_start` — 最小起转占空比
+
+`motor_output_map` 是通道映射，不是每电机推力补偿。
 
 涓嶈鎶?`motor_output_map` 鎻忚堪涓烘瘡鐢垫満鎺ㄥ姏琛ュ伩銆傞€氶亾鏄犲皠鍜屾帹鍔涜ˉ鍋挎槸涓嶅悓灞傜骇銆?
 ## Current motor output implementation note
 
-Current `motor.c` uses fixed 8-bit LEDC PWM resolution (`LEDC_TIMER_8_BIT`). `motor_pwm_freq_hz` parameterizes PWM frequency only; PWM resolution is not parameterized.
+## Current motor output implementation note
 
-`motor_output_map` maps logical motor order to physical outputs. It is not per-motor thrust compensation. The current firmware does not yet implement per-motor `scale`, `offset`, `min_start`, `deadband`, or `gamma` compensation.
+`motor.c` uses parameterized PWM resolution (`motor_pwm_resolution_bits`, default 10-bit). Both PWM frequency and resolution are parameterized.
+
+`motor_output_map` maps logical motor order to physical outputs. Per-motor thrust compensation (`motor_trim`, `motor_gamma`, `motor_scale`, `motor_offset`, `motor_deadband`, `motor_min_start`) is implemented in `motor_apply_compensation()`.

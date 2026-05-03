@@ -73,7 +73,7 @@ The conservative values `roll=0.0007`, `pitch=0.0007`, `yaw=0.0005` are tuning c
 
 ## Motor Output Status
 
-Current `firmware/main/motor/motor.c` uses fixed `LEDC_TIMER_8_BIT` PWM resolution. The PWM frequency is parameterized through `motor_pwm_freq_hz`, but PWM resolution is not parameterized.
+`firmware/main/motor/motor.c` uses parameterized PWM resolution (`motor_pwm_resolution_bits`, default 10-bit, supports 8/10/12). PWM frequency is also parameterized through `motor_pwm_freq_hz`.
 
 Implemented motor output controls:
 
@@ -84,16 +84,18 @@ Implemented motor output controls:
 - global `motor_slew_limit_per_tick`
 - parameterized PWM frequency
 
-Not implemented as of this docs-code sync:
+Motor output features:
 
-- per-motor thrust `scale`
-- per-motor `offset`
-- per-motor `min_start`
-- per-motor `deadband`
-- per-motor `gamma`
-- PWM resolution parameterization
+- `motor_output_map` — channel mapping (logical → physical)
+- per-motor `motor_trim` — additive trim before gamma
+- per-motor `motor_gamma` — power-law gamma correction
+- per-motor `motor_scale` — multiplicative scale
+- per-motor `motor_offset` — additive offset
+- per-motor `motor_deadband` — deadband threshold
+- per-motor `motor_min_start` — minimum start duty
+- `motor_pwm_resolution_bits` — parameterized PWM resolution (default 10-bit, supports 8/10/12)
 
-`motor_output_map` is a channel mapping feature. It must not be described as per-motor thrust compensation.
+`motor_output_map` is channel mapping, not per-motor thrust compensation. Per-motor compensation is a separate layer in `motor_apply_compensation()`.
 
 ## SoftAP UDP Transport
 

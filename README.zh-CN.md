@@ -73,27 +73,24 @@ hang-attitude 路径是受限诊断路径：
 
 ## 电机输出状态
 
-当前 `firmware/main/motor/motor.c` 使用固定 `LEDC_TIMER_8_BIT` PWM 分辨率。PWM 频率通过 `motor_pwm_freq_hz` 参数化，但 PWM 分辨率没有参数化。
+`firmware/main/motor/motor.c` 使用参数化 PWM 分辨率（`motor_pwm_resolution_bits`，默认 10-bit，支持 8/10/12）。PWM 频率也通过 `motor_pwm_freq_hz` 参数化。
 
 已经实现：
 
-- `motor_output_map[4]`
+- `motor_output_map[4]` — 通道映射（逻辑 → 物理）
 - 全局 `motor_idle_duty`
 - 全局 `motor_max_duty`
 - 全局 `motor_startup_boost_duty`
 - 全局 `motor_slew_limit_per_tick`
-- PWM 频率参数化
+- `motor_pwm_resolution_bits` — 参数化 PWM 分辨率（默认 10-bit，支持 8/10/12）
+- 每电机 `motor_trim` — gamma 前的加性 trim
+- 每电机 `motor_gamma` — 幂律 gamma 校正
+- 每电机 `motor_scale` — 乘性缩放
+- 每电机 `motor_offset` — 加性偏移
+- 每电机 `motor_deadband` — 死区阈值
+- 每电机 `motor_min_start` — 最小起转占空比
 
-尚未实现：
-
-- 每电机推力 `scale`
-- 每电机 `offset`
-- 每电机 `min_start`
-- 每电机 `deadband`
-- 每电机 `gamma`
-- PWM 分辨率参数化
-
-`motor_output_map` 是通道映射功能，不能和每电机推力补偿混为一谈。
+`motor_output_map` 是通道映射，不是每电机推力补偿。每电机补偿由 `motor_apply_compensation()` 提供。
 
 ## SoftAP UDP Transport
 

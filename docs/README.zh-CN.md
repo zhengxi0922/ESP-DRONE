@@ -46,4 +46,4 @@
 - 当前固件默认参数必须和 `firmware/main/params/params.c` 一致。
 - 文档必须明确区分 implemented 和 TODO/planned。
 - `motor_output_map` 是通道映射，不是每电机推力补偿。
-- 当前 `motor.c` 使用固定 8-bit LEDC PWM 分辨率，只有 PWM 频率参数化。
+- 当前 `motor.c` 使用参数化 PWM 分辨率（`motor_pwm_resolution_bits`，默认 10-bit），PWM 频率也已参数化。

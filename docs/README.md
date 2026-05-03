@@ -46,4 +46,4 @@ This directory contains locked conventions, bring-up notes, docs-code sync notes
 - Current firmware parameter defaults must match `firmware/main/params/params.c`.
 - Documentation must clearly distinguish implemented features from TODO/planned features.
 - `motor_output_map` is channel mapping, not per-motor thrust compensation.
-- Current `motor.c` uses fixed 8-bit LEDC PWM resolution and parameterized PWM frequency.
+- Current `motor.c` uses parameterized PWM resolution (`motor_pwm_resolution_bits`, default 10-bit) alongside parameterized PWM frequency.

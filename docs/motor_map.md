@@ -46,22 +46,23 @@ Current implemented output controls include:
 - global `motor_slew_limit_per_tick`
 - parameterized `motor_pwm_freq_hz`
 
-`motor.c` currently uses fixed `LEDC_TIMER_8_BIT` PWM resolution. PWM frequency is parameterized, but PWM resolution is not.
+`motor.c` uses parameterized PWM resolution via `motor_pwm_resolution_bits`. Default is 10-bit (`LEDC_TIMER_10_BIT`). Supports 8, 10, and 12 bits.
 
-## Not Yet Implemented
+## Per-motor thrust compensation
 
-The current code does not implement per-motor thrust compensation with:
+Per-motor thrust compensation is implemented in `motor_apply_compensation()`:
 
-- per-motor `scale`
-- per-motor `offset`
-- per-motor `min_start`
-- per-motor `deadband`
-- per-motor `gamma`
+- per-motor `motor_trim` — additive trim before gamma
+- per-motor `motor_gamma` — power-law gamma correction
+- per-motor `motor_scale` — multiplicative scale
+- per-motor `motor_offset` — additive offset
+- per-motor `motor_deadband` — deadband threshold (output zero below this)
+- per-motor `motor_min_start` — minimum start duty
 
-Do not describe `motor_output_map` as per-motor thrust compensation. Mapping and thrust compensation are different layers.
+`motor_output_map` is channel mapping, not per-motor thrust compensation. Mapping and thrust compensation are different layers.
 
 ## Current motor output implementation note
 
-Current `motor.c` uses fixed 8-bit LEDC PWM resolution (`LEDC_TIMER_8_BIT`). `motor_pwm_freq_hz` parameterizes PWM frequency only; PWM resolution is not parameterized.
+`motor.c` uses parameterized PWM resolution (`motor_pwm_resolution_bits`, default 10-bit). Both PWM frequency and resolution are parameterized.
 
-`motor_output_map` maps logical motor order to physical outputs. It is not per-motor thrust compensation. The current firmware does not yet implement per-motor `scale`, `offset`, `min_start`, `deadband`, or `gamma` compensation.
+`motor_output_map` maps logical motor order to physical outputs. Per-motor thrust compensation (`motor_trim`, `motor_gamma`, `motor_scale`, `motor_offset`, `motor_deadband`, `motor_min_start`) is implemented in `motor_apply_compensation()`.
