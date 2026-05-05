@@ -48,11 +48,76 @@ MOTOR_BALANCE_SUMMARY_FIELDS = [
     "gyro_x_mean_dps",
     "gyro_y_mean_dps",
     "gyro_z_mean_dps",
+    "gyro_raw_x_rms",
+    "gyro_raw_x_peak",
+    "gyro_raw_y_rms",
+    "gyro_raw_y_peak",
+    "gyro_raw_z_rms",
+    "gyro_raw_z_peak",
+    "gyro_filtered_x_rms",
+    "gyro_filtered_x_peak",
+    "gyro_filtered_y_rms",
+    "gyro_filtered_y_peak",
+    "gyro_filtered_z_rms",
+    "gyro_filtered_z_peak",
+    "rate_meas_yaw_raw_rms",
+    "rate_meas_yaw_raw_peak",
+    "rate_meas_yaw_filtered_rms",
+    "rate_meas_yaw_filtered_peak",
+    "acc_norm_min",
+    "acc_norm_max",
+    "acc_norm_mean",
+    "kalman_valid_min",
+    "ground_trip_reason_max",
+    "warning",
     "acc_rms_g",
     "acc_std_g",
     "response_score",
     "relative_to_duty_mean",
     "classification",
+]
+
+VIBRATION_SUMMARY_FIELDS = [
+    "mode",
+    "motor",
+    "duty",
+    "samples",
+    "battery_min",
+    "gyro_raw_x_rms",
+    "gyro_raw_x_peak",
+    "gyro_raw_y_rms",
+    "gyro_raw_y_peak",
+    "gyro_raw_z_min",
+    "gyro_raw_z_max",
+    "gyro_raw_z_rms",
+    "gyro_raw_z_peak",
+    "gyro_filtered_x_rms",
+    "gyro_filtered_x_peak",
+    "gyro_filtered_y_rms",
+    "gyro_filtered_y_peak",
+    "gyro_filtered_z_min",
+    "gyro_filtered_z_max",
+    "gyro_filtered_z_rms",
+    "gyro_filtered_z_peak",
+    "rate_meas_yaw_raw_min",
+    "rate_meas_yaw_raw_max",
+    "rate_meas_yaw_raw_rms",
+    "rate_meas_yaw_raw_peak",
+    "rate_meas_yaw_filtered_min",
+    "rate_meas_yaw_filtered_max",
+    "rate_meas_yaw_filtered_rms",
+    "rate_meas_yaw_filtered_peak",
+    "acc_norm_min",
+    "acc_norm_max",
+    "acc_norm_mean",
+    "acc_std",
+    "loop_dt_us_min",
+    "loop_dt_us_max",
+    "kalman_valid_min",
+    "ground_trip_reason_max",
+    "motor_saturation_max",
+    "stop_reason",
+    "warning",
 ]
 
 MOTOR_TRIM_SCALE_FIELDS = {
@@ -190,12 +255,275 @@ def _std(values: list[float]) -> float:
     return statistics.pstdev(values) if len(values) > 1 else 0.0
 
 
+def _sample_float(sample: object, field: str, default: float = 0.0) -> float:
+    try:
+        return float(getattr(sample, field))
+    except (AttributeError, TypeError, ValueError):
+        return default
+
+
+def _sample_int(sample: object, field: str, default: int = 0) -> int:
+    try:
+        return int(float(getattr(sample, field)))
+    except (AttributeError, TypeError, ValueError):
+        return default
+
+
+def _axis_stats(values: list[float]) -> tuple[float, float]:
+    return _rms(values), max((abs(value) for value in values), default=0.0)
+
+
+def _row_float(row: dict[str, str], *fields: str, default: float = 0.0) -> float:
+    for field in fields:
+        try:
+            value = row.get(field, "")
+            if value != "":
+                return float(value)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _row_int(row: dict[str, str], *fields: str, default: int = 0) -> int:
+    return int(_row_float(row, *fields, default=float(default)))
+
+
+def _row_acc_norm(row: dict[str, str]) -> float:
+    x = _row_float(row, "raw_acc_x", "acc_x")
+    y = _row_float(row, "raw_acc_y", "acc_y")
+    z = _row_float(row, "raw_acc_z", "acc_z")
+    return math.sqrt(x * x + y * y + z * z)
+
+
+def _value_min(values: list[float]) -> float:
+    return min(values, default=0.0)
+
+
+def _value_max(values: list[float]) -> float:
+    return max(values, default=0.0)
+
+
+def _vibration_warning(row: dict[str, object]) -> str:
+    warnings: list[str] = []
+    if (
+        abs(float(row["rate_meas_yaw_raw_peak"])) > 800.0 or
+        abs(float(row["rate_meas_yaw_filtered_peak"])) > 800.0
+    ):
+        warnings.append("yaw_peak_gt_800dps")
+    if float(row["acc_norm_min"]) < 0.60 or float(row["acc_norm_max"]) > 1.40:
+        warnings.append("acc_norm_out_of_range")
+    if int(row["kalman_valid_min"]) == 0:
+        warnings.append("kalman_invalid")
+    trip = int(row["ground_trip_reason_max"])
+    if trip == 2:
+        warnings.append("ground_trip_kalman_invalid")
+    elif trip != 0:
+        warnings.append(f"ground_trip_{trip}")
+    if int(row["motor_saturation_max"]) != 0:
+        warnings.append("motor_saturation")
+    return "|".join(warnings) if warnings else "none"
+
+
+def _summarize_vibration_rows(
+    rows: list[dict[str, str]],
+    *,
+    mode: str,
+    motor: str,
+    duty: str,
+    stop_reason: str = "completed",
+) -> dict[str, object]:
+    raw_x = [_row_float(row, "raw_gyro_x", "gyro_x") for row in rows]
+    raw_y = [_row_float(row, "raw_gyro_y", "gyro_y") for row in rows]
+    raw_z = [_row_float(row, "raw_gyro_z", "gyro_z") for row in rows]
+    filtered_x = [_row_float(row, "filtered_gyro_x") for row in rows]
+    filtered_y = [_row_float(row, "filtered_gyro_y") for row in rows]
+    filtered_z = [_row_float(row, "filtered_gyro_z") for row in rows]
+    yaw_raw = [_row_float(row, "rate_meas_yaw_raw") for row in rows]
+    yaw_filtered = [_row_float(row, "rate_meas_yaw_filtered") for row in rows]
+    acc_norm = [_row_acc_norm(row) for row in rows]
+    raw_x_rms, raw_x_peak = _axis_stats(raw_x)
+    raw_y_rms, raw_y_peak = _axis_stats(raw_y)
+    raw_z_rms, raw_z_peak = _axis_stats(raw_z)
+    filtered_x_rms, filtered_x_peak = _axis_stats(filtered_x)
+    filtered_y_rms, filtered_y_peak = _axis_stats(filtered_y)
+    filtered_z_rms, filtered_z_peak = _axis_stats(filtered_z)
+    yaw_raw_rms, yaw_raw_peak = _axis_stats(yaw_raw)
+    yaw_filtered_rms, yaw_filtered_peak = _axis_stats(yaw_filtered)
+    summary: dict[str, object] = {
+        "mode": mode,
+        "motor": motor,
+        "duty": duty,
+        "samples": len(rows),
+        "battery_min": min(
+            (_row_float(row, "battery_voltage", "battery_v", default=0.0) for row in rows),
+            default=0.0,
+        ),
+        "gyro_raw_x_rms": raw_x_rms,
+        "gyro_raw_x_peak": raw_x_peak,
+        "gyro_raw_y_rms": raw_y_rms,
+        "gyro_raw_y_peak": raw_y_peak,
+        "gyro_raw_z_min": _value_min(raw_z),
+        "gyro_raw_z_max": _value_max(raw_z),
+        "gyro_raw_z_rms": raw_z_rms,
+        "gyro_raw_z_peak": raw_z_peak,
+        "gyro_filtered_x_rms": filtered_x_rms,
+        "gyro_filtered_x_peak": filtered_x_peak,
+        "gyro_filtered_y_rms": filtered_y_rms,
+        "gyro_filtered_y_peak": filtered_y_peak,
+        "gyro_filtered_z_min": _value_min(filtered_z),
+        "gyro_filtered_z_max": _value_max(filtered_z),
+        "gyro_filtered_z_rms": filtered_z_rms,
+        "gyro_filtered_z_peak": filtered_z_peak,
+        "rate_meas_yaw_raw_min": _value_min(yaw_raw),
+        "rate_meas_yaw_raw_max": _value_max(yaw_raw),
+        "rate_meas_yaw_raw_rms": yaw_raw_rms,
+        "rate_meas_yaw_raw_peak": yaw_raw_peak,
+        "rate_meas_yaw_filtered_min": _value_min(yaw_filtered),
+        "rate_meas_yaw_filtered_max": _value_max(yaw_filtered),
+        "rate_meas_yaw_filtered_rms": yaw_filtered_rms,
+        "rate_meas_yaw_filtered_peak": yaw_filtered_peak,
+        "acc_norm_min": min(acc_norm, default=0.0),
+        "acc_norm_max": max(acc_norm, default=0.0),
+        "acc_norm_mean": _mean(acc_norm),
+        "acc_std": _std(acc_norm),
+        "loop_dt_us_min": min((_row_float(row, "loop_dt_us") for row in rows), default=0.0),
+        "loop_dt_us_max": max((_row_float(row, "loop_dt_us") for row in rows), default=0.0),
+        "kalman_valid_min": min((_row_int(row, "kalman_valid", default=1) for row in rows), default=1),
+        "ground_trip_reason_max": max((_row_int(row, "ground_trip_reason") for row in rows), default=0),
+        "motor_saturation_max": max((_row_int(row, "motor_saturation_flag") for row in rows), default=0),
+        "stop_reason": stop_reason if rows else "no_samples",
+        "warning": "none",
+    }
+    summary["warning"] = _vibration_warning(summary) if rows else "no_samples"
+    return summary
+
+
+def _is_active_motor_row(row: dict[str, str]) -> bool:
+    if _row_int(row, "control_mode") == 7:
+        return True
+    return max(
+        _row_float(row, "motor1"),
+        _row_float(row, "motor2"),
+        _row_float(row, "motor3"),
+        _row_float(row, "motor4"),
+    ) > 0.0005
+
+
+def analyze_vibration_log(
+    path: Path,
+    *,
+    mode: str = "auto",
+    duty: float | None = None,
+    output_path: Path | None = None,
+) -> list[dict[str, object]]:
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+
+    if mode == "auto":
+        if rows and "test_motor" in rows[0] and "test_duty" in rows[0]:
+            mode = "single-motor"
+        elif any(_is_active_motor_row(row) for row in rows):
+            mode = "all-motor"
+        else:
+            mode = "static"
+
+    summaries: list[dict[str, object]]
+    if mode == "single-motor":
+        active = [row for row in rows if row.get("test_phase", "") == "active"]
+        if not active:
+            active = rows
+        groups: dict[tuple[str, str], list[dict[str, str]]] = {}
+        for row in active:
+            motor = row.get("test_motor", "") or "unknown"
+            row_duty = row.get("test_duty", "") or row.get("test_input_duty", "")
+            groups.setdefault((motor, row_duty), []).append(row)
+        summaries = [
+            _summarize_vibration_rows(group, mode=mode, motor=motor, duty=row_duty)
+            for (motor, row_duty), group in sorted(groups.items())
+        ]
+    elif mode == "all-motor":
+        active = [row for row in rows if _is_active_motor_row(row)]
+        duty_text = f"{duty:.3f}" if duty is not None else ""
+        summaries = [_summarize_vibration_rows(active, mode=mode, motor="all", duty=duty_text)]
+    elif mode == "static":
+        summaries = [_summarize_vibration_rows(rows, mode=mode, motor="none", duty="0.000")]
+    else:
+        raise ValueError("mode must be one of: auto, static, all-motor, single-motor")
+
+    if output_path is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=VIBRATION_SUMMARY_FIELDS)
+            writer.writeheader()
+            for row in summaries:
+                writer.writerow(
+                    {
+                        key: (
+                            f"{float(row[key]):.6f}"
+                            if isinstance(row.get(key), float)
+                            else row.get(key)
+                        )
+                        for key in VIBRATION_SUMMARY_FIELDS
+                    }
+                )
+    return summaries
+
+
+def format_vibration_summary(rows: list[dict[str, object]]) -> list[str]:
+    lines: list[str] = []
+    for row in rows:
+        lines.append(
+            "mode={mode} motor={motor} duty={duty} samples={samples} "
+            "yaw_raw_minmax={rate_meas_yaw_raw_min:.2f}..{rate_meas_yaw_raw_max:.2f} "
+            "yaw_raw_rms={rate_meas_yaw_raw_rms:.2f} yaw_raw_peak={rate_meas_yaw_raw_peak:.2f} "
+            "yaw_filtered_minmax={rate_meas_yaw_filtered_min:.2f}..{rate_meas_yaw_filtered_max:.2f} "
+            "yaw_filtered_rms={rate_meas_yaw_filtered_rms:.2f} "
+            "yaw_filtered_peak={rate_meas_yaw_filtered_peak:.2f} "
+            "acc_norm={acc_norm_min:.3f}..{acc_norm_max:.3f} "
+            "loop_dt_us={loop_dt_us_min:.0f}..{loop_dt_us_max:.0f} "
+            "kalman_min={kalman_valid_min} trip_max={ground_trip_reason_max} "
+            "sat_max={motor_saturation_max} warning={warning}".format(**row)
+        )
+    return lines
+
+
 def _sample_gyro_mag(sample: TelemetrySample) -> float:
-    return math.sqrt(float(sample.gyro_x) ** 2 + float(sample.gyro_y) ** 2 + float(sample.gyro_z) ** 2)
+    return math.sqrt(
+        _sample_float(sample, "gyro_x") ** 2 +
+        _sample_float(sample, "gyro_y") ** 2 +
+        _sample_float(sample, "gyro_z") ** 2
+    )
 
 
 def _sample_acc_mag(sample: TelemetrySample) -> float:
-    return math.sqrt(float(sample.acc_x) ** 2 + float(sample.acc_y) ** 2 + float(sample.acc_z) ** 2)
+    return math.sqrt(
+        _sample_float(sample, "acc_x") ** 2 +
+        _sample_float(sample, "acc_y") ** 2 +
+        _sample_float(sample, "acc_z") ** 2
+    )
+
+
+def _warning_for_samples(samples: list[object]) -> str:
+    warnings: list[str] = []
+    yaw_raw_peak = max((abs(_sample_float(sample, "rate_meas_yaw_raw")) for sample in samples), default=0.0)
+    yaw_filtered_peak = max((abs(_sample_float(sample, "rate_meas_yaw_filtered")) for sample in samples), default=0.0)
+    acc_norms = [_sample_acc_mag(sample) for sample in samples]
+    kalman_min = min((_sample_int(sample, "kalman_valid", 1) for sample in samples), default=1)
+    trip_max = max((_sample_int(sample, "ground_trip_reason") for sample in samples), default=0)
+    sat_max = max((_sample_int(sample, "motor_saturation_flag") for sample in samples), default=0)
+    if yaw_raw_peak > 800.0 or yaw_filtered_peak > 800.0:
+        warnings.append("yaw_peak_gt_800dps")
+    if acc_norms and (min(acc_norms) < 0.60 or max(acc_norms) > 1.40):
+        warnings.append("acc_norm_out_of_range")
+    if kalman_min == 0:
+        warnings.append("kalman_invalid")
+    if trip_max == 2:
+        warnings.append("ground_trip_kalman_invalid")
+    elif trip_max != 0:
+        warnings.append(f"ground_trip_{trip_max}")
+    if sat_max != 0:
+        warnings.append("motor_saturation")
+    return "|".join(warnings) if warnings else "none"
 
 
 def _motor_label(motor: int) -> str:
@@ -276,6 +604,16 @@ def summarize_motor_balance_trials(trials: list[MotorBalanceTrial]) -> list[dict
         gyro_mag = [_sample_gyro_mag(sample) for sample in samples]
         acc_mag = [_sample_acc_mag(sample) for sample in samples]
         acc_dynamic = [value - _mean(acc_mag) for value in acc_mag]
+        raw_x_rms, raw_x_peak = _axis_stats([_sample_float(sample, "gyro_x") for sample in samples])
+        raw_y_rms, raw_y_peak = _axis_stats([_sample_float(sample, "gyro_y") for sample in samples])
+        raw_z_rms, raw_z_peak = _axis_stats([_sample_float(sample, "gyro_z") for sample in samples])
+        filtered_x_rms, filtered_x_peak = _axis_stats([_sample_float(sample, "filtered_gyro_x") for sample in samples])
+        filtered_y_rms, filtered_y_peak = _axis_stats([_sample_float(sample, "filtered_gyro_y") for sample in samples])
+        filtered_z_rms, filtered_z_peak = _axis_stats([_sample_float(sample, "filtered_gyro_z") for sample in samples])
+        yaw_raw_rms, yaw_raw_peak = _axis_stats([_sample_float(sample, "rate_meas_yaw_raw") for sample in samples])
+        yaw_filtered_rms, yaw_filtered_peak = _axis_stats(
+            [_sample_float(sample, "rate_meas_yaw_filtered") for sample in samples]
+        )
         gyro_rms = _rms(gyro_mag)
         acc_std = _std(acc_mag)
         response_score = gyro_rms + acc_std * 100.0
@@ -293,9 +631,31 @@ def summarize_motor_balance_trials(trials: list[MotorBalanceTrial]) -> list[dict
                 "battery_mean_v": _mean([float(sample.battery_voltage) for sample in samples]),
                 "gyro_rms_dps": gyro_rms,
                 "gyro_peak_dps": max(gyro_mag, default=0.0),
-                "gyro_x_mean_dps": _mean([float(sample.gyro_x) for sample in samples]),
-                "gyro_y_mean_dps": _mean([float(sample.gyro_y) for sample in samples]),
-                "gyro_z_mean_dps": _mean([float(sample.gyro_z) for sample in samples]),
+                "gyro_x_mean_dps": _mean([_sample_float(sample, "gyro_x") for sample in samples]),
+                "gyro_y_mean_dps": _mean([_sample_float(sample, "gyro_y") for sample in samples]),
+                "gyro_z_mean_dps": _mean([_sample_float(sample, "gyro_z") for sample in samples]),
+                "gyro_raw_x_rms": raw_x_rms,
+                "gyro_raw_x_peak": raw_x_peak,
+                "gyro_raw_y_rms": raw_y_rms,
+                "gyro_raw_y_peak": raw_y_peak,
+                "gyro_raw_z_rms": raw_z_rms,
+                "gyro_raw_z_peak": raw_z_peak,
+                "gyro_filtered_x_rms": filtered_x_rms,
+                "gyro_filtered_x_peak": filtered_x_peak,
+                "gyro_filtered_y_rms": filtered_y_rms,
+                "gyro_filtered_y_peak": filtered_y_peak,
+                "gyro_filtered_z_rms": filtered_z_rms,
+                "gyro_filtered_z_peak": filtered_z_peak,
+                "rate_meas_yaw_raw_rms": yaw_raw_rms,
+                "rate_meas_yaw_raw_peak": yaw_raw_peak,
+                "rate_meas_yaw_filtered_rms": yaw_filtered_rms,
+                "rate_meas_yaw_filtered_peak": yaw_filtered_peak,
+                "acc_norm_min": min(acc_mag, default=0.0),
+                "acc_norm_max": max(acc_mag, default=0.0),
+                "acc_norm_mean": _mean(acc_mag),
+                "kalman_valid_min": min((_sample_int(sample, "kalman_valid", 1) for sample in samples), default=1),
+                "ground_trip_reason_max": max((_sample_int(sample, "ground_trip_reason") for sample in samples), default=0),
+                "warning": _warning_for_samples(list(samples)),
                 "acc_rms_g": _rms(acc_dynamic),
                 "acc_std_g": acc_std,
                 "response_score": response_score,
@@ -468,7 +828,11 @@ def format_motor_balance_summary(result: MotorBalanceResult) -> list[str]:
             "trim_target_duty={trim_target_duty:.4f} scale={trim_scale:.4f} "
             "offset={trim_offset:.4f} samples={sample_count} "
             "battery_min={battery_min_v:.3f} gyro_rms={gyro_rms_dps:.2f} "
-            "gyro_peak={gyro_peak_dps:.2f} acc_std={acc_std_g:.4f} "
+            "gyro_peak={gyro_peak_dps:.2f} "
+            "yaw_raw_peak={rate_meas_yaw_raw_peak:.2f} "
+            "yaw_filtered_peak={rate_meas_yaw_filtered_peak:.2f} "
+            "acc_norm={acc_norm_min:.3f}..{acc_norm_max:.3f} acc_std={acc_std_g:.4f} "
+            "warning={warning} "
             "score={response_score:.2f} rel={relative_to_duty_mean:.2f} class={classification}".format(
                 **row
             )

@@ -22,7 +22,7 @@ This file is the short project memory for Codex. Keep it current and short. Do n
 
 ## Current code facts
 
-- `CONSOLE_PROTOCOL_VERSION` in `firmware/main/console/console_protocol.h` is `0x09`.
+- `CONSOLE_PROTOCOL_VERSION` in `firmware/main/console/console_protocol.h` is `0x0A`.
 - `CONSOLE_FEATURE_UDP_MANUAL_CONTROL` is bit `1 << 6`.
 - Current UDP manual command IDs are `13..18` for enable/disable/setpoint/takeoff/land/stop.
 - Current firmware default rate PID in `params.c` is `rate_kp_roll=0.0007`, `rate_kp_pitch=0.0007`, `rate_kp_yaw=0.0005`, and all rate I/D terms are `0`.
@@ -52,6 +52,7 @@ This file is the short project memory for Codex. Keep it current and short. Do n
 - UDP manual experimental bench/manual control.
 - All-motor test.
 - Params, telemetry, capability, and device-info style host tooling.
+- Host-side `analyze-vibration-log` CSV summary for static, all-motor, and single-motor vibration diagnostics.
 
 ## Not implemented / not claimed ready
 

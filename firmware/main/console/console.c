@@ -27,6 +27,7 @@
 #include "imu.h"
 #include "motor.h"
 #include "params.h"
+#include "preflight.h"
 #include "runtime_state.h"
 #include "safety.h"
 #include "udp_manual.h"
@@ -176,6 +177,12 @@ static void console_send_cmd_resp(uint8_t cmd_id, console_cmd_status_t status)
     console_send_frame(MSG_CMD_RESP, &resp, sizeof(resp));
 }
 
+static void console_preflight_report(const char *line, void *ctx)
+{
+    (void)ctx;
+    console_send_event_text(line);
+}
+
 static bool console_has_active_motor_test(void)
 {
     int logical_motor = -1;
@@ -313,6 +320,11 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
     case CMD_ARM:
         runtime_state_set_motor_test(-1, 0.0f);
         runtime_state_clear_all_motor_test();
+        if (runtime_state_get_control_mode() == CONTROL_MODE_STABILIZE_MIN &&
+            !preflight_check_stabilize_min(PREFLIGHT_LINK_USB, console_preflight_report, NULL)) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_REJECTED);
+            break;
+        }
         console_send_cmd_resp(req.cmd_id, safety_request_arm(true) ? CMD_STATUS_OK : CMD_STATUS_REJECTED);
         break;
     case CMD_DISARM:
@@ -708,9 +720,16 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         console_reset_ground_state(false);
         ground_tune_set_submode(GROUND_TUNE_SUBMODE_RATE_ONLY);
         controller_reset();
-        runtime_state_set_all_motor_test(req.arg_f32, duration_ms, (uint64_t)esp_timer_get_time());
+        runtime_state_set_all_motor_test(req.arg_f32, duration_ms, 0u);
         runtime_state_set_control_mode(CONTROL_MODE_ALL_MOTOR_TEST);
-        console_send_event_text("all-motor test started");
+        char event[96] = {0};
+        snprintf(
+            event,
+            sizeof(event),
+            "all-motor test started duty=%.3f duration_ms=%lu",
+            (double)req.arg_f32,
+            (unsigned long)duration_ms);
+        console_send_event_text(event);
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         break;
     }
@@ -723,6 +742,29 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         motor_stop_all();
         console_send_event_text("all-motor test stopped normally");
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
+    case CMD_PARAM_FACTORY_RESET:
+        if (runtime_state_get_arm_state() != ARM_STATE_DISARMED) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_DISARM_REQUIRED);
+            break;
+        }
+        console_stop_active_control(true);
+        motor_stop_all();
+        if (params_factory_reset_defaults() != ESP_OK) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_STORAGE_ERROR);
+            break;
+        }
+        motor_reconfigure_from_params();
+        imu_reconfigure_from_params();
+        console_send_event_text("factory defaults restored and NVS parameter blob erased");
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        break;
+    case CMD_PREFLIGHT_CHECK:
+        console_send_cmd_resp(
+            req.cmd_id,
+            preflight_check_stabilize_min(PREFLIGHT_LINK_USB, console_preflight_report, NULL)
+                ? CMD_STATUS_OK
+                : CMD_STATUS_REJECTED);
         break;
     case CMD_UDP_MANUAL_ENABLE:
         console_send_cmd_resp(req.cmd_id, udp_manual_enable());
@@ -811,7 +853,8 @@ static void console_handle_param_set(const uint8_t *payload, size_t len)
         return;
     }
 
-    if (strcmp(name, "motor_pwm_freq_hz") == 0) {
+    if (strcmp(name, "motor_pwm_freq_hz") == 0 ||
+        strcmp(name, "motor_pwm_resolution_bits") == 0) {
         motor_reconfigure_from_params();
     }
     if (strcmp(name, "imu_mode") == 0 ||
@@ -870,6 +913,7 @@ static void console_handle_message(uint8_t msg_type, const uint8_t *payload, siz
     case MSG_PARAM_RESET:
         params_reset_to_defaults();
         motor_reconfigure_from_params();
+        imu_reconfigure_from_params();
         console_send_frame(MSG_PARAM_RESET, NULL, 0);
         break;
     case MSG_STREAM_CTRL:
@@ -1020,14 +1064,16 @@ void console_send_telemetry(const imu_sample_t *imu_sample,
         estimator_state.raw_quat_body_to_world = imu_sample->quat_wxyz;
         estimator_state.attitude_valid = imu_sample->has_attitude && imu_sample->has_quaternion;
     }
+    const bool stabilize_active = control_mode == CONTROL_MODE_STABILIZE_MIN;
     const bool ground_active =
         control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE ||
-        control_mode == CONTROL_MODE_UDP_MANUAL;
-    const bool reference_valid = ground_active ? ground_state.ref_valid : hang_state.ref_valid;
+        stabilize_active;
+    const bool reference_valid =
+        stabilize_active ? estimator_state.attitude_valid : (ground_active ? ground_state.ref_valid : hang_state.ref_valid);
     axis3f_t rate_measured_for_error = estimator_state.filtered_rate_rpy_dps;
     if (control_mode == CONTROL_MODE_RATE_TEST ||
         control_mode == CONTROL_MODE_ATTITUDE_HANG_TEST ||
-        (ground_active && !params_get()->ground_tune_use_filtered_rate)) {
+        (control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE && !params_get()->ground_tune_use_filtered_rate)) {
         rate_measured_for_error = estimator_state.raw_rate_rpy_dps;
     }
     const axis3f_t rate_error_observed = {

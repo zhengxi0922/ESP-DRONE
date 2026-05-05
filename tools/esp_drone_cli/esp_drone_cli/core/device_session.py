@@ -610,10 +610,15 @@ class DeviceSession:
         info.require_attitude_hang_bench()
 
     def require_udp_manual_control(self) -> None:
-        """Fail before sending experimental UDP manual commands to unsupported firmware."""
+        """Fail before sending STABILIZE_MIN manual-control commands to unsupported firmware."""
 
         info = self._device_info or self.hello()
         info.require_udp_manual_control()
+
+    def require_stabilize_min(self) -> None:
+        """Fail before sending minimal free-flight stabilize commands to unsupported firmware."""
+
+        self.require_udp_manual_control()
 
     def require_ground_tune(self) -> None:
         """Fail before sending flat-ground tune commands to unsupported firmware."""
@@ -791,31 +796,31 @@ class DeviceSession:
         return self.command(CmdId.LIFTOFF_VERIFY_STOP)
 
     def udp_manual_enable(self) -> int:
-        """Enter experimental UDP manual mode."""
+        """Enter STABILIZE_MIN using the UDP manual setpoint protocol as input."""
 
         self.require_udp_manual_control()
         return self.command(CmdId.UDP_MANUAL_ENABLE)
 
     def udp_manual_disable(self) -> int:
-        """Disable experimental UDP manual mode and request disarm."""
+        """Disable STABILIZE_MIN manual input and request disarm."""
 
         self.require_udp_manual_control()
         return self.command(CmdId.UDP_MANUAL_DISABLE)
 
     def udp_manual_stop(self) -> int:
-        """Send the explicit experimental UDP manual stop command."""
+        """Send the explicit STABILIZE_MIN manual stop command."""
 
         self.require_udp_manual_control()
         return self.command(CmdId.UDP_MANUAL_STOP)
 
     def udp_takeoff(self) -> int:
-        """Request an experimental UDP takeoff base-duty ramp with attitude roll/pitch and rate-PID yaw."""
+        """Request STABILIZE_MIN takeoff through preflight, arm, and throttle ramp."""
 
         self.require_udp_manual_control()
         return self.command(CmdId.UDP_TAKEOFF)
 
     def udp_land(self) -> int:
-        """Request an experimental UDP landing base-duty ramp."""
+        """Request STABILIZE_MIN throttle ramp-down landing."""
 
         self.require_udp_manual_control()
         return self.command(CmdId.UDP_LAND)
@@ -828,12 +833,11 @@ class DeviceSession:
         yaw: float,
         timeout: float = 1.0,
     ) -> int:
-        """Send one experimental UDP manual setpoint frame.
+        """Send one STABILIZE_MIN manual setpoint frame.
 
         Throttle is a normalized base-duty target. Pitch/roll fields remain in
-        the protocol, but firmware holds roll/pitch through the attitude outer
-        loop and uses yaw as the manual rate request. Firmware remains
-        authoritative for clamping.
+        the protocol and map to small roll/pitch angle targets; yaw maps to a
+        yaw-rate target. Firmware remains authoritative for clamping.
         """
 
         self.require_udp_manual_control()
@@ -1024,6 +1028,17 @@ class DeviceSession:
         with self._command_lock:
             self._send_message(MsgType.PARAM_RESET)
             self._recv_until(MsgType.PARAM_RESET, timeout=timeout)
+
+    def factory_reset_params(self, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> int:
+        """Restore firmware defaults and erase the persisted NVS parameter blob."""
+
+        return self.command(CmdId.PARAM_FACTORY_RESET, timeout=timeout)
+
+    def preflight_check(self, timeout: float = DEFAULT_RESPONSE_TIMEOUT_S) -> int:
+        """Run the STABILIZE_MIN preflight gate without arming."""
+
+        self.require_stabilize_min()
+        return self.command(CmdId.PREFLIGHT_CHECK, timeout=timeout)
 
     def export_params(self, output_path: Path) -> ParamSnapshot:
         """导出当前参数快照到 JSON 文件。

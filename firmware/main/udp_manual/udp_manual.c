@@ -9,11 +9,9 @@
 #include "esp_timer.h"
 
 #include "console.h"
-#include "estimator.h"
-#include "ground_tune.h"
-#include "imu.h"
 #include "motor.h"
 #include "params.h"
+#include "preflight.h"
 #include "runtime_state.h"
 #include "safety.h"
 
@@ -58,28 +56,10 @@ static bool udp_manual_all_finite(float a, float b, float c, float d)
     return isfinite(a) && isfinite(b) && isfinite(c) && isfinite(d);
 }
 
-static console_cmd_status_t udp_manual_ensure_ground_reference(void)
+static void udp_manual_preflight_report(const char *line, void *ctx)
 {
-    if (runtime_state_get_ground_tune_state().ref_valid) {
-        return CMD_STATUS_OK;
-    }
-
-    imu_sample_t sample = {0};
-    estimator_state_t estimator_state = {0};
-    if (!imu_get_latest(&sample, NULL) ||
-        sample.health != IMU_HEALTH_OK ||
-        !sample.has_gyro_acc ||
-        !sample.has_quaternion) {
-        return CMD_STATUS_IMU_NOT_READY;
-    }
-    if (!estimator_get_latest(&estimator_state) || estimator_state.timestamp_us != sample.timestamp_us) {
-        estimator_update_from_imu(&sample, &estimator_state);
-    }
-    if (!ground_tune_capture_reference(&sample, &estimator_state)) {
-        return CMD_STATUS_IMU_NOT_READY;
-    }
-
-    return CMD_STATUS_OK;
+    (void)ctx;
+    console_send_event_text(line);
 }
 
 static void udp_manual_reset_locked(void)
@@ -110,7 +90,7 @@ console_cmd_status_t udp_manual_enable(void)
     if (arm_state == ARM_STATE_FAILSAFE || arm_state == ARM_STATE_FAULT_LOCK) {
         return CMD_STATUS_REJECTED;
     }
-    if (mode == CONTROL_MODE_UDP_MANUAL) {
+    if (mode == CONTROL_MODE_STABILIZE_MIN) {
         return CMD_STATUS_OK;
     }
     if (mode != CONTROL_MODE_IDLE) {
@@ -124,9 +104,8 @@ console_cmd_status_t udp_manual_enable(void)
     runtime_state_set_axis_test_request((axis3f_t){0});
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
 
-    const console_cmd_status_t ref_status = udp_manual_ensure_ground_reference();
-    if (ref_status != CMD_STATUS_OK) {
-        return ref_status;
+    if (!preflight_check_stabilize_min(PREFLIGHT_LINK_UDP, udp_manual_preflight_report, NULL)) {
+        return CMD_STATUS_REJECTED;
     }
 
     taskENTER_CRITICAL(&s_udp_manual_lock);
@@ -136,9 +115,8 @@ console_cmd_status_t udp_manual_enable(void)
     s_udp_manual_state.last_frame_us = (uint64_t)esp_timer_get_time();
     taskEXIT_CRITICAL(&s_udp_manual_lock);
 
-    runtime_state_set_control_mode(CONTROL_MODE_UDP_MANUAL);
-    ground_tune_set_submode(GROUND_TUNE_SUBMODE_UDP_MANUAL);
-    console_send_event_text("udp manual enabled: ground-reference attitude outer loop with rate-PID yaw");
+    runtime_state_set_control_mode(CONTROL_MODE_STABILIZE_MIN);
+    console_send_event_text("stabilize-min enabled: manual throttle + angle roll/pitch + yaw rate");
     return CMD_STATUS_OK;
 }
 
@@ -151,7 +129,7 @@ console_cmd_status_t udp_manual_disable(void)
     runtime_state_set_control_mode(CONTROL_MODE_IDLE);
     safety_request_disarm();
     motor_stop_all();
-    console_send_event_text("udp manual disabled");
+    console_send_event_text("stabilize-min disabled");
     return CMD_STATUS_OK;
 }
 
@@ -164,7 +142,7 @@ console_cmd_status_t udp_manual_stop(void)
     runtime_state_set_control_mode(CONTROL_MODE_IDLE);
     safety_request_disarm();
     motor_stop_all();
-    console_send_event_text("udp manual stop: motors commanded safe");
+    console_send_event_text("stabilize-min stop: motors commanded safe");
     return CMD_STATUS_OK;
 }
 
@@ -176,7 +154,7 @@ console_cmd_status_t udp_manual_takeoff(void)
     if (arm_state == ARM_STATE_FAILSAFE || arm_state == ARM_STATE_FAULT_LOCK) {
         return CMD_STATUS_REJECTED;
     }
-    if (mode != CONTROL_MODE_IDLE && mode != CONTROL_MODE_UDP_MANUAL) {
+    if (mode != CONTROL_MODE_IDLE && mode != CONTROL_MODE_STABILIZE_MIN) {
         return CMD_STATUS_CONFLICT;
     }
     if (mode == CONTROL_MODE_IDLE && arm_state != ARM_STATE_DISARMED) {
@@ -187,9 +165,8 @@ console_cmd_status_t udp_manual_takeoff(void)
     runtime_state_set_axis_test_request((axis3f_t){0});
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
 
-    const console_cmd_status_t ref_status = udp_manual_ensure_ground_reference();
-    if (ref_status != CMD_STATUS_OK) {
-        return ref_status;
+    if (!preflight_check_stabilize_min(PREFLIGHT_LINK_UDP, udp_manual_preflight_report, NULL)) {
+        return CMD_STATUS_REJECTED;
     }
 
     const uint64_t now_us = (uint64_t)esp_timer_get_time();
@@ -206,16 +183,15 @@ console_cmd_status_t udp_manual_takeoff(void)
     s_udp_manual_state.disarm_event_sent = false;
     taskEXIT_CRITICAL(&s_udp_manual_lock);
 
-    runtime_state_set_control_mode(CONTROL_MODE_UDP_MANUAL);
-    ground_tune_set_submode(GROUND_TUNE_SUBMODE_UDP_MANUAL);
+    runtime_state_set_control_mode(CONTROL_MODE_STABILIZE_MIN);
     safety_request_arm(true);
-    console_send_event_text("udp takeoff requested: unified ground-reference outer loop and rate PID");
+    console_send_event_text("stabilize-min takeoff requested");
     return CMD_STATUS_OK;
 }
 
 console_cmd_status_t udp_manual_land(void)
 {
-    if (runtime_state_get_control_mode() != CONTROL_MODE_UDP_MANUAL) {
+    if (runtime_state_get_control_mode() != CONTROL_MODE_STABILIZE_MIN) {
         return CMD_STATUS_CONFLICT;
     }
 
@@ -232,7 +208,7 @@ console_cmd_status_t udp_manual_land(void)
     s_udp_manual_state.disarm_event_sent = false;
     taskEXIT_CRITICAL(&s_udp_manual_lock);
 
-    console_send_event_text("udp land requested: attitude roll/pitch with base-duty ramp down");
+    console_send_event_text("stabilize-min land requested: throttle ramp down");
     return CMD_STATUS_OK;
 }
 
@@ -241,7 +217,7 @@ console_cmd_status_t udp_manual_setpoint(float throttle, float pitch, float roll
     if (!udp_manual_all_finite(throttle, pitch, roll, yaw)) {
         return CMD_STATUS_INVALID_ARGUMENT;
     }
-    if (runtime_state_get_control_mode() != CONTROL_MODE_UDP_MANUAL) {
+    if (runtime_state_get_control_mode() != CONTROL_MODE_STABILIZE_MIN) {
         return CMD_STATUS_CONFLICT;
     }
 
@@ -272,7 +248,7 @@ console_cmd_status_t udp_manual_setpoint(float throttle, float pitch, float roll
 
 bool udp_manual_get_control(uint64_t now_us, uint32_t loop_dt_us, udp_manual_control_t *out_control)
 {
-    if (out_control == NULL || runtime_state_get_control_mode() != CONTROL_MODE_UDP_MANUAL) {
+    if (out_control == NULL || runtime_state_get_control_mode() != CONTROL_MODE_STABILIZE_MIN) {
         return false;
     }
 
@@ -312,7 +288,7 @@ bool udp_manual_get_control(uint64_t now_us, uint32_t loop_dt_us, udp_manual_con
         target_throttle = land_min_pwm;
         if (!s_udp_manual_state.timeout_event_sent) {
             s_udp_manual_state.timeout_event_sent = true;
-            event_text = "udp manual watchdog timeout: zero manual yaw and reduce base duty";
+            event_text = "stabilize-min watchdog timeout: zero axes and reduce throttle";
         }
         if (age_us > long_timeout_us) {
             target_throttle = 0.0f;
@@ -342,7 +318,7 @@ bool udp_manual_get_control(uint64_t now_us, uint32_t loop_dt_us, udp_manual_con
 
     if (should_disarm && !s_udp_manual_state.disarm_event_sent) {
         s_udp_manual_state.disarm_event_sent = true;
-        event_text = timed_out ? "udp manual long timeout: auto disarm" : "udp manual landing complete: auto disarm";
+        event_text = timed_out ? "stabilize-min long timeout: auto disarm" : "stabilize-min landing complete: auto disarm";
     }
 
     *out_control = (udp_manual_control_t){

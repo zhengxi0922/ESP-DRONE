@@ -11,6 +11,7 @@
 #include "freertos/task.h"
 
 #include "esp_system.h"
+#include "esp_err.h"
 #include "esp_timer.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
@@ -23,6 +24,7 @@
 #include "imu.h"
 #include "motor.h"
 #include "params.h"
+#include "preflight.h"
 #include "runtime_state.h"
 #include "safety.h"
 #include "udp_manual.h"
@@ -120,6 +122,12 @@ static void udp_send_cmd_resp_to(int sock,
     udp_send_frame_to(sock, addr, addr_len, MSG_CMD_RESP, &resp, sizeof(resp));
 }
 
+static void udp_preflight_report(const char *line, void *ctx)
+{
+    (void)ctx;
+    console_send_event_text(line);
+}
+
 static void udp_send_param_value_to(int sock,
                                     const struct sockaddr_storage *addr,
                                     socklen_t addr_len,
@@ -183,6 +191,10 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
     case CMD_ARM:
         runtime_state_set_motor_test(-1, 0.0f);
         runtime_state_clear_all_motor_test();
+        if (runtime_state_get_control_mode() == CONTROL_MODE_STABILIZE_MIN &&
+            !preflight_check_stabilize_min(PREFLIGHT_LINK_UDP, udp_preflight_report, NULL)) {
+            return CMD_STATUS_REJECTED;
+        }
         return safety_request_arm(true) ? CMD_STATUS_OK : CMD_STATUS_REJECTED;
     case CMD_DISARM:
         safety_request_disarm();
@@ -412,9 +424,16 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
         ground_tune_reset_status();
         ground_tune_set_submode(GROUND_TUNE_SUBMODE_RATE_ONLY);
         controller_reset();
-        runtime_state_set_all_motor_test(req->arg_f32, duration_ms, (uint64_t)esp_timer_get_time());
+        runtime_state_set_all_motor_test(req->arg_f32, duration_ms, 0u);
         runtime_state_set_control_mode(CONTROL_MODE_ALL_MOTOR_TEST);
-        console_send_event_text("all-motor test started");
+        char event[96] = {0};
+        snprintf(
+            event,
+            sizeof(event),
+            "all-motor test started duty=%.3f duration_ms=%lu",
+            (double)req->arg_f32,
+            (unsigned long)duration_ms);
+        console_send_event_text(event);
         return CMD_STATUS_OK;
     }
     case CMD_ALL_MOTOR_TEST_STOP:
@@ -426,6 +445,28 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
         motor_stop_all();
         console_send_event_text("all-motor test stopped normally");
         return CMD_STATUS_OK;
+    case CMD_PARAM_FACTORY_RESET:
+        if (runtime_state_get_arm_state() != ARM_STATE_DISARMED) {
+            return CMD_STATUS_DISARM_REQUIRED;
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_clear_all_motor_test();
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+        udp_manual_reset();
+        motor_stop_all();
+        if (params_factory_reset_defaults() != ESP_OK) {
+            return CMD_STATUS_STORAGE_ERROR;
+        }
+        motor_reconfigure_from_params();
+        imu_reconfigure_from_params();
+        console_send_event_text("factory defaults restored and NVS parameter blob erased");
+        return CMD_STATUS_OK;
+    case CMD_PREFLIGHT_CHECK:
+        return preflight_check_stabilize_min(PREFLIGHT_LINK_UDP, udp_preflight_report, NULL)
+                   ? CMD_STATUS_OK
+                   : CMD_STATUS_REJECTED;
     default:
         return CMD_STATUS_UNSUPPORTED;
     }
@@ -534,7 +575,8 @@ static void udp_handle_param_set(int sock,
     }
 
     if (params_try_set(name, value, type)) {
-        if (strcmp(name, "motor_pwm_freq_hz") == 0) {
+        if (strcmp(name, "motor_pwm_freq_hz") == 0 ||
+            strcmp(name, "motor_pwm_resolution_bits") == 0) {
             motor_reconfigure_from_params();
         }
         if (strcmp(name, "imu_mode") == 0 ||
@@ -758,14 +800,16 @@ void udp_protocol_send_telemetry(const imu_sample_t *imu_sample,
         estimator_state.raw_quat_body_to_world = imu_sample->quat_wxyz;
         estimator_state.attitude_valid = imu_sample->has_attitude && imu_sample->has_quaternion;
     }
+    const bool stabilize_active = control_mode == CONTROL_MODE_STABILIZE_MIN;
     const bool ground_active =
         control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE ||
-        control_mode == CONTROL_MODE_UDP_MANUAL;
-    const bool reference_valid = ground_active ? ground_state.ref_valid : hang_state.ref_valid;
+        stabilize_active;
+    const bool reference_valid =
+        stabilize_active ? estimator_state.attitude_valid : (ground_active ? ground_state.ref_valid : hang_state.ref_valid);
     axis3f_t rate_measured_for_error = estimator_state.filtered_rate_rpy_dps;
     if (control_mode == CONTROL_MODE_RATE_TEST ||
         control_mode == CONTROL_MODE_ATTITUDE_HANG_TEST ||
-        (ground_active && !params_get()->ground_tune_use_filtered_rate)) {
+        (control_mode == CONTROL_MODE_ATTITUDE_GROUND_TUNE && !params_get()->ground_tune_use_filtered_rate)) {
         rate_measured_for_error = estimator_state.raw_rate_rpy_dps;
     }
     const axis3f_t rate_error_observed = {

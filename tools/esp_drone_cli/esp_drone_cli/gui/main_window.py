@@ -775,7 +775,7 @@ EXTRA_TRANSLATIONS = {
         "baro.valid": "有效",
         "baro.invalid_data": "无效",
         "control.height_hold_reserved": "定高保留",
-        "control.udp_manual": "UDP 手动",
+        "control.udp_manual": "STABILIZE_MIN",
         "tab.hang_attitude": "姿态台架",
         "tab.udp_control": "UDP 控制",
         "hang.note": "仅限台架约束测试。带桨自由飞行时不要使用。",
@@ -789,14 +789,14 @@ EXTRA_TRANSLATIONS = {
         "hang.rate_limit_pitch": "俯仰速率限幅",
         "hang.deadband_deg": "死区角度",
         "hang.trip_deg": "保护角度",
-        "udp.warn": "实验性 UDP 手动控制：油门是基础占空比目标，横滚/俯仰/偏航经 rate PID 闭环后进入混控。请限制最大 PWM 并处理好桨叶安全；尚不适合自由飞行。",
+        "udp.warn": "STABILIZE_MIN 手动输入：油门直接进入混控，横滚/俯仰映射为小角度目标，偏航映射为偏航角速度；固件在进入/解锁前运行 preflight。",
         "udp.max_pwm": "最大 PWM (%)",
         "udp.throttle": "基础油门 (%)",
         "udp.axis_step": "速率指令步进 (%)",
         "udp.pitch": "俯仰速率 (%)",
         "udp.roll": "横滚速率 (%)",
         "udp.yaw": "偏航速率 (%)",
-        "udp.enable": "启用 UDP 手动",
+        "udp.enable": "启用 STABILIZE_MIN",
         "udp.disable": "禁用",
         "udp.stop": "停止 / 清零",
         "udp.takeoff": "起飞",
@@ -812,10 +812,10 @@ EXTRA_TRANSLATIONS = {
         "udp.status_mode": "模式",
         "udp.status_armed": "解锁状态",
         "udp.status_battery": "电池",
-        "udp.enabled": "UDP 手动已启用",
-        "udp.disabled": "UDP 手动已禁用",
-        "udp.stopped": "UDP 手动停止命令已发送",
-        "udp.setpoint_sent": "UDP 设定已发送：基础油门={throttle:.3f} 俯仰={pitch:.3f} 横滚={roll:.3f} 偏航={yaw:.3f}",
+        "udp.enabled": "STABILIZE_MIN 已启用",
+        "udp.disabled": "STABILIZE_MIN 已禁用",
+        "udp.stopped": "STABILIZE_MIN 停止命令已发送",
+        "udp.setpoint_sent": "stabilize-min 设定已发送：油门={throttle:.3f} 俯仰={pitch:.3f} 横滚={roll:.3f} 偏航={yaw:.3f}",
         "udp.watchdog_age": "距上一帧设定 {age_ms:.0f} ms",
         "udp.transport_hint": "请先将电脑连接到 ESP-DRONE SoftAP。默认 AP IP 为 192.168.4.1，默认 UDP 端口为 2391。",
         "udp.ap_info": "默认 SoftAP SSID：ESP-DRONE | 密码：12345678",
@@ -881,14 +881,14 @@ EXTRA_TRANSLATIONS = {
         "hang.rate_limit_pitch": "Rate Limit Pitch",
         "hang.deadband_deg": "Deadband Deg",
         "hang.trip_deg": "Trip Deg",
-        "udp.warn": "Experimental UDP manual control. Throttle is the base duty target; roll/pitch use the flat-ground reference outer loop and yaw uses rate PID. Respect Max PWM and keep prop safety in mind. Not free-flight ready.",
+        "udp.warn": "STABILIZE_MIN manual input. Throttle is manual; roll/pitch map to small angle targets and yaw maps to yaw-rate before rate PID. Firmware runs preflight before entry/arming.",
         "udp.max_pwm": "Max PWM (%)",
         "udp.throttle": "Throttle (%)",
         "udp.axis_step": "Axis Step (%)",
         "udp.pitch": "Pitch (%)",
         "udp.roll": "Roll (%)",
         "udp.yaw": "Yaw (%)",
-        "udp.enable": "Enable UDP Manual",
+        "udp.enable": "Enable STABILIZE_MIN",
         "udp.disable": "Disable",
         "udp.stop": "Stop / Zero",
         "udp.takeoff": "Takeoff",
@@ -904,10 +904,10 @@ EXTRA_TRANSLATIONS = {
         "udp.status_mode": "Mode",
         "udp.status_armed": "Armed",
         "udp.status_battery": "Battery",
-        "udp.enabled": "udp manual enabled",
-        "udp.disabled": "udp manual disabled",
-        "udp.stopped": "udp manual stop sent",
-        "udp.setpoint_sent": "udp setpoint sent base={throttle:.3f} pitch={pitch:.3f} roll={roll:.3f} yaw={yaw:.3f}",
+        "udp.enabled": "STABILIZE_MIN enabled",
+        "udp.disabled": "STABILIZE_MIN disabled",
+        "udp.stopped": "STABILIZE_MIN stop sent",
+        "udp.setpoint_sent": "stabilize-min setpoint sent throttle={throttle:.3f} pitch={pitch:.3f} roll={roll:.3f} yaw={yaw:.3f}",
         "udp.watchdog_age": "{age_ms:.0f} ms since setpoint",
         "udp.transport_hint": "Connect your PC to the ESP-DRONE SoftAP first. Default AP IP is 192.168.4.1. Default UDP port is 2391.",
         "udp.ap_info": "Default SoftAP SSID: ESP-DRONE | Password: 12345678",
@@ -1018,6 +1018,8 @@ TYPE_NAMES = {
     4: "float",
 }
 
+PID_SOURCE_TEXT = {0: "firmware_default", 1: "NVS", 2: "RAM"}
+
 ARM_STATE_TEXT = {
     0: ("arm.disarmed", "neutral"),
     1: ("arm.armed", "ok"),
@@ -1043,6 +1045,8 @@ CONTROL_MODE_TEXT = {
     4: ("control.attitude_hang_test", "active"),
     5: ("control.udp_manual", "warn"),
     6: ("control.ground_tune", "active"),
+    7: ("ALL_MOTOR_TEST", "active"),
+    8: ("STABILIZE_MIN", "ok"),
 }
 
 IMU_MODE_TEXT = {
@@ -1070,6 +1074,11 @@ def _format_float(value: float) -> str:
 def _format_value(name: str, value: object) -> str:
     if value is None:
         return "-"
+    if name == "rate_pid_source":
+        try:
+            return f"{int(value)}:{PID_SOURCE_TEXT.get(int(value), 'unknown')}"
+        except (TypeError, ValueError):
+            return f"{value}:unknown"
     if isinstance(value, float):
         if "battery_voltage" in name:
             return f"{value:.3f}"
@@ -1448,11 +1457,11 @@ class MainWindow(QMainWindow):
         "rate_kd_yaw": "Yaw rate-loop derivative gain. Usually smaller than roll/pitch for bench bring-up.",
         "rate_integral_limit": "Per-axis rate-loop integral clamp in deg/s·s equivalent state units.",
         "rate_output_limit": "Per-axis PID output clamp sent into the mixer around bring-up_test_base_duty.",
-        "udp_manual_max_pwm": "Max UDP manual base duty clamp, normalized 0..1.",
-        "udp_takeoff_pwm": "UDP takeoff base-duty ramp target, normalized 0..1.",
-        "udp_land_min_pwm": "UDP landing and watchdog base-duty floor before auto-disarm.",
-        "udp_manual_timeout_ms": "UDP manual setpoint watchdog timeout in milliseconds.",
-        "udp_manual_axis_limit": "UDP manual normalized command clamp. Yaw maps to rate setpoints; roll/pitch are held by attitude control.",
+        "udp_manual_max_pwm": "STABILIZE_MIN manual throttle clamp, normalized 0..1.",
+        "udp_takeoff_pwm": "STABILIZE_MIN takeoff base-duty ramp target, normalized 0..1.",
+        "udp_land_min_pwm": "STABILIZE_MIN landing and watchdog base-duty floor before auto-disarm.",
+        "udp_manual_timeout_ms": "STABILIZE_MIN setpoint watchdog timeout in milliseconds.",
+        "udp_manual_axis_limit": "STABILIZE_MIN normalized command clamp. Roll/pitch map to angle targets; yaw maps to yaw-rate.",
     }
 
     PARAM_HELP_ZH = {
@@ -1485,11 +1494,11 @@ class MainWindow(QMainWindow):
         "rate_kd_yaw": "偏航速率环微分增益；台架调试时通常小于横滚/俯仰。",
         "rate_integral_limit": "每轴速率环积分状态限幅，等效单位为 deg/s*s。",
         "rate_output_limit": "每轴 PID 输出限幅，输出进入 mixer 并叠加在基础占空比附近。",
-        "udp_manual_max_pwm": "UDP 手动模式基础占空比最大限幅，归一化 0..1。",
-        "udp_takeoff_pwm": "UDP 起飞基础占空比斜坡目标，归一化 0..1。",
-        "udp_land_min_pwm": "UDP 降落和看门狗降油门时的安全基础占空比下限。",
-        "udp_manual_timeout_ms": "UDP 手动 setpoint 看门狗超时时间，单位毫秒。",
-        "udp_manual_axis_limit": "UDP 手动横滚/俯仰/偏航归一化指令限幅，之后会映射为速率设定。",
+        "udp_manual_max_pwm": "STABILIZE_MIN 手动油门最大限幅，归一化 0..1。",
+        "udp_takeoff_pwm": "STABILIZE_MIN 起飞基础占空比斜坡目标，归一化 0..1。",
+        "udp_land_min_pwm": "STABILIZE_MIN 降落和看门狗降油门时的安全基础占空比下限。",
+        "udp_manual_timeout_ms": "STABILIZE_MIN setpoint 看门狗超时时间，单位毫秒。",
+        "udp_manual_axis_limit": "STABILIZE_MIN 横滚/俯仰/偏航归一化指令限幅；横滚/俯仰映射为角度目标，偏航映射为偏航角速度。",
     }
 
     CHART_GROUPS = {

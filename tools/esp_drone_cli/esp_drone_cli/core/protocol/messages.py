@@ -55,6 +55,8 @@ class CmdId:
     ATTITUDE_GROUND_SET_TARGET = 26
     ALL_MOTOR_TEST_START = 27
     ALL_MOTOR_TEST_STOP = 28
+    PARAM_FACTORY_RESET = 29
+    PREFLIGHT_CHECK = 30
 
 
 class CmdStatus:
@@ -99,6 +101,8 @@ CMD_NAMES = {
     CmdId.ATTITUDE_GROUND_SET_TARGET: "attitude-ground target",
     CmdId.ALL_MOTOR_TEST_START: "all-motor-test start",
     CmdId.ALL_MOTOR_TEST_STOP: "all-motor-test stop",
+    CmdId.PARAM_FACTORY_RESET: "factory-reset",
+    CmdId.PREFLIGHT_CHECK: "preflight-check",
 }
 
 CMD_STATUS_TEXT = {

@@ -34,7 +34,6 @@
 #define TELEMETRY_TASK_PRIO 17
 
 #define TASK_STACK_WORDS 4096
-#define UDP_MANUAL_FULL_YAW_RATE_DPS 45.0f
 #define GROUND_SATURATION_TRIP_TICKS 150u
 #define GROUND_RATE_JITTER_TRIP_TICKS 80u
 #define LOW_RISK_LIFTOFF_KALMAN_INVALID_TRIP_SAMPLES 3u
@@ -71,7 +70,7 @@ static void flight_control_stop_attitude_hang_test(float command_outputs[MOTOR_C
     }
 }
 
-static void flight_control_stop_udp_manual(float command_outputs[MOTOR_COUNT], const char *reason, bool request_disarm)
+static void flight_control_stop_stabilize_min(float command_outputs[MOTOR_COUNT], const char *reason, bool request_disarm)
 {
     if (request_disarm) {
         safety_request_disarm();
@@ -147,8 +146,134 @@ static bool flight_control_attitude_sample_ready(const imu_sample_t *sample)
 {
     return sample != NULL &&
            sample->health == IMU_HEALTH_OK &&
+           sample->timestamp_us != 0u &&
            sample->has_gyro_acc &&
            sample->has_quaternion;
+}
+
+static float flight_control_clampf(float value, float min_value, float max_value)
+{
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
+static bool flight_control_stabilize_sample_current_ready(const imu_sample_t *sample,
+                                                          const estimator_state_t *estimator_state,
+                                                          const params_store_t *params)
+{
+    return sample != NULL &&
+           estimator_state != NULL &&
+           params != NULL &&
+           sample->health == IMU_HEALTH_OK &&
+           sample->timestamp_us != 0u &&
+           sample->has_gyro_acc &&
+           sample->has_quaternion &&
+           sample->has_attitude &&
+           sample->update_age_us <= (params->imu_timeout_ms * 1000u) &&
+           estimator_state->timestamp_us == sample->timestamp_us &&
+           estimator_state->attitude_valid;
+}
+
+static bool flight_control_rate_pid_p_only(const params_store_t *params)
+{
+    const float eps = 0.0000001f;
+    return params != NULL &&
+           fabsf(params->rate_ki_roll) <= eps &&
+           fabsf(params->rate_kd_roll) <= eps &&
+           fabsf(params->rate_ki_pitch) <= eps &&
+           fabsf(params->rate_kd_pitch) <= eps &&
+           fabsf(params->rate_ki_yaw) <= eps &&
+           fabsf(params->rate_kd_yaw) <= eps;
+}
+
+static float flight_control_normalized_axis(float command, float axis_limit)
+{
+    if (axis_limit <= 0.0001f) {
+        return 0.0f;
+    }
+    return flight_control_clampf(command / axis_limit, -1.0f, 1.0f);
+}
+
+static float flight_control_stabilize_clamp_rate(float value, float limit, uint8_t flag, uint8_t *flags)
+{
+    const float clamped = flight_control_clampf(value, -limit, limit);
+    if (fabsf(clamped - value) > 0.001f && flags != NULL) {
+        *flags |= flag;
+    }
+    return clamped;
+}
+
+static axis3f_t flight_control_stabilize_min_rate_setpoint(const params_store_t *params,
+                                                           const udp_manual_control_t *manual,
+                                                           const estimator_state_t *estimator_state,
+                                                           uint8_t *out_outer_clamp_flags)
+{
+    const float axis_limit = params->udp_manual_axis_limit;
+    const float target_roll_deg =
+        flight_control_normalized_axis(manual->axis.roll, axis_limit) * params->stabilize_min_max_angle_deg;
+    const float target_pitch_deg =
+        flight_control_normalized_axis(manual->axis.pitch, axis_limit) * params->stabilize_min_max_angle_deg;
+    const float target_yaw_rate_dps =
+        flight_control_normalized_axis(manual->axis.yaw, axis_limit) * params->stabilize_min_max_yaw_rate_dps;
+    const float measured_roll_deg = estimator_state->attitude_rpy_deg.roll_deg;
+    const float measured_pitch_deg = estimator_state->attitude_rpy_deg.pitch_deg;
+    const float measured_yaw_deg = estimator_state->attitude_rpy_deg.yaw_deg;
+    const float error_roll_deg = target_roll_deg - measured_roll_deg;
+    const float error_pitch_deg = target_pitch_deg - measured_pitch_deg;
+    uint8_t outer_clamp_flags = 0u;
+
+    const axis3f_t rate_setpoint = {
+        .roll = flight_control_stabilize_clamp_rate(
+            params->stabilize_min_angle_kp_roll * error_roll_deg,
+            params->stabilize_min_max_rate_dps,
+            GROUND_TUNE_OUTER_CLAMP_ROLL,
+            &outer_clamp_flags),
+        .pitch = flight_control_stabilize_clamp_rate(
+            params->stabilize_min_angle_kp_pitch * error_pitch_deg,
+            params->stabilize_min_max_rate_dps,
+            GROUND_TUNE_OUTER_CLAMP_PITCH,
+            &outer_clamp_flags),
+        .yaw = flight_control_stabilize_clamp_rate(
+            target_yaw_rate_dps,
+            params->stabilize_min_max_yaw_rate_dps,
+            GROUND_TUNE_OUTER_CLAMP_YAW,
+            &outer_clamp_flags),
+    };
+
+    ground_tune_state_t state = runtime_state_get_ground_tune_state();
+    state.ref_valid = false;
+    state.ref_q_body_to_world = (quatf_t){0};
+    state.ref_kalman_roll_deg = 0.0f;
+    state.ref_kalman_pitch_deg = 0.0f;
+    state.target_roll_deg = target_roll_deg;
+    state.target_pitch_deg = target_pitch_deg;
+    state.target_yaw_deg = 0.0f;
+    state.measured_roll_deg = measured_roll_deg;
+    state.measured_pitch_deg = measured_pitch_deg;
+    state.measured_yaw_deg = measured_yaw_deg;
+    state.error_roll_deg = error_roll_deg;
+    state.error_pitch_deg = error_pitch_deg;
+    state.error_yaw_deg = 0.0f;
+    state.err_roll_deg = error_roll_deg;
+    state.err_pitch_deg = error_pitch_deg;
+    state.rate_sp_roll_dps = rate_setpoint.roll;
+    state.rate_sp_pitch_dps = rate_setpoint.pitch;
+    state.rate_sp_yaw_dps = rate_setpoint.yaw;
+    state.base_duty_active = manual->throttle;
+    state.outer_clamp_flags = outer_clamp_flags;
+    state.trip_reason = GROUND_TUNE_TRIP_NONE;
+    state.submode = GROUND_TUNE_SUBMODE_RATE_ONLY;
+    runtime_state_set_ground_tune_state(state);
+
+    if (out_outer_clamp_flags != NULL) {
+        *out_outer_clamp_flags = outer_clamp_flags;
+    }
+    return rate_setpoint;
 }
 
 static bool flight_control_attitude_reference_ready(void)
@@ -294,21 +419,6 @@ static void flight_control_apply_led_state(const safety_status_t *safety_status,
     }
 }
 
-static axis3f_t flight_control_udp_manual_yaw_rate_setpoint(axis3f_t axis_command)
-{
-    const float axis_limit = params_get()->udp_manual_axis_limit;
-    if (axis_limit <= 0.0001f) {
-        return (axis3f_t){0};
-    }
-
-    const float scale = UDP_MANUAL_FULL_YAW_RATE_DPS / axis_limit;
-    return (axis3f_t){
-        .roll = 0.0f,
-        .pitch = 0.0f,
-        .yaw = axis_command.yaw * scale,
-    };
-}
-
 static void imu_uart_rx_task(void *arg)
 {
     (void)arg;
@@ -438,13 +548,20 @@ static void flight_control_task(void *arg)
             continue;
         }
 
-        if (control_mode == CONTROL_MODE_UDP_MANUAL &&
+        if (control_mode == CONTROL_MODE_STABILIZE_MIN &&
             (safety_status.arm_state == ARM_STATE_FAILSAFE ||
              safety_status.arm_state == ARM_STATE_FAULT_LOCK ||
              safety_status.failsafe_reason != FAILSAFE_REASON_NONE)) {
-            flight_control_stop_udp_manual(command_outputs,
-                                           "udp manual stopped: arm state or failsafe",
-                                           false);
+            flight_control_stop_stabilize_min(command_outputs,
+                                              "stabilize-min stopped: arm state or failsafe",
+                                              false);
+            continue;
+        }
+
+        if (control_mode == CONTROL_MODE_UDP_MANUAL) {
+            flight_control_stop_stabilize_min(command_outputs,
+                                              "legacy udp manual flight path disabled: use stabilize-min",
+                                              true);
             continue;
         }
 
@@ -469,21 +586,29 @@ static void flight_control_task(void *arg)
                 safety_status.arm_state == ARM_STATE_FAILSAFE ||
                 safety_status.arm_state == ARM_STATE_FAULT_LOCK ||
                 safety_status.failsafe_reason == FAILSAFE_REASON_BATTERY_CRITICAL;
+            char reason[96] = {0};
+            snprintf(reason,
+                     sizeof(reason),
+                     "all-motor test stopped: arm_state=%d failsafe_reason=%d",
+                     (int)safety_status.arm_state,
+                     (int)safety_status.failsafe_reason);
             flight_control_stop_all_motor_test(command_outputs,
-                                               "all-motor test stopped: arm state or failsafe",
+                                               reason,
                                                request_disarm);
             continue;
         }
 
         if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_ALL_MOTOR_TEST) {
             const all_motor_test_state_t all_motor = runtime_state_get_all_motor_test();
-            if (all_motor.duty <= 0.0f || all_motor.duration_ms == 0u || all_motor.start_us == 0u) {
+            if (all_motor.duty <= 0.0f || all_motor.duration_ms == 0u) {
                 flight_control_stop_all_motor_test(command_outputs,
                                                    "all-motor test stopped: invalid request",
                                                    false);
                 continue;
             }
-            if ((now_us - all_motor.start_us) >= ((uint64_t)all_motor.duration_ms * 1000u)) {
+            if (all_motor.start_us == 0u) {
+                runtime_state_set_all_motor_test(all_motor.duty, all_motor.duration_ms, now_us);
+            } else if ((now_us - all_motor.start_us) >= ((uint64_t)all_motor.duration_ms * 1000u)) {
                 flight_control_stop_all_motor_test(command_outputs,
                                                    "all-motor test stopped: duration elapsed",
                                                    true);
@@ -772,83 +897,66 @@ static void flight_control_task(void *arg)
             continue;
         }
 
-        if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_UDP_MANUAL) {
+        if (safety_status.arm_state == ARM_STATE_ARMED && control_mode == CONTROL_MODE_STABILIZE_MIN) {
             const params_store_t *params = params_get();
-            if (!flight_control_attitude_sample_ready(&sample)) {
-                flight_control_stop_udp_manual(command_outputs,
-                                               "udp manual stopped: attitude imu not ready",
-                                               false);
+            if (!battery_initialized || !(battery_filtered_v > params->battery_critical_v)) {
+                flight_control_stop_stabilize_min(command_outputs,
+                                                  "stabilize-min stopped: battery invalid or critical",
+                                                  true);
                 continue;
             }
-            if (!runtime_state_get_ground_tune_state().ref_valid) {
-                flight_control_stop_udp_manual(command_outputs,
-                                               "udp manual stopped: ground reference missing",
-                                               false);
+            if (!flight_control_rate_pid_p_only(params)) {
+                flight_control_stop_stabilize_min(command_outputs,
+                                                  "stabilize-min stopped: rate PID I/D must be zero",
+                                                  false);
                 continue;
             }
-            if (params->ground_tune_use_kalman_attitude && !estimator_state.kalman_valid) {
-                flight_control_stop_udp_manual(command_outputs,
-                                               "udp manual stopped: kalman invalid",
-                                               false);
+            if (!flight_control_stabilize_sample_current_ready(&sample, &estimator_state, params)) {
+                flight_control_stop_stabilize_min(command_outputs,
+                                                  "stabilize-min stopped: strict imu/attitude gate failed",
+                                                  false);
+                continue;
+            }
+            if (!fresh_sample) {
+                motor_set_armed_outputs(command_outputs, false);
                 continue;
             }
 
             udp_manual_control_t manual = {0};
             if (!udp_manual_get_control(now_us, loop_dt_us, &manual) || manual.should_disarm) {
-                flight_control_stop_udp_manual(command_outputs, NULL, true);
+                flight_control_stop_stabilize_min(command_outputs, NULL, true);
                 continue;
             }
 
-            axis3f_t rate_setpoint = runtime_state_get_rate_setpoint_request();
-            const axis3f_t yaw_rate_setpoint = flight_control_udp_manual_yaw_rate_setpoint(manual.axis);
-            rate_setpoint.yaw = yaw_rate_setpoint.yaw;
-            runtime_state_set_axis_test_request((axis3f_t){
-                .roll = 0.0f,
-                .pitch = 0.0f,
-                .yaw = manual.axis.yaw,
-            });
-            runtime_state_set_rate_setpoint_request(rate_setpoint);
             flight_control_set_base_duty_active(manual.throttle);
-            ground_tune_set_submode(GROUND_TUNE_SUBMODE_UDP_MANUAL);
             flight_control_set_ground_base_duty_active(manual.throttle);
 
             axis3f_t pid_axis = controller_get_last_rate_status().output;
-            if (fresh_sample && sample.has_gyro_acc) {
-                if (!ground_tune_compute(&estimator_state, &rate_setpoint)) {
-                    flight_control_stop_udp_manual(command_outputs,
-                                                   "udp manual stopped: estimator/ref invalid",
-                                                   false);
-                    continue;
-                }
-                rate_setpoint.yaw = yaw_rate_setpoint.yaw;
-                if (flight_control_ground_trip_exceeded(params)) {
-                    flight_control_stop_udp_manual(command_outputs,
-                                                   "udp manual stopped: attitude trip",
-                                                   false);
-                    continue;
+            axis3f_t rate_setpoint =
+                flight_control_stabilize_min_rate_setpoint(params, &manual, &estimator_state, NULL);
+            const ground_tune_state_t stabilize_state = runtime_state_get_ground_tune_state();
+            runtime_state_set_axis_test_request((axis3f_t){
+                .roll = stabilize_state.target_roll_deg,
+                .pitch = stabilize_state.target_pitch_deg,
+                .yaw = manual.axis.yaw,
+            });
+            runtime_state_set_rate_setpoint_request(rate_setpoint);
+
+            if (last_rate_update_us != 0 && sample.timestamp_us > last_rate_update_us) {
+                float controller_dt_s = (float)(sample.timestamp_us - last_rate_update_us) / 1000000.0f;
+                if (controller_dt_s < 0.001f) {
+                    controller_dt_s = 0.001f;
+                } else if (controller_dt_s > 0.050f) {
+                    controller_dt_s = 0.050f;
                 }
 
-                runtime_state_set_rate_setpoint_request(rate_setpoint);
-                flight_control_set_base_duty_active(manual.throttle);
-                flight_control_set_ground_base_duty_active(manual.throttle);
-
-                if (last_rate_update_us != 0 && sample.timestamp_us > last_rate_update_us) {
-                    float controller_dt_s = (float)(sample.timestamp_us - last_rate_update_us) / 1000000.0f;
-                    if (controller_dt_s < 0.001f) {
-                        controller_dt_s = 0.001f;
-                    } else if (controller_dt_s > 0.050f) {
-                        controller_dt_s = 0.050f;
-                    }
-
-                    controller_set_runtime_flags(true, manual.throttle, false, false);
-                    const axis3f_t measured_rate =
-                        params->ground_tune_use_filtered_rate ? estimator_state.filtered_rate_rpy_dps : estimator_state.rate_rpy_dps;
-                    const rate_controller_status_t rate_status =
-                        controller_update_rate(&rate_setpoint, &measured_rate, controller_dt_s);
-                    pid_axis = rate_status.output;
-                }
-                last_rate_update_us = sample.timestamp_us;
+                controller_set_runtime_flags(true, manual.throttle, ground_saturated_for_freeze, false);
+                const axis3f_t measured_rate = estimator_state.filtered_rate_rpy_dps;
+                const rate_controller_status_t rate_status =
+                    controller_update_rate(&rate_setpoint, &measured_rate, controller_dt_s);
+                pid_axis = rate_status.output;
             }
+            last_rate_update_us = sample.timestamp_us;
 
             mixer_mix(mixer_coeffs,
                       &(mixer_input_t){
@@ -860,6 +968,8 @@ static void flight_control_task(void *arg)
                                                                        params->udp_manual_max_pwm,
                                                                        params->ground_test_motor_balance_limit,
                                                                        command_outputs);
+            ground_saturated_for_freeze = saturated;
+            controller_set_runtime_flags(true, manual.throttle, saturated, false);
             flight_control_set_ground_inner_clamps(saturated, controller_get_last_rate_status());
             motor_set_armed_outputs(command_outputs, false);
             continue;

@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -54,7 +55,7 @@ from esp_drone_cli.core.models import (
     decode_device_info,
 )
 from esp_drone_cli.core.protocol.framing import decode_frame, encode_frame, encode_serial_packet
-from esp_drone_cli.core.protocol.messages import CmdId, Frame, MsgType
+from esp_drone_cli.core.protocol.messages import CmdId, CmdStatus, Frame, MsgType
 
 
 def encode_param_payload(name: str, type_id: int, value_bytes: bytes) -> bytes:
@@ -235,6 +236,10 @@ class FakeSession:
         self._telemetry_callbacks = []
         self._event_callbacks = []
         self._connection_callbacks = []
+        self._arm_state = 0
+        self._failsafe_reason = 0
+        self._control_mode = 0
+        self._latest_telemetry = self._runtime_state_sample()
         self._params = [
             ParamValue("alpha", 2, 42),
             ParamValue("beta", 4, 1.5),
@@ -262,6 +267,46 @@ class FakeSession:
     def _record(self, name: str, *args, **kwargs):
         self.calls.append((name, args, kwargs))
 
+    def _runtime_state_sample(self):
+        return SimpleNamespace(
+            arm_state=self._arm_state,
+            failsafe_reason=self._failsafe_reason,
+            control_mode=self._control_mode,
+        )
+
+    def _telemetry_sample(self, timestamp_us: int, duty: float, control_mode: int | None = None):
+        mode = self._control_mode if control_mode is None else control_mode
+        return SimpleNamespace(
+            timestamp_us=timestamp_us,
+            arm_state=self._arm_state,
+            failsafe_reason=self._failsafe_reason,
+            control_mode=mode,
+            control_submode=0,
+            motor1=duty,
+            motor2=duty,
+            motor3=duty,
+            motor4=duty,
+            battery_voltage=4.0,
+            battery_valid=1,
+            base_duty_active=duty,
+            ground_trip_reason=0,
+        )
+
+    def _set_runtime_state(
+        self,
+        *,
+        arm_state: int | None = None,
+        failsafe_reason: int | None = None,
+        control_mode: int | None = None,
+    ) -> None:
+        if arm_state is not None:
+            self._arm_state = arm_state
+        if failsafe_reason is not None:
+            self._failsafe_reason = failsafe_reason
+        if control_mode is not None:
+            self._control_mode = control_mode
+        self._latest_telemetry = self._runtime_state_sample()
+
     def _emit_connection(self, error: str | None = None) -> None:
         payload = {
             "connected": self.is_connected,
@@ -276,6 +321,7 @@ class FakeSession:
             callback(message)
 
     def emit_telemetry(self, sample: TelemetrySample) -> None:
+        self._latest_telemetry = sample
         for callback in self._telemetry_callbacks:
             callback(sample)
 
@@ -323,11 +369,13 @@ class FakeSession:
 
     def arm(self) -> int:
         self._record("arm")
-        return 0
+        self._set_runtime_state(arm_state=1, failsafe_reason=0)
+        return CmdStatus.OK
 
     def disarm(self) -> int:
         self._record("disarm")
-        return 0
+        self._set_runtime_state(arm_state=0, failsafe_reason=0, control_mode=0)
+        return CmdStatus.OK
 
     def kill(self) -> int:
         self._record("kill")
@@ -346,6 +394,13 @@ class FakeSession:
     def list_params(self, timeout: float = 1.0) -> list[ParamValue]:
         self._record("list_params", timeout)
         return [ParamValue(item.name, item.type_id, item.value) for item in self._params]
+
+    def get_param(self, name: str, timeout: float = 1.0) -> ParamValue:
+        self._record("get_param", name, timeout)
+        for item in self._params:
+            if item.name == name:
+                return ParamValue(item.name, item.type_id, item.value)
+        raise KeyError(name)
 
     def set_param(self, name: str, type_id: int, value):
         self._record("set_param", name, type_id, value)
@@ -387,11 +442,25 @@ class FakeSession:
 
     def all_motor_test_start(self, duty: float, duration_s: float) -> int:
         self._record("all_motor_test_start", duty, duration_s)
-        return 0
+        if self._arm_state != 1:
+            return CmdStatus.ARM_REQUIRED
+        if self._control_mode != 0:
+            return CmdStatus.CONFLICT
+        self._set_runtime_state(control_mode=7)
+        self.emit_event(f"all-motor test started duty={duty:.3f} duration_ms={int(round(duration_s * 1000.0))}")
+        self.emit_telemetry(self._telemetry_sample(0, duty, control_mode=7))
+        self.emit_telemetry(self._telemetry_sample(int(round(duration_s * 1_000_000.0)), duty, control_mode=7))
+        return CmdStatus.OK
 
     def all_motor_test_stop(self) -> int:
         self._record("all_motor_test_stop")
-        return 0
+        self.emit_event("all-motor test stopped normally")
+        self._set_runtime_state(control_mode=0)
+        return CmdStatus.OK
+
+    def get_latest_telemetry(self):
+        self._record("get_latest_telemetry")
+        return self._latest_telemetry
 
     def calib_gyro(self) -> int:
         self._record("calib_gyro")
@@ -508,6 +577,21 @@ class FakeSession:
             "feature_bitmap": 0x7F,
         })()
         return self.device_info
+
+
+def seed_motor_scale_offset_params(session: FakeSession) -> None:
+    for name, value in (
+        ("motor_scale_m1", 1.0),
+        ("motor_scale_m2", 1.10),
+        ("motor_scale_m3", 0.9126),
+        ("motor_scale_m4", 1.10),
+        ("motor_offset_m1", 0.0),
+        ("motor_offset_m2", 0.0),
+        ("motor_offset_m3", 0.0),
+        ("motor_offset_m4", 0.0),
+    ):
+        session.set_param(name, 4, value)
+    session.calls.clear()
 
 
 def test_device_session_mock_roundtrip(tmp_path: Path):
@@ -871,8 +955,17 @@ def test_device_session_param_value_must_match_requested_name():
 
 
 def test_udp_manual_setpoint_encodes_expected_payload():
+    class StabilizeMinTransport(MockTransport):
+        def send_message(self, msg_type: int, payload: bytes = b"", flags: int = 0, seq: int = 0) -> None:
+            if msg_type == MsgType.HELLO_REQ:
+                self.sent.append((msg_type, payload))
+                hello = HELLO_RESP_STRUCT.pack(10, 1, 0, 0, 0x1FFF)
+                self.inject(Frame(MsgType.HELLO_RESP, flags, seq, hello))
+                return
+            super().send_message(msg_type, payload, flags=flags, seq=seq)
+
     session = DeviceSession()
-    transport = MockTransport()
+    transport = StabilizeMinTransport()
     session.connect_transport(transport)
     transport.sent.clear()
 
@@ -905,11 +998,11 @@ def test_udp_transport_connects_and_sends_manual_control_frames():
     def server_thread() -> None:
         try:
             hello = HELLO_RESP_STRUCT_V2.pack(
-                5,
+                10,
                 1,
                 0,
                 0,
-                0x7F,
+                0x1FFF,
                 b"udp-test\x00\x00\x00\x00\x00\x00\x00\x00",
                 b"2026-04-12T00:00:00Z\x00\x00\x00\x00",
             )
@@ -928,7 +1021,7 @@ def test_udp_transport_connects_and_sends_manual_control_frames():
 
     session = DeviceSession()
     info = session.connect_udp(host, port=port, timeout=1.0)
-    assert info.protocol_version == 5
+    assert info.protocol_version == 10
     assert session.udp_manual_enable() == 0
     assert session.udp_manual_setpoint(throttle=0.08, pitch=-0.01, roll=0.0, yaw=0.02) == 0
     session.disconnect()
@@ -2339,12 +2432,32 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert all_motor_args.command == "all-motor-test"
     assert all_motor_args.duty == pytest.approx(0.30)
     assert all_motor_args.duration_s == pytest.approx(2.0)
+    assert all_motor_args.no_auto_arm is False
+    all_motor_no_auto_args = build_parser().parse_args(
+        ["--serial", "COM7", "all-motor-test", "--duty", "0.30", "--no-auto-arm"]
+    )
+    assert all_motor_no_auto_args.no_auto_arm is True
 
     motor_balance_args = build_parser().parse_args(["--serial", "COM7", "motor-thrust-balance"])
     assert motor_balance_args.command == "motor-thrust-balance"
     assert motor_balance_args.duties == "0.20,0.25,0.30,0.35"
     assert motor_balance_args.duration_s == pytest.approx(0.9)
+    assert motor_balance_args.settle_s == pytest.approx(0.3)
     assert motor_balance_args.rest_s == pytest.approx(3.0)
+    assert motor_balance_args.no_trim is False
+    motor_balance_no_trim_args = build_parser().parse_args(
+        ["--serial", "COM7", "motor-thrust-balance", "--no-trim", "--settle-s", "0"]
+    )
+    assert motor_balance_no_trim_args.no_trim is True
+    assert motor_balance_no_trim_args.settle_s == pytest.approx(0.0)
+
+    vibration_args = build_parser().parse_args(
+        ["analyze-vibration-log", "diag.csv", "--mode", "all-motor", "--duty", "0.05"]
+    )
+    assert vibration_args.command == "analyze-vibration-log"
+    assert vibration_args.csv == "diag.csv"
+    assert vibration_args.mode == "all-motor"
+    assert vibration_args.duty == pytest.approx(0.05)
 
     motor_trim_args = build_parser().parse_args(["--serial", "COM7", "motor-trim-estimate", "summary.csv"])
     assert motor_trim_args.command == "motor-trim-estimate"
@@ -2537,16 +2650,236 @@ def test_cli_all_motor_test_records_stops_and_disarms_with_fake_session(monkeypa
     assert rc == 0
     assert ("require_all_motor_test", (), {}) in session.calls
     assert ("arm", (), {}) in session.calls
+    assert ("get_latest_telemetry", (), {}) in session.calls
     assert ("all_motor_test_start", (0.30, 0.1), {}) in session.calls
     assert ("all_motor_test_stop", (), {}) in session.calls
     assert ("disarm", (), {}) in session.calls
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert call_names.index("arm") < call_names.index("get_latest_telemetry")
+    assert call_names.index("get_latest_telemetry") < call_names.index("all_motor_test_start")
+    assert call_names.index("all_motor_test_start") < call_names.index("all_motor_test_stop")
+    assert call_names.index("all_motor_test_stop") < call_names.index("disarm")
     assert any(name == "start_csv_log" and args[0].name.endswith("_all_motor_test_30pct.csv") for name, args, _ in session.calls)
 
 
-def test_cli_motor_thrust_balance_uses_single_motor_path_and_logs(monkeypatch, tmp_path: Path):
+def test_cli_all_motor_test_fails_when_active_window_is_too_short(monkeypatch, tmp_path: Path, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    class ShortActiveSession(FakeSession):
+        def all_motor_test_start(self, duty: float, duration_s: float) -> int:
+            self._record("all_motor_test_start", duty, duration_s)
+            if self._arm_state != 1:
+                return CmdStatus.ARM_REQUIRED
+            self._set_runtime_state(control_mode=7)
+            self.emit_event("all-motor test started duty=0.300 duration_ms=2000")
+            self.emit_telemetry(self._telemetry_sample(0, duty, control_mode=7))
+            self.emit_telemetry(self._telemetry_sample(135_000, duty, control_mode=7))
+            return CmdStatus.OK
+
+    session = ShortActiveSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+    monkeypatch.setattr(cli_main.time, "sleep", lambda _duration: None)
+
+    rc = cli_main.main(
+        [
+            "--serial",
+            "COM7",
+            "all-motor-test",
+            "--duty",
+            "0.30",
+            "--duration-s",
+            "2.0",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert rc == 2
+    assert "active_duration_s=0.135" in output
+    assert "active_duration_ok=False" in output
+    assert "active_battery_min_v=4.000" in output
+    assert "duration_ticks_100ms=20" in output
+    assert ("all_motor_test_stop", (), {}) in session.calls
+    assert ("disarm", (), {}) in session.calls
+
+
+def test_cli_all_motor_test_no_auto_arm_sends_start_without_arm_or_disarm(monkeypatch, tmp_path: Path, capsys):
     from esp_drone_cli.cli import main as cli_main
 
     session = FakeSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+    monkeypatch.setattr(cli_main.time, "sleep", lambda _duration: None)
+
+    rc = cli_main.main(
+        [
+            "--serial",
+            "COM7",
+            "all-motor-test",
+            "--duty",
+            "0.30",
+            "--duration-s",
+            "0.1",
+            "--output-dir",
+            str(tmp_path),
+            "--no-auto-arm",
+        ]
+    )
+
+    assert rc == CmdStatus.ARM_REQUIRED
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "arm" not in call_names
+    assert "disarm" not in call_names
+    assert "get_latest_telemetry" in call_names
+    assert "all_motor_test_start" in call_names
+    assert "all_motor_test_stop" in call_names
+    assert call_names.index("all_motor_test_start") < call_names.index("get_latest_telemetry")
+    assert call_names.index("all_motor_test_start") < call_names.index("all_motor_test_stop")
+    assert "CMD_STATUS_ARM_REQUIRED" in capsys.readouterr().err
+
+
+def test_cli_all_motor_test_auto_arm_timeout_when_device_never_arms(monkeypatch, tmp_path: Path, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    class NeverArmedSession(FakeSession):
+        def arm(self) -> int:
+            self._record("arm")
+            self._set_runtime_state(arm_state=0, failsafe_reason=1)
+            return CmdStatus.OK
+
+    session = NeverArmedSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+
+    fake_time = [1000.0]
+    monkeypatch.setattr(cli_main.time, "sleep", lambda d: fake_time.__setitem__(0, fake_time[0] + d))
+    monkeypatch.setattr(cli_main.time, "monotonic", lambda: fake_time[0])
+
+    rc = cli_main.main(
+        [
+            "--serial", "COM7", "all-motor-test",
+            "--duty", "0.30", "--duration-s", "0.1",
+            "--output-dir", str(tmp_path),
+        ]
+    )
+
+    assert rc == CmdStatus.ARM_REQUIRED
+    err = capsys.readouterr().err
+    assert "auto-arm did not reach ARMED" in err
+    assert "NOT_SENT_WAIT_ARM_TIMEOUT" in err
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "arm" in call_names
+    assert "all_motor_test_start" not in call_names
+    assert "all_motor_test_stop" in call_names
+    assert "disarm" in call_names
+    assert call_names.index("arm") < call_names.index("all_motor_test_stop")
+    assert call_names.index("all_motor_test_stop") < call_names.index("disarm")
+
+
+def test_cli_all_motor_test_auto_arm_command_fails(monkeypatch, tmp_path: Path, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    class ArmRejectedSession(FakeSession):
+        def arm(self) -> int:
+            self._record("arm")
+            return CmdStatus.REJECTED
+
+    session = ArmRejectedSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+    monkeypatch.setattr(cli_main.time, "sleep", lambda _duration: None)
+
+    rc = cli_main.main(
+        [
+            "--serial", "COM7", "all-motor-test",
+            "--duty", "0.30", "--duration-s", "0.1",
+            "--output-dir", str(tmp_path),
+        ]
+    )
+
+    assert rc == CmdStatus.REJECTED
+    err = capsys.readouterr().err
+    assert "auto-arm command failed" in err
+    assert "NOT_SENT_ARM_COMMAND_FAILED" in err
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "arm" in call_names
+    assert "all_motor_test_start" not in call_names
+    assert "all_motor_test_stop" in call_names
+    assert "disarm" in call_names
+    assert call_names.index("arm") < call_names.index("all_motor_test_stop")
+
+
+def test_cli_all_motor_test_start_returns_arm_required_after_auto_arm(monkeypatch, tmp_path: Path, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    class StartArmRequiredSession(FakeSession):
+        def all_motor_test_start(self, duty: float, duration_s: float) -> int:
+            self._record("all_motor_test_start", duty, duration_s)
+            return CmdStatus.ARM_REQUIRED
+
+    session = StartArmRequiredSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+    monkeypatch.setattr(cli_main.time, "sleep", lambda _duration: None)
+
+    rc = cli_main.main(
+        [
+            "--serial", "COM7", "all-motor-test",
+            "--duty", "0.30", "--duration-s", "0.1",
+            "--output-dir", str(tmp_path),
+        ]
+    )
+
+    assert rc == CmdStatus.ARM_REQUIRED
+    err = capsys.readouterr().err
+    assert "auto-arm did not actually enter ARMED" in err
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "arm" in call_names
+    assert "all_motor_test_start" in call_names
+    assert call_names.index("arm") < call_names.index("all_motor_test_start")
+    assert "all_motor_test_stop" in call_names
+    assert "disarm" in call_names
+    assert call_names.index("all_motor_test_start") < call_names.index("all_motor_test_stop")
+    assert call_names.index("all_motor_test_stop") < call_names.index("disarm")
+
+
+def test_cli_all_motor_test_start_returns_conflict(monkeypatch, tmp_path: Path, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    class ConflictSession(FakeSession):
+        def arm(self) -> int:
+            self._record("arm")
+            self._set_runtime_state(arm_state=1, failsafe_reason=0, control_mode=1)
+            return CmdStatus.OK
+
+    session = ConflictSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+    monkeypatch.setattr(cli_main.time, "sleep", lambda _duration: None)
+
+    rc = cli_main.main(
+        [
+            "--serial", "COM7", "all-motor-test",
+            "--duty", "0.30", "--duration-s", "0.1",
+            "--output-dir", str(tmp_path),
+        ]
+    )
+
+    assert rc == CmdStatus.CONFLICT
+    err = capsys.readouterr().err
+    assert "CMD_STATUS_CONFLICT" in err
+    assert "control_mode=1" in err
+    call_names = [name for name, _args, _kwargs in session.calls]
+    assert "arm" in call_names
+    assert "all_motor_test_start" in call_names
+    assert call_names.index("arm") < call_names.index("all_motor_test_start")
+    assert "all_motor_test_stop" in call_names
+    assert "disarm" in call_names
+    assert call_names.index("all_motor_test_start") < call_names.index("all_motor_test_stop")
+    assert call_names.index("all_motor_test_stop") < call_names.index("disarm")
+
+
+def test_cli_motor_thrust_balance_uses_single_motor_path_and_logs(monkeypatch, tmp_path: Path, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    seed_motor_scale_offset_params(session)
     monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
     monkeypatch.setattr(cli_main.time, "sleep", lambda _duration: None)
 
@@ -2567,6 +2900,16 @@ def test_cli_motor_thrust_balance_uses_single_motor_path_and_logs(monkeypatch, t
     )
 
     assert rc == 0
+    output = capsys.readouterr().out
+    assert "trim_applied=True" in output
+    assert "trim_mode=motor_scale/motor_offset active" in output
+    assert "trim_path=motor-test -> motor_set_test_output -> motor_set_armed_outputs" in output
+    assert "trim_params=motor_trim,motor_gamma,motor_scale,motor_offset,motor_deadband,motor_min_start" in output
+    assert "score_note=score is IMU vibration/disturbance response, not thrust-stand force" in output
+    assert "trim_targets:" in output
+    assert "M2 input=0.200 trim_target=0.2200 scale=1.1000 offset=0.0000" in output
+    assert "M3 input=0.200 trim_target=0.1825 scale=0.9126 offset=0.0000" in output
+    assert "trial=2 motor=M2 input_duty=0.200 trim_target_duty=0.2200 scale=1.1000 offset=0.0000" in output
     call_names = [name for name, _args, _kwargs in session.calls]
     assert "start_csv_log" in call_names
     assert "start_stream" in call_names
@@ -2574,11 +2917,108 @@ def test_cli_motor_thrust_balance_uses_single_motor_path_and_logs(monkeypatch, t
     assert "stop_csv_log" in call_names
     assert "arm" not in call_names
     assert "all_motor_test_start" not in call_names
+    assert ("get_param", ("motor_scale_m2", 1.0), {}) in session.calls
+    assert ("get_param", ("motor_offset_m2", 1.0), {}) in session.calls
     for motor_index in range(4):
         assert ("motor_test", (motor_index, 0.20), {}) in session.calls
         assert ("motor_test", (motor_index, 0.0), {}) in session.calls
     assert ("disarm", (), {}) in session.calls
-    assert any(path.name.endswith("_motor_thrust_balance_summary.csv") for path in tmp_path.iterdir())
+    summary_paths = [path for path in tmp_path.iterdir() if path.name.endswith("_motor_thrust_balance_summary.csv")]
+    assert summary_paths
+    summary_text = summary_paths[0].read_text(encoding="utf-8")
+    assert "input_duty,trim_scale,trim_offset,trim_target_duty" in summary_text
+    assert "rate_meas_yaw_raw_rms,rate_meas_yaw_raw_peak" in summary_text
+    assert "rate_meas_yaw_filtered_rms,rate_meas_yaw_filtered_peak" in summary_text
+    assert "acc_norm_min,acc_norm_max,acc_norm_mean" in summary_text
+    assert "0.220000" in summary_text
+
+
+def test_cli_motor_thrust_balance_no_trim_temporarily_neutralizes_scale_offset(monkeypatch, tmp_path: Path, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    seed_motor_scale_offset_params(session)
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+    monkeypatch.setattr(cli_main.time, "sleep", lambda _duration: None)
+
+    rc = cli_main.main(
+        [
+            "--serial",
+            "COM7",
+            "motor-thrust-balance",
+            "--duties",
+            "0.20",
+            "--duration-s",
+            "0.2",
+            "--settle-s",
+            "0",
+            "--rest-s",
+            "0",
+            "--motors",
+            "M2,M3",
+            "--output-dir",
+            str(tmp_path),
+            "--no-trim",
+        ]
+    )
+
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "trim_applied=False" in output
+    assert "trim_mode=no-trim: motor_scale=1.0 motor_offset=0.0 temporary" in output
+    assert "M2 input=0.200 trim_target=0.2000 scale=1.0000 offset=0.0000" in output
+    assert "M3 input=0.200 trim_target=0.2000 scale=1.0000 offset=0.0000" in output
+    assert ("set_param", ("motor_scale_m2", 4, 1.0), {}) in session.calls
+    assert ("set_param", ("motor_scale_m3", 4, 1.0), {}) in session.calls
+    assert ("set_param", ("motor_offset_m2", 4, 0.0), {}) in session.calls
+    assert ("set_param", ("motor_scale_m2", 4, 1.1), {}) in session.calls
+    assert ("set_param", ("motor_scale_m3", 4, 0.9126), {}) in session.calls
+    assert ("motor_test", (1, 0.20), {}) in session.calls
+    assert ("motor_test", (2, 0.20), {}) in session.calls
+    assert "all_motor_test_start" not in [name for name, _args, _kwargs in session.calls]
+    assert session.get_param("motor_scale_m2").value == pytest.approx(1.10)
+    assert session.get_param("motor_scale_m3").value == pytest.approx(0.9126)
+
+
+def test_cli_analyze_vibration_log_runs_offline_and_writes_summary(monkeypatch, tmp_path: Path, capsys):
+    from esp_drone_cli.cli import main as cli_main
+
+    def fail_connect(_args):
+        raise AssertionError("analyze-vibration-log must not connect to device")
+
+    monkeypatch.setattr(cli_main, "connect_session_from_args", fail_connect)
+    source = tmp_path / "diag_static.csv"
+    source.write_text(
+        "\n".join(
+            [
+                (
+                    "timestamp_us,raw_gyro_x,raw_gyro_y,raw_gyro_z,"
+                    "filtered_gyro_x,filtered_gyro_y,filtered_gyro_z,"
+                    "rate_meas_yaw_raw,rate_meas_yaw_filtered,"
+                    "raw_acc_x,raw_acc_y,raw_acc_z,loop_dt_us,"
+                    "battery_voltage,kalman_valid,ground_trip_reason,motor_saturation_flag"
+                ),
+                "0,1,2,-10,1,2,-5,10,5,0,0,1,1000,4.1,1,0,0",
+                "1000,2,3,20,2,3,8,-20,-8,0,0,1,1100,4.0,1,0,0",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "diag_static_summary.csv"
+
+    rc = cli_main.main(["analyze-vibration-log", str(source), "--mode", "static", "--output", str(output)])
+
+    assert rc == 0
+    stdout = capsys.readouterr().out
+    assert f"summary_csv={output}" in stdout
+    assert "mode=static motor=none duty=0.000 samples=2" in stdout
+    assert "yaw_raw_minmax=-20.00..10.00" in stdout
+    assert "yaw_raw_peak=20.00" in stdout
+    assert "warning=none" in stdout
+    summary_text = output.read_text(encoding="utf-8")
+    assert "rate_meas_yaw_filtered_rms" in summary_text
+    assert "loop_dt_us_min,loop_dt_us_max" in summary_text
 
 
 def test_cli_motor_trim_estimate_applies_conservative_ram_params(monkeypatch, tmp_path: Path, capsys):
@@ -2608,9 +3048,18 @@ def test_cli_motor_trim_estimate_applies_conservative_ram_params(monkeypatch, tm
     assert ("set_param", ("motor_scale_m2", 4, 0.9), {}) in session.calls
     assert ("set_param", ("motor_scale_m3", 4, 1.1), {}) in session.calls
     assert ("set_param", ("motor_offset_m3", 4, 0.0), {}) in session.calls
+    assert ("get_param", ("motor_scale_m1", 1.0), {}) in session.calls
+    assert ("get_param", ("motor_scale_m2", 1.0), {}) in session.calls
+    assert ("get_param", ("motor_offset_m4", 1.0), {}) in session.calls
     output = capsys.readouterr().out
     assert "M2 ratio_to_M1=1.600 scale=0.9000" in output
     assert "M3 ratio_to_M1=0.200 scale=1.1000" in output
+    assert "score_note=score is IMU vibration/disturbance response, not thrust-stand force" in output
+    assert "ratio_to_M1 is not a real thrust ratio" in output
+    assert "write_confirm:" in output
+    assert "M2 scale_param=motor_scale_m2 written=0.900000 readback=0.900000" in output
+    assert "offset_param=motor_offset_m3 written=0.000000 readback=0.000000" in output
+    assert "motor_trim_scale_m2" not in output
 
 
 def test_cli_apply_short_hop_tuned_profile_writes_ram_only(monkeypatch, capsys):
@@ -2684,12 +3133,16 @@ def test_firmware_dispatch_registers_udp_manual_control():
     assert "CMD_UDP_MANUAL_ENABLE = 13" in protocol
     assert "MSG_UDP_MANUAL_SETPOINT = 0x50" in protocol
     assert "CONSOLE_FEATURE_UDP_MANUAL_CONTROL" in protocol
+    assert "CONSOLE_FEATURE_STABILIZE_MIN" in protocol
+    assert "CONSOLE_FEATURE_PREFLIGHT_CHECK" in protocol
     assert "case CMD_UDP_MANUAL_ENABLE:" in dispatch
     assert "case MSG_UDP_MANUAL_SETPOINT:" in dispatch
-    assert "CONTROL_MODE_UDP_MANUAL" in udp_manual
-    assert "udp manual watchdog timeout" in udp_manual
-    assert "ground_tune_capture_reference(&sample, &estimator_state)" in udp_manual
-    assert "ground_tune_compute(&estimator_state, &rate_setpoint)" in app_main
+    assert "CONTROL_MODE_STABILIZE_MIN" in udp_manual
+    assert "preflight_check_stabilize_min" in udp_manual
+    assert "stabilize-min watchdog timeout" in udp_manual
+    assert "ground_tune_capture_reference(&sample, &estimator_state)" not in udp_manual
+    assert "flight_control_stabilize_min_rate_setpoint" in app_main
+    assert "legacy udp manual flight path disabled: use stabilize-min" in app_main
     assert "udp_protocol_task" in udp_protocol
     assert "MSG_UDP_MANUAL_SETPOINT" in udp_protocol
 
@@ -2702,7 +3155,7 @@ def test_firmware_dispatch_registers_attitude_ground_verify_and_liftoff_paths():
     ground_tune = (repo_root / "firmware" / "main" / "ground_tune" / "ground_tune.c").read_text(encoding="utf-8")
     udp_protocol = (repo_root / "firmware" / "main" / "udp_protocol" / "udp_protocol.c").read_text(encoding="utf-8")
 
-    assert "CONSOLE_PROTOCOL_VERSION 0x09u" in protocol
+    assert "CONSOLE_PROTOCOL_VERSION 0x0Au" in protocol
     assert "CONSOLE_FEATURE_ATTITUDE_GROUND_VERIFY" in protocol
     assert "CONSOLE_FEATURE_LOW_RISK_LIFTOFF_VERIFY" in protocol
     assert "CONSOLE_FEATURE_ALL_MOTOR_TEST" in protocol
@@ -2717,6 +3170,13 @@ def test_firmware_dispatch_registers_attitude_ground_verify_and_liftoff_paths():
     assert "case CMD_ATTITUDE_GROUND_VERIFY_START:" in udp_protocol
     assert "case CMD_LIFTOFF_VERIFY_START:" in udp_protocol
     assert "case CMD_ALL_MOTOR_TEST_START:" in udp_protocol
+    assert "runtime_state_set_all_motor_test(req.arg_f32, duration_ms, 0u)" in dispatch
+    assert "runtime_state_set_all_motor_test(req->arg_f32, duration_ms, 0u)" in udp_protocol
+    assert "all-motor test started duty=%.3f duration_ms=%lu" in dispatch
+    assert "all-motor test started duty=%.3f duration_ms=%lu" in udp_protocol
+    assert "all-motor test stopped: arm_state=%d failsafe_reason=%d" in app_main
+    assert "if (all_motor.start_us == 0u)" in app_main
+    assert "runtime_state_set_all_motor_test(all_motor.duty, all_motor.duration_ms, now_us)" in app_main
     assert "GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY" in app_main
     assert "GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF" in app_main
     assert "CONTROL_MODE_ALL_MOTOR_TEST" in app_main
@@ -2770,6 +3230,8 @@ def test_firmware_registers_motor_trim_params_and_applies_before_motor_clamp():
     params_h = (repo_root / "firmware" / "main" / "params" / "params.h").read_text(encoding="utf-8")
     params_c = (repo_root / "firmware" / "main" / "params" / "params.c").read_text(encoding="utf-8")
     motor_c = (repo_root / "firmware" / "main" / "motor" / "motor.c").read_text(encoding="utf-8")
+    mixer_c = (repo_root / "firmware" / "main" / "mixer" / "mixer.c").read_text(encoding="utf-8")
+    app_main = (repo_root / "firmware" / "main" / "app_main.c").read_text(encoding="utf-8")
 
     assert "#define PARAMS_SCHEMA_VERSION 10u" in params_h
     assert "float motor_trim_scale[4];" in params_h
@@ -2801,6 +3263,20 @@ def test_firmware_registers_motor_trim_params_and_applies_before_motor_clamp():
     assert "<= 80000000ull" in params_c
     assert "duty = duty * params->motor_scale[logical_motor] + params->motor_offset[logical_motor];" in motor_c
     assert "duty = motor_clampf(duty, 0.0f, params->motor_max_duty);" in motor_c
+    assert re.search(r"void motor_set_test_output\(.*?motor_set_armed_outputs\(outputs, false\);", motor_c, re.DOTALL)
+    assert re.search(
+        r"CONTROL_MODE_ALL_MOTOR_TEST.*?command_outputs\[i\] = duty;.*?motor_set_armed_outputs\(command_outputs, false\);",
+        app_main,
+        re.DOTALL,
+    )
+    mixer_body = re.search(r"void mixer_mix\(.*?\n}\n\nstatic bool mixer_check_direction", mixer_c, re.DOTALL)
+    assert mixer_body is not None
+    assert "motor_scale" not in mixer_body.group(0)
+    assert "motor_offset" not in mixer_body.group(0)
+    assert "motor_trim" not in mixer_body.group(0)
+    write_single_body = re.search(r"static void motor_write_single\(.*?\n}", motor_c, re.DOTALL)
+    assert write_single_body is not None
+    assert "motor_apply_compensation" not in write_single_body.group(0)
 
 
 def test_firmware_telemetry_battery_read_does_not_emit_transient_zero():

@@ -50,10 +50,12 @@ from esp_drone_cli.core.motor_balance import (
     MOTOR_BALANCE_DEFAULT_TELEMETRY_HZ,
     MOTOR_BALANCE_MAX_DUTY,
     MotorBalanceOptions,
+    analyze_vibration_log,
     apply_motor_trim_estimate,
     estimate_motor_trim_from_summary,
     format_motor_balance_summary,
     format_motor_trim_estimate,
+    format_vibration_summary,
     parse_duties,
     parse_motors,
     run_motor_thrust_balance,
@@ -3122,6 +3124,23 @@ def cmd_motor_thrust_balance(session: DeviceSession, args) -> int:
     return result.return_code
 
 
+def cmd_analyze_vibration_log(args) -> int:
+    """Analyze an existing telemetry CSV without connecting to the device."""
+
+    output_path = Path(args.output) if args.output else None
+    rows = analyze_vibration_log(
+        Path(args.csv),
+        mode=args.mode,
+        duty=args.duty,
+        output_path=output_path,
+    )
+    if output_path is not None:
+        print(f"summary_csv={output_path}")
+    for line in format_vibration_summary(rows):
+        print(line)
+    return 0
+
+
 def cmd_motor_trim_estimate(session: DeviceSession, args) -> int:
     """Estimate conservative motor_scale values from a motor-thrust-balance summary CSV."""
 
@@ -3367,6 +3386,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="temporarily run with motor_scale=1 and motor_offset=0, then restore params",
     )
+
+    vibration_analyze_p = sub.add_parser(
+        "analyze-vibration-log",
+        help="analyze an existing telemetry CSV for gyro/acc vibration metrics",
+        description=(
+            "Offline host-side analysis for dump-csv, all-motor-test, and "
+            "motor-thrust-balance CSV files. Does not connect to the device."
+        ),
+    )
+    vibration_analyze_p.add_argument("csv")
+    vibration_analyze_p.add_argument(
+        "--mode",
+        choices=["auto", "static", "all-motor", "single-motor"],
+        default="auto",
+    )
+    vibration_analyze_p.add_argument("--duty", type=float)
+    vibration_analyze_p.add_argument("--output")
 
     motor_trim_p = sub.add_parser(
         "motor-trim-estimate",
@@ -3757,6 +3793,8 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "analyze-vibration-log":
+        return cmd_analyze_vibration_log(args)
     session: DeviceSession | None = None
     try:
         session = connect_session_from_args(args)
