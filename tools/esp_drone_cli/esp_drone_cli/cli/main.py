@@ -2864,9 +2864,11 @@ def cmd_motor_thrust_balance(session: DeviceSession, args) -> int:
         duties=parse_duties(args.duties),
         duration_s=args.duration_s,
         rest_s=args.rest_s,
+        settle_s=args.settle_s,
         telemetry_hz=args.telemetry_hz,
         output_dir=Path(args.output_dir),
         motors=parse_motors(args.motors),
+        use_trim=not args.no_trim,
     )
     result = run_motor_thrust_balance(session, options)
     for line in format_motor_balance_summary(result):
@@ -3096,6 +3098,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Runs M1..M4 one at a time at the requested duty levels, records telemetry, "
             "stops each motor, disarms, waits between trials, and prints relative gyro/acc response. "
+            "The score is an IMU disturbance metric, not direct thrust. "
             "This does not arm all motors or run a liftoff path."
         ),
     )
@@ -3105,10 +3108,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"comma-separated duty list, each <= {MOTOR_BALANCE_MAX_DUTY:.2f}",
     )
     motor_balance_p.add_argument("--duration-s", type=float, default=MOTOR_BALANCE_DEFAULT_DURATION_S)
+    motor_balance_p.add_argument("--settle-s", type=float, default=0.3)
     motor_balance_p.add_argument("--rest-s", type=float, default=MOTOR_BALANCE_DEFAULT_REST_S)
     motor_balance_p.add_argument("--telemetry-hz", type=int, default=MOTOR_BALANCE_DEFAULT_TELEMETRY_HZ)
     motor_balance_p.add_argument("--motors", default="M1,M2,M3,M4")
     motor_balance_p.add_argument("--output-dir", default="logs")
+    motor_balance_p.add_argument(
+        "--no-trim",
+        action="store_true",
+        help="temporarily run with motor_scale=1 and motor_offset=0, then restore params",
+    )
 
     motor_trim_p = sub.add_parser(
         "motor-trim-estimate",

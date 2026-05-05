@@ -136,6 +136,18 @@ python -m esp_drone_cli --serial COM7 all-motor-test start --duty 0.05 --duratio
 python -m esp_drone_cli --serial COM7 all-motor-test stop
 ```
 
+Motor thrust balance diagnostics:
+
+```powershell
+python -m esp_drone_cli --serial COM7 motor-thrust-balance --duties 0.20,0.25,0.30
+python -m esp_drone_cli --serial COM7 motor-thrust-balance --duties 0.20,0.25,0.30 --no-trim
+python -m esp_drone_cli --serial COM7 motor-trim-estimate logs\YYYYMMDD_HHMMSS_motor_thrust_balance_summary.csv --apply
+```
+
+`motor-thrust-balance` uses the single-motor `motor-test` path, which still passes through the firmware `motor_set_armed_outputs` compensation layer. The summary prints input duty, `motor_scale`, `motor_offset`, and the scale/offset target duty for every tested motor and duty. `--no-trim` temporarily writes `motor_scale_m1..m4=1.0` and `motor_offset_m1..m4=0.0` for the run, then restores the previous values, so it can be used as the untrimmed comparison run.
+
+The balance `score` is based on IMU vibration/disturbance response, not a thrust-stand force measurement. Do not treat `ratio_to_M1` from `motor-trim-estimate` as a real thrust ratio; it is only an empirical diagnostic signal for conservative `motor_scale` suggestions.
+
 Experimental UDP manual examples:
 
 ```powershell

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from pathlib import Path
 import statistics
@@ -10,7 +10,7 @@ from typing import Callable
 
 from .device_session import DeviceSession
 from .models import TELEMETRY_CSV_FIELDS, ParamValue, TelemetrySample
-from .protocol.messages import CmdId, ensure_command_ok
+from .protocol.messages import CmdId, CmdStatus, ensure_command_ok
 
 
 MOTOR_BALANCE_DEFAULT_DUTIES = (0.20, 0.25, 0.30, 0.35)
@@ -24,6 +24,10 @@ MOTOR_BALANCE_CSV_FIELDS = [
     "test_trial_id",
     "test_motor",
     "test_duty",
+    "test_input_duty",
+    "test_trim_scale",
+    "test_trim_offset",
+    "test_trim_target_duty",
     "test_phase",
     *TELEMETRY_CSV_FIELDS,
 ]
@@ -32,6 +36,10 @@ MOTOR_BALANCE_SUMMARY_FIELDS = [
     "trial_id",
     "motor",
     "duty",
+    "input_duty",
+    "trim_scale",
+    "trim_offset",
+    "trim_target_duty",
     "sample_count",
     "battery_min_v",
     "battery_mean_v",
@@ -60,15 +68,26 @@ MOTOR_TRIM_OFFSET_FIELDS = {
     "M4": "motor_offset_m4",
 }
 
+MOTOR_BALANCE_TRIM_PATH = "motor-test -> motor_set_test_output -> motor_set_armed_outputs"
+MOTOR_BALANCE_TRIM_PARAMS = (
+    "motor_trim,motor_gamma,motor_scale,motor_offset,motor_deadband,motor_min_start"
+)
+MOTOR_BALANCE_SCORE_NOTE = (
+    "score is IMU vibration/disturbance response, not thrust-stand force; "
+    "ratio_to_M1 is not a real thrust ratio"
+)
+
 
 @dataclass(slots=True)
 class MotorBalanceOptions:
     duties: tuple[float, ...] = MOTOR_BALANCE_DEFAULT_DUTIES
     duration_s: float = MOTOR_BALANCE_DEFAULT_DURATION_S
     rest_s: float = MOTOR_BALANCE_DEFAULT_REST_S
+    settle_s: float = 0.3
     telemetry_hz: int = MOTOR_BALANCE_DEFAULT_TELEMETRY_HZ
     output_dir: Path = Path("logs")
     motors: tuple[int, ...] = (1, 2, 3, 4)
+    use_trim: bool = True
 
     def validate(self) -> None:
         if not self.duties:
@@ -80,6 +99,8 @@ class MotorBalanceOptions:
             raise ValueError("duration-s must be within [0.2, 2.0]")
         if not math.isfinite(self.rest_s) or self.rest_s < 0.0:
             raise ValueError("rest-s must be >= 0")
+        if not math.isfinite(self.settle_s) or self.settle_s < 0.0:
+            raise ValueError("settle-s must be >= 0")
         if self.telemetry_hz <= 0:
             raise ValueError("telemetry-hz must be > 0")
         for motor in self.motors:
@@ -99,6 +120,9 @@ class MotorBalanceTrial:
     trial_id: int
     motor: int
     duty: float
+    trim_scale: float
+    trim_offset: float
+    trim_target_duty: float
     samples: list[TelemetrySample]
 
 
@@ -108,6 +132,9 @@ class MotorBalanceResult:
     summary_path: Path
     trials: list[dict[str, object]]
     weak_candidates: list[str]
+    trim_targets: list[dict[str, object]] = field(default_factory=list)
+    trim_applied: bool = True
+    trim_mode: str = "motor_scale/motor_offset"
     return_code: int = 0
     stop_reason: str = "completed"
 
@@ -119,6 +146,8 @@ class MotorTrimEstimate:
     offsets: dict[str, float]
     ratios: dict[str, float]
     applied: bool = False
+    readback_scales: dict[str, float] = field(default_factory=dict)
+    readback_offsets: dict[str, float] = field(default_factory=dict)
 
 
 def parse_duties(text: str) -> tuple[float, ...]:
@@ -165,6 +194,77 @@ def _sample_acc_mag(sample: TelemetrySample) -> float:
     return math.sqrt(float(sample.acc_x) ** 2 + float(sample.acc_y) ** 2 + float(sample.acc_z) ** 2)
 
 
+def _motor_label(motor: int) -> str:
+    return f"M{motor}"
+
+
+def _trim_target_duty(input_duty: float, scale: float, offset: float) -> float:
+    return _clamp_float(input_duty * scale + offset, 0.0, 1.0)
+
+
+def _read_trim_settings(session: DeviceSession) -> tuple[dict[str, float], dict[str, float]]:
+    scales: dict[str, float] = {}
+    offsets: dict[str, float] = {}
+    for motor in ("M1", "M2", "M3", "M4"):
+        scales[motor] = float(session.get_param(MOTOR_TRIM_SCALE_FIELDS[motor]).value)
+        offsets[motor] = float(session.get_param(MOTOR_TRIM_OFFSET_FIELDS[motor]).value)
+    return scales, offsets
+
+
+def _build_trim_targets(
+    duties: tuple[float, ...],
+    motors: tuple[int, ...],
+    scales: dict[str, float],
+    offsets: dict[str, float],
+) -> list[dict[str, object]]:
+    targets: list[dict[str, object]] = []
+    for duty in duties:
+        for motor in motors:
+            label = _motor_label(motor)
+            scale = scales[label]
+            offset = offsets[label]
+            targets.append(
+                {
+                    "motor": label,
+                    "duty": duty,
+                    "input_duty": duty,
+                    "trim_scale": scale,
+                    "trim_offset": offset,
+                    "trim_target_duty": _trim_target_duty(duty, scale, offset),
+                }
+            )
+    return targets
+
+
+def _disarm_and_wait(session: DeviceSession, wait_s: float = 0.05) -> None:
+    """Send disarm and wait for the firmware control loop to process it."""
+
+    try:
+        session.disarm()
+    except Exception:
+        pass
+    time.sleep(wait_s)
+
+
+def _motor_test_with_retry(
+    session: DeviceSession,
+    motor_index: int,
+    duty: float,
+    retries: int = 3,
+) -> int:
+    """Send motor-test with retries on DISARM_REQUIRED."""
+
+    for attempt in range(retries):
+        status = session.motor_test(motor_index, duty)
+        if status == CmdStatus.OK:
+            return status
+        if status == CmdStatus.DISARM_REQUIRED and attempt < retries - 1:
+            _disarm_and_wait(session)
+            continue
+        ensure_command_ok(CmdId.MOTOR_TEST, status)
+    return status
+
+
 def summarize_motor_balance_trials(trials: list[MotorBalanceTrial]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for trial in trials:
@@ -180,6 +280,10 @@ def summarize_motor_balance_trials(trials: list[MotorBalanceTrial]) -> list[dict
                 "trial_id": trial.trial_id,
                 "motor": f"M{trial.motor}",
                 "duty": trial.duty,
+                "input_duty": trial.duty,
+                "trim_scale": trial.trim_scale,
+                "trim_offset": trial.trim_offset,
+                "trim_target_duty": trial.trim_target_duty,
                 "sample_count": len(samples),
                 "battery_min_v": min((float(sample.battery_voltage) for sample in samples), default=0.0),
                 "battery_mean_v": _mean([float(sample.battery_voltage) for sample in samples]),
@@ -286,6 +390,14 @@ def apply_motor_trim_estimate(session: DeviceSession, estimate: MotorTrimEstimat
         session.set_param(MOTOR_TRIM_SCALE_FIELDS[motor], 4, float(scale))
     for motor, offset in estimate.offsets.items():
         session.set_param(MOTOR_TRIM_OFFSET_FIELDS[motor], 4, float(offset))
+    estimate.readback_scales = {
+        motor: float(session.get_param(MOTOR_TRIM_SCALE_FIELDS[motor]).value)
+        for motor in ("M1", "M2", "M3", "M4")
+    }
+    estimate.readback_offsets = {
+        motor: float(session.get_param(MOTOR_TRIM_OFFSET_FIELDS[motor]).value)
+        for motor in ("M1", "M2", "M3", "M4")
+    }
     estimate.applied = True
 
 
@@ -293,12 +405,25 @@ def format_motor_trim_estimate(estimate: MotorTrimEstimate) -> list[str]:
     lines = [
         f"source={estimate.source_path}",
         f"applied={estimate.applied}",
+        f"score_note={MOTOR_BALANCE_SCORE_NOTE}",
     ]
     for motor in ("M1", "M2", "M3", "M4"):
         lines.append(
             f"{motor} ratio_to_M1={estimate.ratios[motor]:.3f} "
             f"scale={estimate.scales[motor]:.4f} offset={estimate.offsets[motor]:.4f}"
         )
+    if estimate.applied:
+        lines.append("write_confirm:")
+        for motor in ("M1", "M2", "M3", "M4"):
+            scale_param = MOTOR_TRIM_SCALE_FIELDS[motor]
+            offset_param = MOTOR_TRIM_OFFSET_FIELDS[motor]
+            scale_readback = estimate.readback_scales.get(motor, float("nan"))
+            offset_readback = estimate.readback_offsets.get(motor, float("nan"))
+            lines.append(
+                f"{motor} scale_param={scale_param} written={estimate.scales[motor]:.6f} "
+                f"readback={scale_readback:.6f} offset_param={offset_param} "
+                f"written={estimate.offsets[motor]:.6f} readback={offset_readback:.6f}"
+            )
     lines.append("powershell_set_commands:")
     for motor in ("M1", "M2", "M3", "M4"):
         lines.append(f"python -m esp_drone_cli.cli.main --serial COM4 set {MOTOR_TRIM_SCALE_FIELDS[motor]} float {estimate.scales[motor]:.6f}")
@@ -312,10 +437,29 @@ def format_motor_balance_summary(result: MotorBalanceResult) -> list[str]:
         f"csv={result.csv_path}",
         f"summary_csv={result.summary_path}",
         f"stop_reason={result.stop_reason}",
+        f"trim_applied={result.trim_applied}",
+        f"trim_mode={result.trim_mode}",
+        f"trim_path={MOTOR_BALANCE_TRIM_PATH}",
+        f"trim_params={MOTOR_BALANCE_TRIM_PARAMS}",
+        f"score_note={MOTOR_BALANCE_SCORE_NOTE}",
     ]
+    if result.trim_targets:
+        lines.append("trim_targets:")
+        for duty in sorted({float(row["duty"]) for row in result.trim_targets}):
+            duty_targets = [row for row in result.trim_targets if float(row["duty"]) == duty]
+            duty_targets.sort(key=lambda row: int(str(row["motor"])[1:]))
+            parts = [f"duty={duty:.3f}"]
+            for row in duty_targets:
+                parts.append(
+                    "{motor} input={input_duty:.3f} trim_target={trim_target_duty:.4f} "
+                    "scale={trim_scale:.4f} offset={trim_offset:.4f}".format(**row)
+                )
+            lines.append(" ".join(parts))
     for row in result.trials:
         lines.append(
-            "trial={trial_id} motor={motor} duty={duty:.2f} samples={sample_count} "
+            "trial={trial_id} motor={motor} input_duty={input_duty:.3f} "
+            "trim_target_duty={trim_target_duty:.4f} scale={trim_scale:.4f} "
+            "offset={trim_offset:.4f} samples={sample_count} "
             "battery_min={battery_min_v:.3f} gyro_rms={gyro_rms_dps:.2f} "
             "gyro_peak={gyro_peak_dps:.2f} acc_std={acc_std_g:.4f} "
             "score={response_score:.2f} rel={relative_to_duty_mean:.2f} class={classification}".format(
@@ -343,9 +487,15 @@ def run_motor_thrust_balance(
         "trial_id": 0,
         "motor": "",
         "duty": 0.0,
+        "input_duty": 0.0,
+        "trim_scale": 1.0,
+        "trim_offset": 0.0,
+        "trim_target_duty": 0.0,
         "phase": "idle",
     }
     trials: list[MotorBalanceTrial] = []
+    trim_targets: list[dict[str, object]] = []
+    trim_mode = "motor_scale/motor_offset active"
     current_samples: list[TelemetrySample] = []
     originals: dict[str, ParamValue] = {}
     started_stream = False
@@ -382,6 +532,16 @@ def run_motor_thrust_balance(
 
     telemetry_token = session.subscribe_telemetry(on_telemetry)
     try:
+        trim_scales, trim_offsets = _read_trim_settings(session)
+        if not options.use_trim:
+            for motor in ("M1", "M2", "M3", "M4"):
+                set_and_track_param(MOTOR_TRIM_SCALE_FIELDS[motor], 4, 1.0)
+                set_and_track_param(MOTOR_TRIM_OFFSET_FIELDS[motor], 4, 0.0)
+            trim_scales = {motor: 1.0 for motor in MOTOR_TRIM_SCALE_FIELDS}
+            trim_offsets = {motor: 0.0 for motor in MOTOR_TRIM_OFFSET_FIELDS}
+            trim_mode = "no-trim: motor_scale=1.0 motor_offset=0.0 temporary"
+        trim_targets = _build_trim_targets(options.duties, options.motors, trim_scales, trim_offsets)
+
         set_and_track_param("telemetry_usb_hz", 2, options.telemetry_hz)
         session.start_csv_log(
             csv_path,
@@ -390,40 +550,63 @@ def run_motor_thrust_balance(
                 "test_trial_id": phase_state["trial_id"],
                 "test_motor": phase_state["motor"],
                 "test_duty": phase_state["duty"],
+                "test_input_duty": phase_state["input_duty"],
+                "test_trim_scale": phase_state["trim_scale"],
+                "test_trim_offset": phase_state["trim_offset"],
+                "test_trim_target_duty": phase_state["trim_target_duty"],
                 "test_phase": phase_state["phase"],
             },
         )
         started_log = True
         session.start_stream()
         started_stream = True
-        try:
-            ensure_command_ok(CmdId.DISARM, session.disarm())
-        except Exception:
-            session.disarm()
+        _disarm_and_wait(session)
 
         trial_id = 0
         for duty in options.duties:
             for motor in options.motors:
                 trial_id += 1
+                motor_label = _motor_label(motor)
+                trim_scale = trim_scales[motor_label]
+                trim_offset = trim_offsets[motor_label]
+                trim_target_duty = _trim_target_duty(duty, trim_scale, trim_offset)
                 current_samples = []
                 phase_state.update(
                     {
                         "trial_id": trial_id,
-                        "motor": f"M{motor}",
+                        "motor": motor_label,
                         "duty": duty,
-                        "phase": "active",
+                        "input_duty": duty,
+                        "trim_scale": trim_scale,
+                        "trim_offset": trim_offset,
+                        "trim_target_duty": trim_target_duty,
+                        "phase": "settle",
                     }
                 )
-                emit(f"trial {trial_id}: M{motor} duty={duty:.2f}")
-                ensure_command_ok(CmdId.MOTOR_TEST, session.motor_test(motor - 1, duty))
+                emit(
+                    f"trial {trial_id}: {motor_label} input_duty={duty:.3f} "
+                    f"trim_target_duty={trim_target_duty:.4f} "
+                    f"scale={trim_scale:.4f} offset={trim_offset:.4f}"
+                )
+                _motor_test_with_retry(session, motor - 1, duty)
+                if options.settle_s > 0.0:
+                    time.sleep(options.settle_s)
+                phase_state["phase"] = "active"
                 time.sleep(options.duration_s)
-                ensure_command_ok(CmdId.MOTOR_TEST, session.motor_test(motor - 1, 0.0))
+                session.motor_test(motor - 1, 0.0)
                 phase_state["phase"] = "idle"
-                trials.append(MotorBalanceTrial(trial_id, motor, duty, list(current_samples)))
-                try:
-                    ensure_command_ok(CmdId.DISARM, session.disarm())
-                except Exception:
-                    session.disarm()
+                trials.append(
+                    MotorBalanceTrial(
+                        trial_id,
+                        motor,
+                        duty,
+                        trim_scale,
+                        trim_offset,
+                        trim_target_duty,
+                        list(current_samples),
+                    )
+                )
+                _disarm_and_wait(session)
                 if options.rest_s > 0.0:
                     time.sleep(options.rest_s)
 
@@ -441,6 +624,9 @@ def run_motor_thrust_balance(
             summary_path=summary_path,
             trials=summary_rows,
             weak_candidates=weak_candidates,
+            trim_targets=trim_targets,
+            trim_applied=options.use_trim,
+            trim_mode=trim_mode,
             return_code=0,
             stop_reason="completed",
         )
@@ -450,6 +636,9 @@ def run_motor_thrust_balance(
             summary_path=summary_path,
             trials=summarize_motor_balance_trials(trials),
             weak_candidates=[],
+            trim_targets=trim_targets,
+            trim_applied=options.use_trim,
+            trim_mode=trim_mode,
             return_code=130,
             stop_reason="keyboard_interrupt",
         )
@@ -459,6 +648,9 @@ def run_motor_thrust_balance(
             summary_path=summary_path,
             trials=summarize_motor_balance_trials(trials),
             weak_candidates=[],
+            trim_targets=trim_targets,
+            trim_applied=options.use_trim,
+            trim_mode=trim_mode,
             return_code=1,
             stop_reason=f"exception:{exc}",
         )

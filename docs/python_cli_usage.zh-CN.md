@@ -136,6 +136,18 @@ python -m esp_drone_cli --serial COM7 all-motor-test start --duty 0.05 --duratio
 python -m esp_drone_cli --serial COM7 all-motor-test stop
 ```
 
+Motor thrust balance 诊断：
+
+```powershell
+python -m esp_drone_cli --serial COM7 motor-thrust-balance --duties 0.20,0.25,0.30
+python -m esp_drone_cli --serial COM7 motor-thrust-balance --duties 0.20,0.25,0.30 --no-trim
+python -m esp_drone_cli --serial COM7 motor-trim-estimate logs\YYYYMMDD_HHMMSS_motor_thrust_balance_summary.csv --apply
+```
+
+`motor-thrust-balance` 走单电机 `motor-test` 路径，固件侧仍然会经过 `motor_set_armed_outputs` 补偿层。summary 会打印每个被测电机和 duty 的输入 duty、`motor_scale`、`motor_offset`、以及 scale/offset 后的目标 duty。`--no-trim` 会在本轮测试中临时写入 `motor_scale_m1..m4=1.0` 和 `motor_offset_m1..m4=0.0`，结束后恢复原值，可用于和开启 trim 的测试结果对比。
+
+balance `score` 基于 IMU 振动/扰动响应，不是推力计的力值结果。不要把 `motor-trim-estimate` 的 `ratio_to_M1` 直接当作真实推力比例；它只是用于保守生成 `motor_scale` 建议的经验诊断信号。
+
 实验性 UDP manual 示例：
 
 ```powershell
