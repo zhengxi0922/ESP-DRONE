@@ -137,6 +137,9 @@ class MotorBalanceResult:
     trim_mode: str = "motor_scale/motor_offset"
     return_code: int = 0
     stop_reason: str = "completed"
+    completed_trials: int = 0
+    expected_trials: int = 0
+    summary_incomplete: bool = False
 
 
 @dataclass(slots=True)
@@ -439,6 +442,8 @@ def format_motor_balance_summary(result: MotorBalanceResult) -> list[str]:
         f"csv={result.csv_path}",
         f"summary_csv={result.summary_path}",
         f"stop_reason={result.stop_reason}",
+        f"completed_trials={result.completed_trials} expected_trials={result.expected_trials}",
+        f"summary_incomplete={result.summary_incomplete}",
         f"trim_applied={result.trim_applied}",
         f"trim_mode={result.trim_mode}",
         f"trim_path={MOTOR_BALANCE_TRIM_PATH}",
@@ -468,10 +473,18 @@ def format_motor_balance_summary(result: MotorBalanceResult) -> list[str]:
                 **row
             )
         )
-    if result.weak_candidates:
+    if result.summary_incomplete or result.stop_reason != "completed":
+        lines.append("weak_candidates=unknown_incomplete")
+    elif result.weak_candidates:
         lines.append("weak_candidates=" + ",".join(result.weak_candidates))
     else:
         lines.append("weak_candidates=none")
+    reason_lower = result.stop_reason.lower()
+    if "timeout" in reason_lower or "timed out" in reason_lower:
+        lines.append(
+            "timeout_suggestions=reduce telemetry-hz, split by duty, increase rest-s, "
+            "check USB cable / serial reliability"
+        )
     return lines
 
 
@@ -482,6 +495,7 @@ def run_motor_thrust_balance(
     progress: Callable[[str], None] | None = None,
 ) -> MotorBalanceResult:
     options.validate()
+    expected_trials = len(options.duties) * len(options.motors)
     options.output_dir.mkdir(parents=True, exist_ok=True)
     csv_path = options.csv_path()
     summary_path = options.summary_path(csv_path)
@@ -631,30 +645,39 @@ def run_motor_thrust_balance(
             trim_mode=trim_mode,
             return_code=0,
             stop_reason="completed",
+            completed_trials=len(trials),
+            expected_trials=expected_trials,
+            summary_incomplete=False,
         )
     except KeyboardInterrupt:
         return MotorBalanceResult(
             csv_path=csv_path,
             summary_path=summary_path,
             trials=summarize_motor_balance_trials(trials),
-            weak_candidates=[],
+            weak_candidates=["unknown_incomplete"],
             trim_targets=trim_targets,
             trim_applied=options.use_trim,
             trim_mode=trim_mode,
             return_code=130,
             stop_reason="keyboard_interrupt",
+            completed_trials=len(trials),
+            expected_trials=expected_trials,
+            summary_incomplete=True,
         )
     except Exception as exc:
         return MotorBalanceResult(
             csv_path=csv_path,
             summary_path=summary_path,
             trials=summarize_motor_balance_trials(trials),
-            weak_candidates=[],
+            weak_candidates=["unknown_incomplete"],
             trim_targets=trim_targets,
             trim_applied=options.use_trim,
             trim_mode=trim_mode,
             return_code=1,
             stop_reason=f"exception:{exc}",
+            completed_trials=len(trials),
+            expected_trials=expected_trials,
+            summary_incomplete=True,
         )
     finally:
         phase_state["phase"] = "stopping"

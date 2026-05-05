@@ -8,6 +8,7 @@ from esp_drone_cli.cli.main import build_parser
 from esp_drone_cli.core.models import ParamValue
 from esp_drone_cli.core.motor_balance import (
     MotorBalanceOptions,
+    MotorBalanceResult,
     apply_motor_trim_estimate,
     estimate_motor_trim_from_summary,
     format_motor_balance_summary,
@@ -222,4 +223,121 @@ def test_motor_trim_estimate_powershell_commands_placeholder_when_no_port(tmp_pa
     assert "powershell_set_commands:" in output
     assert "--serial <PORT>" in output
     assert "--serial COM4" not in output
+
+
+# ── motor-thrust-balance summary output: incomplete / exception tests ──
+
+
+def test_format_summary_incomplete_shows_unknown_incomplete_not_none():
+    """When stop_reason != completed, weak_candidates must be unknown_incomplete, never none."""
+    result = MotorBalanceResult(
+        csv_path=Path("test.csv"),
+        summary_path=Path("test_summary.csv"),
+        trials=[],
+        weak_candidates=["unknown_incomplete"],
+        stop_reason="exception:timed out waiting for command response 5",
+        completed_trials=6,
+        expected_trials=12,
+        summary_incomplete=True,
+    )
+    output = "\n".join(format_motor_balance_summary(result))
+
+    assert "weak_candidates=unknown_incomplete" in output
+    assert "weak_candidates=none" not in output
+    assert "completed_trials=6 expected_trials=12" in output
+    assert "summary_incomplete=True" in output
+
+
+def test_format_summary_normal_completion_still_shows_none_when_no_weak():
+    """Normal completion with no weak motors still outputs weak_candidates=none."""
+    result = MotorBalanceResult(
+        csv_path=Path("test.csv"),
+        summary_path=Path("test_summary.csv"),
+        trials=[],
+        weak_candidates=[],
+        stop_reason="completed",
+        completed_trials=8,
+        expected_trials=8,
+        summary_incomplete=False,
+    )
+    output = "\n".join(format_motor_balance_summary(result))
+
+    assert "weak_candidates=none" in output
+    assert "weak_candidates=unknown_incomplete" not in output
+    assert "completed_trials=8 expected_trials=8" in output
+    assert "summary_incomplete=False" in output
+
+
+def test_format_summary_normal_with_weak_motors():
+    """Normal completion with weak motors lists them."""
+    result = MotorBalanceResult(
+        csv_path=Path("test.csv"),
+        summary_path=Path("test_summary.csv"),
+        trials=[],
+        weak_candidates=["M2", "M3"],
+        stop_reason="completed",
+        completed_trials=8,
+        expected_trials=8,
+        summary_incomplete=False,
+    )
+    output = "\n".join(format_motor_balance_summary(result))
+
+    assert "weak_candidates=M2,M3" in output
+    assert "weak_candidates=none" not in output
+    assert "weak_candidates=unknown_incomplete" not in output
+
+
+def test_format_summary_keyboard_interrupt_is_incomplete():
+    """KeyboardInterrupt is incomplete, must not say none."""
+    result = MotorBalanceResult(
+        csv_path=Path("test.csv"),
+        summary_path=Path("test_summary.csv"),
+        trials=[],
+        weak_candidates=["unknown_incomplete"],
+        stop_reason="keyboard_interrupt",
+        completed_trials=4,
+        expected_trials=12,
+        summary_incomplete=True,
+    )
+    output = "\n".join(format_motor_balance_summary(result))
+
+    assert "weak_candidates=unknown_incomplete" in output
+    assert "weak_candidates=none" not in output
+
+
+def test_format_summary_timeout_shows_suggestions():
+    """When stop_reason contains 'timeout', print actionable suggestions."""
+    result = MotorBalanceResult(
+        csv_path=Path("test.csv"),
+        summary_path=Path("test_summary.csv"),
+        trials=[],
+        weak_candidates=["unknown_incomplete"],
+        stop_reason="exception:timed out waiting for command response 5",
+        completed_trials=6,
+        expected_trials=12,
+        summary_incomplete=True,
+    )
+    output = "\n".join(format_motor_balance_summary(result))
+
+    assert "timeout_suggestions=" in output
+    assert "reduce telemetry-hz" in output
+    assert "split by duty" in output
+    assert "increase rest-s" in output
+
+
+def test_format_summary_non_timeout_no_suggestions():
+    """Non-timeout exceptions should not print timeout suggestions."""
+    result = MotorBalanceResult(
+        csv_path=Path("test.csv"),
+        summary_path=Path("test_summary.csv"),
+        trials=[],
+        weak_candidates=["unknown_incomplete"],
+        stop_reason="exception:ValueError('something else')",
+        completed_trials=6,
+        expected_trials=12,
+        summary_incomplete=True,
+    )
+    output = "\n".join(format_motor_balance_summary(result))
+
+    assert "timeout_suggestions=" not in output
 
