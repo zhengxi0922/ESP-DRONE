@@ -23,6 +23,7 @@ This directory contains locked conventions, bring-up notes, docs-code sync notes
 - [Roll Rate Bench Workflow](./roll_rate_bench_workflow.md)
 - [Pitch Rate Bench Workflow](./pitch_rate_bench_workflow.md)
 - [Yaw Rate Bench Workflow](./yaw_rate_bench_workflow.md)
+- [Yaw Vibration Diagnostic Workflow](./yaw_vibration_diagnostic_workflow.md)
 - [Rate Bring-Up Results](./rate_bringup_results.md)
 - [RAW Mode Attitude Plan](./raw_mode_attitude_plan.md)
 - [Barometer Framework](./barometer_framework.md)

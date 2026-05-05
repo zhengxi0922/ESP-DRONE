@@ -23,6 +23,7 @@
 - [Roll Rate Bench Workflow](./roll_rate_bench_workflow.zh-CN.md)
 - [Pitch Rate Bench Workflow](./pitch_rate_bench_workflow.md)
 - [Yaw Rate Bench Workflow](./yaw_rate_bench_workflow.md)
+- [Yaw Vibration Diagnostic Workflow](./yaw_vibration_diagnostic_workflow.md)
 - [Rate Bring-Up Results](./rate_bringup_results.zh-CN.md)
 - [RAW Mode Attitude Plan](./raw_mode_attitude_plan.zh-CN.md)
 - [Barometer Framework](./barometer_framework.zh-CN.md)
