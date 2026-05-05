@@ -148,6 +148,7 @@ class MotorTrimEstimate:
     applied: bool = False
     readback_scales: dict[str, float] = field(default_factory=dict)
     readback_offsets: dict[str, float] = field(default_factory=dict)
+    serial_port: str = ""
 
 
 def parse_duties(text: str) -> tuple[float, ...]:
@@ -424,11 +425,12 @@ def format_motor_trim_estimate(estimate: MotorTrimEstimate) -> list[str]:
                 f"readback={scale_readback:.6f} offset_param={offset_param} "
                 f"written={estimate.offsets[motor]:.6f} readback={offset_readback:.6f}"
             )
+    serial = estimate.serial_port or "<PORT>"
     lines.append("powershell_set_commands:")
     for motor in ("M1", "M2", "M3", "M4"):
-        lines.append(f"python -m esp_drone_cli.cli.main --serial COM4 set {MOTOR_TRIM_SCALE_FIELDS[motor]} float {estimate.scales[motor]:.6f}")
+        lines.append(f"python -m esp_drone_cli.cli.main --serial {serial} set {MOTOR_TRIM_SCALE_FIELDS[motor]} float {estimate.scales[motor]:.6f}")
     for motor in ("M1", "M2", "M3", "M4"):
-        lines.append(f"python -m esp_drone_cli.cli.main --serial COM4 set {MOTOR_TRIM_OFFSET_FIELDS[motor]} float {estimate.offsets[motor]:.6f}")
+        lines.append(f"python -m esp_drone_cli.cli.main --serial {serial} set {MOTOR_TRIM_OFFSET_FIELDS[motor]} float {estimate.offsets[motor]:.6f}")
     return lines
 
 

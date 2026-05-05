@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from esp_drone_cli.core import DeviceSession, TelemetrySample
+from esp_drone_cli.core import DeviceSession, ParamValue, TelemetrySample
 from esp_drone_cli.core.liftoff_threshold import (
     ANGLE_RATE_LIMIT_DPS_CHOICES as LIFTOFF_THRESHOLD_ANGLE_RATE_LIMIT_DPS_CHOICES,
     DEFAULT_ANGLE_TRIP_DEG as LIFTOFF_THRESHOLD_DEFAULT_ANGLE_TRIP_DEG,
@@ -65,28 +65,42 @@ from esp_drone_cli.core.models import (
     FEATURE_GROUND_TUNE,
     FEATURE_LOW_RISK_LIFTOFF_VERIFY,
     FEATURE_NAMES,
+    FEATURE_PREFLIGHT_CHECK,
+    FEATURE_STABILIZE_MIN,
     FEATURE_UDP_MANUAL_CONTROL,
     MIN_ATTITUDE_HANG_PROTOCOL_VERSION,
     MIN_ATTITUDE_GROUND_VERIFY_PROTOCOL_VERSION,
     MIN_ALL_MOTOR_TEST_PROTOCOL_VERSION,
     MIN_GROUND_TUNE_PROTOCOL_VERSION,
     MIN_LOW_RISK_LIFTOFF_PROTOCOL_VERSION,
-    MIN_UDP_MANUAL_PROTOCOL_VERSION,
+    MIN_STABILIZE_MIN_PROTOCOL_VERSION,
 )
 from esp_drone_cli.core.ground_bench import run_ground_bench_round
 from esp_drone_cli.core.roll_bench import (
     apply_axis_bench_params,
     run_axis_bench_round,
 )
-from esp_drone_cli.core.protocol.messages import CmdId, CommandError, ensure_command_ok
+from esp_drone_cli.core.protocol.messages import CmdId, CmdStatus, CommandError, ensure_command_ok
 
 CONTROL_MODE_ATTITUDE_GROUND_TUNE = 6
 CONTROL_MODE_ALL_MOTOR_TEST = 7
+ARM_STATE_ARMED = 1
+PID_SOURCE_TEXT = {0: "firmware_default", 1: "NVS", 2: "RAM"}
 GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY = 1
 GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF = 2
 ALL_MOTOR_TEST_MAX_DUTY = 0.35
 ALL_MOTOR_TEST_MIN_DURATION_S = 0.1
 ALL_MOTOR_TEST_MAX_DURATION_S = 5.0
+ALL_MOTOR_TEST_AUTO_ARM_TIMEOUT_S = 2.0
+ALL_MOTOR_TEST_AUTO_ARM_POLL_S = 0.05
+ALL_MOTOR_TEST_ACTIVE_DURATION_TOLERANCE_S = 0.25
+ALL_MOTOR_TEST_ACTIVE_DURATION_TOLERANCE_RATIO = 0.20
+ALL_MOTOR_TEST_BENCH_BATTERY_CRITICAL_V = 1.5
+CMD_STATUS_NAMES = {
+    getattr(CmdStatus, name): f"CMD_STATUS_{name}"
+    for name in dir(CmdStatus)
+    if name.isupper() and isinstance(getattr(CmdStatus, name), int)
+}
 GROUND_VERIFY_SAFE_PARAMS = (
     ("telemetry_usb_hz", 2, 50),
     ("ground_att_kp_roll", 4, 0.8),
@@ -219,6 +233,103 @@ def axis_index_to_name(index: int) -> str:
     if index < 0 or index >= len(names):
         raise SystemExit(f"unsupported axis index {index}")
     return names[index]
+
+
+def format_cmd_status(status: int | None, *, not_sent: str = "NOT_SENT") -> str:
+    if status is None:
+        return not_sent
+    status_int = int(status)
+    return f"{CMD_STATUS_NAMES.get(status_int, f'UNKNOWN_STATUS_{status_int}')}({status_int})"
+
+
+def _state_value(primary: object | None, fallback: object | None, name: str) -> object:
+    if primary is not None and hasattr(primary, name):
+        return getattr(primary, name)
+    if fallback is not None and hasattr(fallback, name):
+        return getattr(fallback, name)
+    return "unknown"
+
+
+def _state_int(value: object) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def get_runtime_state_snapshot(session: DeviceSession) -> dict[str, object]:
+    sample = session.get_latest_telemetry() if hasattr(session, "get_latest_telemetry") else None
+    return {
+        "arm_state": _state_value(sample, None, "arm_state"),
+        "failsafe_reason": _state_value(sample, None, "failsafe_reason"),
+        "control_mode": _state_value(sample, None, "control_mode"),
+    }
+
+
+def wait_for_all_motor_test_armed(
+    session: DeviceSession,
+    *,
+    timeout_s: float = ALL_MOTOR_TEST_AUTO_ARM_TIMEOUT_S,
+    poll_s: float = ALL_MOTOR_TEST_AUTO_ARM_POLL_S,
+) -> tuple[bool, dict[str, object]]:
+    deadline = time.monotonic() + timeout_s
+    snapshot = get_runtime_state_snapshot(session)
+    while True:
+        if (
+            _state_int(snapshot["arm_state"]) == ARM_STATE_ARMED
+            and _state_int(snapshot["failsafe_reason"]) == 0
+        ):
+            return True, snapshot
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            return False, snapshot
+        time.sleep(min(poll_s, remaining))
+        snapshot = get_runtime_state_snapshot(session)
+
+
+def print_all_motor_test_status_context(
+    *,
+    message: str,
+    arm_status: int | None,
+    snapshot: dict[str, object],
+    start_status: int | None,
+    arm_not_sent: str = "NOT_SENT",
+    start_not_sent: str = "NOT_SENT",
+) -> None:
+    print(message, file=sys.stderr)
+    print(f"arm_command_status={format_cmd_status(arm_status, not_sent=arm_not_sent)}", file=sys.stderr)
+    print(f"current_arm_state={snapshot.get('arm_state', 'unknown')}", file=sys.stderr)
+    print(f"failsafe_reason={snapshot.get('failsafe_reason', 'unknown')}", file=sys.stderr)
+    print(f"control_mode={snapshot.get('control_mode', 'unknown')}", file=sys.stderr)
+    print(
+        f"all_motor_test_start_status={format_cmd_status(start_status, not_sent=start_not_sent)}",
+        file=sys.stderr,
+    )
+
+
+def all_motor_test_active_duration_ok(active_duration_s: float, requested_duration_s: float) -> bool:
+    tolerance_s = max(
+        0.05,
+        min(
+            ALL_MOTOR_TEST_ACTIVE_DURATION_TOLERANCE_S,
+            requested_duration_s * ALL_MOTOR_TEST_ACTIVE_DURATION_TOLERANCE_RATIO,
+        ),
+    )
+    return active_duration_s >= max(0.0, requested_duration_s - tolerance_s)
+
+
+def format_param_value(item: ParamValue) -> str:
+    value = item.value
+    if item.name == "rate_pid_source":
+        try:
+            value = f"{int(value)}:{PID_SOURCE_TEXT.get(int(value), 'unknown')}"
+        except (TypeError, ValueError):
+            value = f"{value}:unknown"
+    return f"{item.name} type={item.type_id} value={value}"
+
+
+def is_rate_pid_param(name: str) -> bool:
+    return name.startswith("rate_k") or name in {"rate_integral_limit", "rate_output_limit"}
 
 
 def format_rate_status_line(sample: TelemetrySample, axis_name: str) -> str:
@@ -1491,7 +1602,7 @@ def require_attitude_hang_capability(session: DeviceSession) -> None:
 
 
 def require_udp_manual_capability(session: DeviceSession) -> None:
-    """Reject experimental UDP manual commands before sending manual-control opcodes."""
+    """Reject STABILIZE_MIN manual commands before sending manual-control opcodes."""
 
     if hasattr(session, "require_udp_manual_control"):
         session.require_udp_manual_control()
@@ -1502,14 +1613,21 @@ def require_udp_manual_capability(session: DeviceSession) -> None:
         return
     protocol_version = int(getattr(info, "protocol_version", 0))
     feature_bitmap = int(getattr(info, "feature_bitmap", 0))
-    if protocol_version >= MIN_UDP_MANUAL_PROTOCOL_VERSION and (feature_bitmap & FEATURE_UDP_MANUAL_CONTROL):
+    if (
+        protocol_version >= MIN_STABILIZE_MIN_PROTOCOL_VERSION
+        and (feature_bitmap & FEATURE_UDP_MANUAL_CONTROL)
+        and (feature_bitmap & FEATURE_STABILIZE_MIN)
+        and (feature_bitmap & FEATURE_PREFLIGHT_CHECK)
+    ):
         return
     raise RuntimeError(
-        "device firmware does not advertise experimental UDP manual control support "
-        f"(need protocol_version>={MIN_UDP_MANUAL_PROTOCOL_VERSION} and "
-        f"feature udp_manual_control/0x{FEATURE_UDP_MANUAL_CONTROL:02x}; "
+        "device firmware does not advertise STABILIZE_MIN manual control support "
+        f"(need protocol_version>={MIN_STABILIZE_MIN_PROTOCOL_VERSION} and "
+        f"features udp_manual_control/0x{FEATURE_UDP_MANUAL_CONTROL:02x}, "
+        f"stabilize_min/0x{FEATURE_STABILIZE_MIN:02x}, "
+        f"preflight_check/0x{FEATURE_PREFLIGHT_CHECK:02x}; "
         f"got protocol_version={protocol_version}, feature_bitmap=0x{feature_bitmap:08x}). "
-        "Rebuild and flash the current main firmware before using UDP Control."
+        "Rebuild and flash the current main firmware before using STABILIZE_MIN."
     )
 
 
@@ -1676,7 +1794,7 @@ def cmd_get(session: DeviceSession, args) -> int:
         固定返回 `0`。
     """
 
-    print(session.get_param(args.name))
+    print(format_param_value(session.get_param(args.name)))
     return 0
 
 
@@ -1696,7 +1814,9 @@ def cmd_set(session: DeviceSession, args) -> int:
     """
 
     type_id = {"bool": 0, "u8": 1, "u32": 2, "i32": 3, "float": 4}[args.type]
-    print(session.set_param(args.name, type_id, args.value))
+    print(format_param_value(session.set_param(args.name, type_id, args.value)))
+    if is_rate_pid_param(args.name):
+        print(format_param_value(session.get_param("rate_pid_source")))
     return 0
 
 
@@ -1712,7 +1832,7 @@ def cmd_list(session: DeviceSession, _args) -> int:
     """
 
     for item in session.list_params(timeout=3.0):
-        print(item)
+        print(format_param_value(item))
     return 0
 
 
@@ -1743,6 +1863,30 @@ def cmd_reset(session: DeviceSession, _args) -> int:
     """
 
     session.reset_params()
+    return 0
+
+
+def cmd_factory_reset(session: DeviceSession, _args) -> int:
+    """Restore firmware defaults and erase the persisted NVS parameter blob."""
+
+    ensure_command_ok(CmdId.PARAM_FACTORY_RESET, session.factory_reset_params())
+    return 0
+
+
+def cmd_preflight_check(session: DeviceSession, _args) -> int:
+    """Run STABILIZE_MIN preflight and print device event-log details."""
+
+    events: list[str] = []
+    token = session.subscribe_event_log(events.append)
+    try:
+        status = session.preflight_check(timeout=5.0)
+        time.sleep(0.15)
+    finally:
+        session.unsubscribe(token)
+    for line in events:
+        if line.startswith("preflight "):
+            print(line)
+    ensure_command_ok(CmdId.PREFLIGHT_CHECK, status)
     return 0
 
 
@@ -2631,7 +2775,7 @@ def cmd_liftoff_near_threshold(session: DeviceSession, args) -> int:
 
 
 def cmd_udp_manual(session: DeviceSession, args) -> int:
-    """Run experimental UDP manual-control commands."""
+    """Run STABILIZE_MIN manual-control commands through the UDP setpoint protocol."""
 
     require_udp_manual_capability(session)
     action = args.action
@@ -2776,6 +2920,7 @@ def cmd_all_motor_test(session: DeviceSession, args) -> int:
             f"duration-s must be finite and within "
             f"{ALL_MOTOR_TEST_MIN_DURATION_S:.1f}..{ALL_MOTOR_TEST_MAX_DURATION_S:.1f}"
         )
+    duration_ticks = int(math.ceil(duration_s * 10.0 - 1e-9))
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2786,22 +2931,95 @@ def cmd_all_motor_test(session: DeviceSession, args) -> int:
     def on_telemetry(sample: TelemetrySample) -> None:
         samples.append(sample)
 
+    events: list[str] = []
     token = session.subscribe_telemetry(on_telemetry)
-    started = False
+    event_token = session.subscribe_event_log(events.append)
+    auto_arm_attempted = False
+    arm_status: int | None = None
+    start_status: int | None = None
+    original_battery_critical_v: float | None = None
+    state_snapshot: dict[str, object] = {
+        "arm_state": "unknown",
+        "failsafe_reason": "unknown",
+        "control_mode": "unknown",
+    }
     try:
+        try:
+            battery_param = session.get_param("battery_critical_v")
+            original_battery_critical_v = float(battery_param.value)
+            if original_battery_critical_v > ALL_MOTOR_TEST_BENCH_BATTERY_CRITICAL_V:
+                session.set_param("battery_critical_v", 4, ALL_MOTOR_TEST_BENCH_BATTERY_CRITICAL_V)
+                print(
+                    f"battery_critical_v temporarily lowered from {original_battery_critical_v:.2f} "
+                    f"to {ALL_MOTOR_TEST_BENCH_BATTERY_CRITICAL_V:.1f} for bench test",
+                    file=sys.stderr,
+                )
+        except Exception:
+            pass
         session.start_csv_log(csv_path)
         session.start_stream()
         if not args.no_auto_arm:
-            ensure_command_ok(CmdId.ARM, session.arm())
-        ensure_command_ok(CmdId.ALL_MOTOR_TEST_START, session.all_motor_test_start(duty, duration_s))
-        started = True
+            auto_arm_attempted = True
+            arm_status = session.arm()
+            state_snapshot = get_runtime_state_snapshot(session)
+            if arm_status != CmdStatus.OK:
+                print_all_motor_test_status_context(
+                    message="auto-arm command failed before all-motor-test start.",
+                    arm_status=arm_status,
+                    snapshot=state_snapshot,
+                    start_status=start_status,
+                    start_not_sent="NOT_SENT_ARM_COMMAND_FAILED",
+                )
+                return int(arm_status or 1)
+            armed_ready, state_snapshot = wait_for_all_motor_test_armed(session)
+            if not armed_ready:
+                print_all_motor_test_status_context(
+                    message=(
+                        "auto-arm did not reach ARMED with failsafe_reason=0 before "
+                        "all-motor-test start; start not sent."
+                    ),
+                    arm_status=arm_status,
+                    snapshot=state_snapshot,
+                    start_status=start_status,
+                    start_not_sent="NOT_SENT_WAIT_ARM_TIMEOUT",
+                )
+                return CmdStatus.ARM_REQUIRED
+        start_status = session.all_motor_test_start(duty, duration_s)
+        state_snapshot = get_runtime_state_snapshot(session)
+        if start_status != CmdStatus.OK:
+            if start_status == CmdStatus.ARM_REQUIRED:
+                if auto_arm_attempted:
+                    message = (
+                        "all-motor-test start returned CMD_STATUS_ARM_REQUIRED: "
+                        "auto-arm did not actually enter ARMED; cannot start all-motor-test."
+                    )
+                else:
+                    message = (
+                        "all-motor-test start returned CMD_STATUS_ARM_REQUIRED: "
+                        "device is not ARMED; --no-auto-arm sends start directly."
+                    )
+            elif start_status == CmdStatus.CONFLICT:
+                message = (
+                    "all-motor-test start returned CMD_STATUS_CONFLICT: "
+                    f"current control_mode={state_snapshot.get('control_mode', 'unknown')} "
+                    "conflicts with all-motor-test."
+                )
+            else:
+                message = f"all-motor-test start failed: {format_cmd_status(start_status)}."
+            print_all_motor_test_status_context(
+                message=message,
+                arm_status=arm_status,
+                snapshot=state_snapshot,
+                start_status=start_status,
+                arm_not_sent="NOT_SENT_NO_AUTO_ARM" if args.no_auto_arm else "NOT_SENT",
+            )
+            return int(start_status or 1)
         time.sleep(duration_s + 0.25)
     finally:
-        if started:
-            try:
-                session.all_motor_test_stop()
-            except Exception:
-                pass
+        try:
+            session.all_motor_test_stop()
+        except Exception:
+            pass
         try:
             session.stop_stream()
         except Exception:
@@ -2810,11 +3028,18 @@ def cmd_all_motor_test(session: DeviceSession, args) -> int:
             session.stop_csv_log()
         except Exception:
             pass
-        if not args.no_auto_arm:
+        if auto_arm_attempted:
             try:
                 session.disarm()
             except Exception:
                 pass
+        if original_battery_critical_v is not None:
+            try:
+                session.set_param("battery_critical_v", 4, original_battery_critical_v)
+                print(f"battery_critical_v restored to {original_battery_critical_v:.2f}", file=sys.stderr)
+            except Exception:
+                pass
+        session.unsubscribe(event_token)
         session.unsubscribe(token)
 
     active_samples = [
@@ -2838,23 +3063,44 @@ def cmd_all_motor_test(session: DeviceSession, args) -> int:
         for sample in samples
     )
     all_motor_mode_seen = any(sample.control_mode == CONTROL_MODE_ALL_MOTOR_TEST for sample in samples)
+    active_duration_s = (
+        (int(active_samples[-1].timestamp_us) - int(active_samples[0].timestamp_us)) / 1_000_000.0
+        if len(active_samples) >= 2
+        else 0.0
+    )
+    active_duration_ok = all_motor_test_active_duration_ok(active_duration_s, duration_s)
+    active_battery_values = [
+        float(sample.battery_voltage)
+        for sample in active_samples
+        if getattr(sample, "battery_valid", 0) and float(getattr(sample, "battery_voltage", 0.0)) > 0.1
+    ]
+    active_battery_min_v = min(active_battery_values) if active_battery_values else 0.0
+    active_battery_max_v = max(active_battery_values) if active_battery_values else 0.0
+    active_battery_sag_v = active_battery_max_v - active_battery_min_v if active_battery_values else 0.0
+    independent_path_ok = all_motor_mode_seen and not liftoff_ground_tune_seen and failsafe_reason_max == 0
 
     print(f"csv={csv_path}")
     print(f"duty={duty:.3f}")
     print(f"duration_s={duration_s:.2f}")
+    print(f"duration_ticks_100ms={duration_ticks}")
     print(f"sample_count={len(samples)}")
     print(f"active_sample_count={len(active_samples)}")
+    print(f"active_duration_s={active_duration_s:.3f}")
+    print(f"active_duration_ok={active_duration_ok}")
     print(f"all_motor_mode_seen={all_motor_mode_seen}")
     print(f"liftoff_verify_ground_tune_seen={liftoff_ground_tune_seen}")
     print(f"max_motor_output={max_motor:.4f}")
     print(f"active_motor_spread_max={max_spread:.4f}")
+    print(f"active_battery_min_v={active_battery_min_v:.3f}")
+    print(f"active_battery_max_v={active_battery_max_v:.3f}")
+    print(f"active_battery_sag_v={active_battery_sag_v:.3f}")
     print(f"failsafe_reason_max={failsafe_reason_max}")
     print(f"ground_trip_reason_max={ground_trip_reason_max}")
-    print(
-        "independent_path_ok="
-        f"{all_motor_mode_seen and not liftoff_ground_tune_seen and failsafe_reason_max == 0}"
-    )
-    return 0 if failsafe_reason_max == 0 else 2
+    for event in events:
+        if "all-motor" in event:
+            print(f"event={event}")
+    print(f"independent_path_ok={independent_path_ok}")
+    return 0 if independent_path_ok and active_duration_ok else 2
 
 
 def cmd_motor_thrust_balance(session: DeviceSession, args) -> int:
@@ -2883,6 +3129,7 @@ def cmd_motor_trim_estimate(session: DeviceSession, args) -> int:
         Path(args.summary_csv),
         max_adjust=args.max_adjust,
     )
+    estimate.serial_port = args.serial
     if args.apply:
         apply_motor_trim_estimate(session, estimate)
     for line in format_motor_trim_estimate(estimate):
@@ -3043,6 +3290,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("list")
     sub.add_parser("save")
     sub.add_parser("reset")
+    sub.add_parser("factory-reset", aliases=["factory-defaults"])
+    sub.add_parser("preflight-check")
 
     export_p = sub.add_parser("export")
     export_p.add_argument("output")
@@ -3422,8 +3671,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     udp_manual_p = sub.add_parser(
         "udp-manual",
-        help="experimental UDP manual control; not free-flight ready",
-        description="Experimental UDP manual control for restrained testing only. Throttle is the base duty target; roll/pitch use the flat-ground reference outer loop and yaw uses the rate PID before mixing. This is not a mature takeoff/land/free-flight mode.",
+        help="STABILIZE_MIN manual-control input commands",
+        description="Manual input path for CONTROL_MODE_STABILIZE_MIN. Throttle is manual, roll/pitch map to small angle targets, yaw maps to a yaw-rate target, and firmware runs preflight before entering or arming.",
     )
     udp_manual_sub = udp_manual_p.add_subparsers(dest="action", required=True)
     udp_manual_sub.add_parser("enable")
@@ -3524,6 +3773,9 @@ def main(argv: list[str] | None = None) -> int:
             "list": cmd_list,
             "save": cmd_save,
             "reset": cmd_reset,
+            "factory-reset": cmd_factory_reset,
+            "factory-defaults": cmd_factory_reset,
+            "preflight-check": cmd_preflight_check,
             "export": cmd_export,
             "import": cmd_import,
             "stream": cmd_stream,

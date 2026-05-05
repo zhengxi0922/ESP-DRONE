@@ -177,3 +177,49 @@ def test_motor_trim_estimate_apply_prints_readback_and_score_note(tmp_path: Path
     assert "ratio_to_M1 is not a real thrust ratio" in output
     assert "M2 scale_param=motor_scale_m2 written=0.900000 readback=0.900000" in output
     assert "motor_trim_scale_m2" not in output
+
+
+def test_motor_trim_estimate_powershell_commands_use_serial_port(tmp_path: Path):
+    """powershell_set_commands must use estimate.serial_port, not hardcoded COM4."""
+    summary = tmp_path / "summary.csv"
+    summary.write_text(
+        "\n".join(
+            [
+                "trial_id,motor,duty,sample_count,battery_min_v,battery_mean_v,gyro_rms_dps,gyro_peak_dps,gyro_x_mean_dps,gyro_y_mean_dps,gyro_z_mean_dps,acc_rms_g,acc_std_g,response_score,relative_to_duty_mean,classification",
+                "1,M1,0.30,80,4.0,4.0,40,80,0,0,0,0,0,100,1.0,normal",
+                "2,M2,0.30,80,4.0,4.0,80,120,0,0,0,0,0,160,1.6,strong_response",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    estimate = estimate_motor_trim_from_summary(summary)
+    estimate.serial_port = "COM8"
+    output = "\n".join(format_motor_trim_estimate(estimate))
+
+    assert "powershell_set_commands:" in output
+    assert "--serial COM8" in output
+    assert "--serial COM4" not in output
+
+
+def test_motor_trim_estimate_powershell_commands_placeholder_when_no_port(tmp_path: Path):
+    """When serial_port is empty, powershell_set_commands should use <PORT> placeholder."""
+    summary = tmp_path / "summary.csv"
+    summary.write_text(
+        "\n".join(
+            [
+                "trial_id,motor,duty,sample_count,battery_min_v,battery_mean_v,gyro_rms_dps,gyro_peak_dps,gyro_x_mean_dps,gyro_y_mean_dps,gyro_z_mean_dps,acc_rms_g,acc_std_g,response_score,relative_to_duty_mean,classification",
+                "1,M1,0.30,80,4.0,4.0,40,80,0,0,0,0,0,100,1.0,normal",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    estimate = estimate_motor_trim_from_summary(summary)
+    # serial_port defaults to "" – no explicit COM4 fallback
+    output = "\n".join(format_motor_trim_estimate(estimate))
+
+    assert "powershell_set_commands:" in output
+    assert "--serial <PORT>" in output
+    assert "--serial COM4" not in output
+
