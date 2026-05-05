@@ -2875,7 +2875,7 @@ def cmd_motor_thrust_balance(session: DeviceSession, args) -> int:
 
 
 def cmd_motor_trim_estimate(session: DeviceSession, args) -> int:
-    """Estimate conservative motor trim scales from a motor-thrust-balance summary CSV."""
+    """Estimate conservative motor_scale values from a motor-thrust-balance summary CSV."""
 
     estimate = estimate_motor_trim_from_summary(
         Path(args.summary_csv),
@@ -3112,15 +3112,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     motor_trim_p = sub.add_parser(
         "motor-trim-estimate",
-        help="estimate conservative motor trim scales from a motor-thrust-balance summary CSV",
+        help="estimate conservative motor_scale values from a motor-thrust-balance summary CSV",
         description=(
-            "Uses M1 as the reference motor and computes conservative scale-only trims. "
-            "Each scale is clipped to 1 +/- max-adjust; offsets stay at 0 by default."
+            "Uses M1 as the reference motor and computes conservative motor_scale values. "
+            "Each scale is clipped to 1 +/- max-adjust; motor_offset stays at 0 by default."
         ),
     )
     motor_trim_p.add_argument("summary_csv")
     motor_trim_p.add_argument("--max-adjust", type=float, default=0.10)
-    motor_trim_p.add_argument("--apply", action="store_true", help="apply the estimated trims as RAM params")
+    motor_trim_p.add_argument("--apply", action="store_true", help="apply the estimated motor_scale/motor_offset RAM params")
 
     short_hop_profile_p = sub.add_parser(
         "apply-short-hop-tuned-profile",

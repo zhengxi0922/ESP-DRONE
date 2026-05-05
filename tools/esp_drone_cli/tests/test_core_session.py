@@ -2604,10 +2604,10 @@ def test_cli_motor_trim_estimate_applies_conservative_ram_params(monkeypatch, tm
     rc = cli_main.main(["--serial", "COM7", "motor-trim-estimate", str(summary), "--apply"])
 
     assert rc == 0
-    assert ("set_param", ("motor_trim_scale_m1", 4, 1.0), {}) in session.calls
-    assert ("set_param", ("motor_trim_scale_m2", 4, 0.9), {}) in session.calls
-    assert ("set_param", ("motor_trim_scale_m3", 4, 1.1), {}) in session.calls
-    assert ("set_param", ("motor_trim_offset_m3", 4, 0.0), {}) in session.calls
+    assert ("set_param", ("motor_scale_m1", 4, 1.0), {}) in session.calls
+    assert ("set_param", ("motor_scale_m2", 4, 0.9), {}) in session.calls
+    assert ("set_param", ("motor_scale_m3", 4, 1.1), {}) in session.calls
+    assert ("set_param", ("motor_offset_m3", 4, 0.0), {}) in session.calls
     output = capsys.readouterr().out
     assert "M2 ratio_to_M1=1.600 scale=0.9000" in output
     assert "M3 ratio_to_M1=0.200 scale=1.1000" in output
@@ -2771,15 +2771,35 @@ def test_firmware_registers_motor_trim_params_and_applies_before_motor_clamp():
     params_c = (repo_root / "firmware" / "main" / "params" / "params.c").read_text(encoding="utf-8")
     motor_c = (repo_root / "firmware" / "main" / "motor" / "motor.c").read_text(encoding="utf-8")
 
-    assert "#define PARAMS_SCHEMA_VERSION 9u" in params_h
+    assert "#define PARAMS_SCHEMA_VERSION 10u" in params_h
     assert "float motor_trim_scale[4];" in params_h
     assert "float motor_trim_offset[4];" in params_h
-    assert '"motor_trim_scale_m3"' in params_c
-    assert '"motor_trim_offset_m3"' in params_c
+    assert "float motor_scale[4];" in params_h
+    assert "float motor_offset[4];" in params_h
+    assert "float motor_min_start[4];" in params_h
+    assert "float motor_deadband[4];" in params_h
+    assert "float motor_gamma[4];" in params_h
+    assert "float motor_trim[4];" in params_h
+    assert '"motor_trim_scale_m3"' not in params_c
+    assert '"motor_trim_offset_m3"' not in params_c
+    assert '"motor_scale_m3"' in params_c
+    assert '"motor_offset_m3"' in params_c
+    assert '"motor_deadband_m3"' in params_c
+    assert '"motor_gamma_m3"' in params_c
+    assert "store->motor_pwm_freq_hz = 24000;" in params_c
+    assert "store->motor_idle_duty = 0.03f;" in params_c
+    assert "store->motor_startup_boost_duty = 0.05f;" in params_c
+    assert "store->motor_slew_limit_per_tick = 0.02f;" in params_c
     assert "store->motor_trim_scale[i] = 1.0f;" in params_c
     assert "store->motor_trim_offset[i] = 0.0f;" in params_c
+    assert "store->motor_scale[i] = 1.0f;" in params_c
+    assert "store->motor_gamma[i] = 1.0f;" in params_c
     assert "PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_TRIM 8u" in params_c
-    assert "duty = duty * params->motor_trim_scale[i] + params->motor_trim_offset[i];" in motor_c
+    assert "PARAMS_SCHEMA_VERSION_BEFORE_STABILIZE_MIN 9u" in params_c
+    assert "params_validate_pwm_freq_resolution" in params_c
+    assert "freq_hz > 40000u" in params_c
+    assert "<= 80000000ull" in params_c
+    assert "duty = duty * params->motor_scale[logical_motor] + params->motor_offset[logical_motor];" in motor_c
     assert "duty = motor_clampf(duty, 0.0f, params->motor_max_duty);" in motor_c
 
 

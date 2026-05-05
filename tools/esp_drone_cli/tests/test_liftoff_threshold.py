@@ -124,14 +124,14 @@ class LiftoffThresholdFakeSession:
             "ground_test_motor_balance_limit": ParamValue("ground_test_motor_balance_limit", 4, 0.06),
             "ground_test_auto_disarm_ms": ParamValue("ground_test_auto_disarm_ms", 2, 15000),
             "ground_test_ramp_duty_per_s": ParamValue("ground_test_ramp_duty_per_s", 4, 0.15),
-            "motor_trim_scale_m1": ParamValue("motor_trim_scale_m1", 4, 1.0),
-            "motor_trim_scale_m2": ParamValue("motor_trim_scale_m2", 4, 1.0),
-            "motor_trim_scale_m3": ParamValue("motor_trim_scale_m3", 4, 1.0),
-            "motor_trim_scale_m4": ParamValue("motor_trim_scale_m4", 4, 1.0),
-            "motor_trim_offset_m1": ParamValue("motor_trim_offset_m1", 4, 0.0),
-            "motor_trim_offset_m2": ParamValue("motor_trim_offset_m2", 4, 0.0),
-            "motor_trim_offset_m3": ParamValue("motor_trim_offset_m3", 4, 0.0),
-            "motor_trim_offset_m4": ParamValue("motor_trim_offset_m4", 4, 0.0),
+            "motor_scale_m1": ParamValue("motor_scale_m1", 4, 1.0),
+            "motor_scale_m2": ParamValue("motor_scale_m2", 4, 1.0),
+            "motor_scale_m3": ParamValue("motor_scale_m3", 4, 1.0),
+            "motor_scale_m4": ParamValue("motor_scale_m4", 4, 1.0),
+            "motor_offset_m1": ParamValue("motor_offset_m1", 4, 0.0),
+            "motor_offset_m2": ParamValue("motor_offset_m2", 4, 0.0),
+            "motor_offset_m3": ParamValue("motor_offset_m3", 4, 0.0),
+            "motor_offset_m4": ParamValue("motor_offset_m4", 4, 0.0),
         }
 
     def _record(self, name: str, *args, **kwargs) -> None:
@@ -553,8 +553,8 @@ def test_short_hop_verify_records_csv_and_uses_closed_loop_path(monkeypatch, tmp
     assert "sat_run_ms=" in output
     assert "attitude_jump_deg=" in output
     assert "late_drift=" in output
-    assert "motor_trim_scales=1.000000,1.000000,1.000000,1.000000" in output
-    assert "motor_trim_offsets=0.000000,0.000000,0.000000,0.000000" in output
+    assert "motor_scales=1.000000,1.000000,1.000000,1.000000" in output
+    assert "motor_offsets=0.000000,0.000000,0.000000,0.000000" in output
 
     with session.last_log_path.open("r", encoding="utf-8", newline="") as handle:
         header = next(csv.reader(handle))
@@ -631,8 +631,8 @@ def test_short_hop_detect_ramps_detects_liftoff_and_uses_closed_loop_path(
     assert session.last_log_path.exists()
 
     output = capsys.readouterr().out
-    assert "motor_trim_scales=1.000000,1.000000,1.000000,1.000000" in output
-    assert "motor_trim_offsets=0.000000,0.000000,0.000000,0.000000" in output
+    assert "motor_scales=1.000000,1.000000,1.000000,1.000000" in output
+    assert "motor_offsets=0.000000,0.000000,0.000000,0.000000" in output
     assert "liftoff_detected=True" in output
     assert "liftoff_reason=" in output
     assert "liftoff_window=" in output

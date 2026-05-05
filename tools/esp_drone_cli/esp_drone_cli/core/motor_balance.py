@@ -48,16 +48,16 @@ MOTOR_BALANCE_SUMMARY_FIELDS = [
 ]
 
 MOTOR_TRIM_SCALE_FIELDS = {
-    "M1": "motor_trim_scale_m1",
-    "M2": "motor_trim_scale_m2",
-    "M3": "motor_trim_scale_m3",
-    "M4": "motor_trim_scale_m4",
+    "M1": "motor_scale_m1",
+    "M2": "motor_scale_m2",
+    "M3": "motor_scale_m3",
+    "M4": "motor_scale_m4",
 }
 MOTOR_TRIM_OFFSET_FIELDS = {
-    "M1": "motor_trim_offset_m1",
-    "M2": "motor_trim_offset_m2",
-    "M3": "motor_trim_offset_m3",
-    "M4": "motor_trim_offset_m4",
+    "M1": "motor_offset_m1",
+    "M2": "motor_offset_m2",
+    "M3": "motor_offset_m3",
+    "M4": "motor_offset_m4",
 }
 
 

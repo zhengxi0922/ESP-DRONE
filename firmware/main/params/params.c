@@ -104,14 +104,6 @@ static const param_descriptor_t s_param_descs[] = {
     {"motor_spin_is_cw1", PARAM_TYPE_BOOL, offsetof(params_store_t, motor_spin_is_cw[1])},
     {"motor_spin_is_cw2", PARAM_TYPE_BOOL, offsetof(params_store_t, motor_spin_is_cw[2])},
     {"motor_spin_is_cw3", PARAM_TYPE_BOOL, offsetof(params_store_t, motor_spin_is_cw[3])},
-    {"motor_trim_scale_m1", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_scale[0])},
-    {"motor_trim_scale_m2", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_scale[1])},
-    {"motor_trim_scale_m3", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_scale[2])},
-    {"motor_trim_scale_m4", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_scale[3])},
-    {"motor_trim_offset_m1", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_offset[0])},
-    {"motor_trim_offset_m2", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_offset[1])},
-    {"motor_trim_offset_m3", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_offset[2])},
-    {"motor_trim_offset_m4", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_offset[3])},
     {"motor_scale_m1", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_scale[0])},
     {"motor_scale_m2", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_scale[1])},
     {"motor_scale_m3", PARAM_TYPE_FLOAT, offsetof(params_store_t, motor_scale[2])},
@@ -221,13 +213,13 @@ static void params_apply_defaults(params_store_t *store)
 {
     memset(store, 0, sizeof(*store));
 
-    /* 默认值同时服务于 bring-up 和后续 bench 调试，所以倾向保守而不是激进。 */
-    store->motor_pwm_freq_hz = 15000;
-    store->motor_idle_duty = 0.05f;
+    /* Coreless brushed defaults: quieter PWM and softer startup for bench bring-up. */
+    store->motor_pwm_freq_hz = 24000;
+    store->motor_idle_duty = 0.03f;
     store->motor_max_duty = 0.95f;
-    store->motor_startup_boost_duty = 0.16f;
+    store->motor_startup_boost_duty = 0.05f;
     store->motor_startup_boost_ms = 25;
-    store->motor_slew_limit_per_tick = 0.03f;
+    store->motor_slew_limit_per_tick = 0.02f;
     store->bringup_test_base_duty = 0.15f;
     store->udp_manual_max_pwm = 0.12f;
     store->udp_takeoff_pwm = 0.10f;
@@ -443,16 +435,22 @@ static bool params_validate_battery_thresholds(const params_store_t *store)
            store->battery_arm_v <= store->battery_warn_v;
 }
 
+static bool params_validate_pwm_freq_resolution(uint32_t freq_hz, uint32_t resolution_bits)
+{
+    if (!(resolution_bits == 8u || resolution_bits == 10u || resolution_bits == 12u)) {
+        return false;
+    }
+    if (freq_hz < 8000u || freq_hz > 40000u) {
+        return false;
+    }
+
+    const uint32_t levels = 1u << resolution_bits;
+    return ((uint64_t)freq_hz * (uint64_t)levels) <= 80000000ull;
+}
+
 static bool params_validate_motor_duty_limits(const params_store_t *store)
 {
-    const bool resolution_ok =
-        store->motor_pwm_resolution_bits == 8u ||
-        store->motor_pwm_resolution_bits == 10u ||
-        store->motor_pwm_resolution_bits == 12u;
-
-    return store->motor_pwm_freq_hz >= 8000u &&
-           store->motor_pwm_freq_hz <= 15000u &&
-           resolution_ok &&
+    return params_validate_pwm_freq_resolution(store->motor_pwm_freq_hz, store->motor_pwm_resolution_bits) &&
            store->motor_idle_duty >= 0.0f &&
            store->motor_idle_duty <= 1.0f &&
            store->motor_max_duty >= 0.0f &&

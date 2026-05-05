@@ -81,16 +81,16 @@ LIFTOFF_THRESHOLD_CSV_FIELDS = [
 ]
 
 MOTOR_TRIM_SCALE_FIELDS = [
-    "motor_trim_scale_m1",
-    "motor_trim_scale_m2",
-    "motor_trim_scale_m3",
-    "motor_trim_scale_m4",
+    "motor_scale_m1",
+    "motor_scale_m2",
+    "motor_scale_m3",
+    "motor_scale_m4",
 ]
 MOTOR_TRIM_OFFSET_FIELDS = [
-    "motor_trim_offset_m1",
-    "motor_trim_offset_m2",
-    "motor_trim_offset_m3",
-    "motor_trim_offset_m4",
+    "motor_offset_m1",
+    "motor_offset_m2",
+    "motor_offset_m3",
+    "motor_offset_m4",
 ]
 MOTOR_TRIM_CSV_FIELDS = [*MOTOR_TRIM_SCALE_FIELDS, *MOTOR_TRIM_OFFSET_FIELDS]
 SHORT_HOP_CSV_FIELDS = [*LIFTOFF_THRESHOLD_CSV_FIELDS, *MOTOR_TRIM_CSV_FIELDS]
@@ -699,9 +699,9 @@ def format_liftoff_threshold_summary(result: LiftoffThresholdResult) -> list[str
         trim = result.motor_trim_snapshot
         lines.extend(
             [
-                "motor_trim_scales="
+                "motor_scales="
                 + ",".join(f"{trim[name]:.6f}" for name in MOTOR_TRIM_SCALE_FIELDS),
-                "motor_trim_offsets="
+                "motor_offsets="
                 + ",".join(f"{trim[name]:.6f}" for name in MOTOR_TRIM_OFFSET_FIELDS),
             ]
         )

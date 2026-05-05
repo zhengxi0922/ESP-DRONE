@@ -46,20 +46,30 @@ Current implemented output controls include:
 - global `motor_slew_limit_per_tick`
 - parameterized `motor_pwm_freq_hz`
 
-`motor.c` uses parameterized PWM resolution via `motor_pwm_resolution_bits`. Default is 10-bit (`LEDC_TIMER_10_BIT`). Supports 8, 10, and 12 bits.
+`motor.c` uses parameterized PWM resolution via `motor_pwm_resolution_bits`. The current coreless brushed default is 24kHz + 10-bit (`motor_pwm_freq_hz=24000`, `motor_pwm_resolution_bits=10`). Supported resolutions are 8-bit, 10-bit, and 12-bit.
+
+PWM validation allows `motor_pwm_freq_hz` from 8000Hz to 40000Hz only when the selected frequency/resolution pair fits the conservative LEDC clock check:
+
+```text
+freq_hz * 2^motor_pwm_resolution_bits <= 80000000
+```
 
 ## Per-motor thrust compensation
 
 Per-motor thrust compensation is implemented in `motor_apply_compensation()`:
 
-- per-motor `motor_trim` — additive trim before gamma
-- per-motor `motor_gamma` — power-law gamma correction
-- per-motor `motor_scale` — multiplicative scale
-- per-motor `motor_offset` — additive offset
-- per-motor `motor_deadband` — deadband threshold (output zero below this)
-- per-motor `motor_min_start` — minimum start duty
+- per-motor `motor_trim` - deprecated additive trim before gamma, retained at default 0 for schema 10
+- per-motor `motor_gamma` - power-law gamma correction, default 1
+- per-motor `motor_scale` - recommended multiplicative scale entry
+- per-motor `motor_offset` - recommended additive offset entry
+- per-motor `motor_deadband` - deadband threshold, output zero below this
+- per-motor `motor_min_start` - minimum start duty
 
 `motor_output_map` is channel mapping, not per-motor thrust compensation. Mapping and thrust compensation are different layers.
+
+Use `motor_scale_m1..m4` and `motor_offset_m1..m4` for new per-motor compensation. The legacy aliases `motor_trim_scale_m1..m4` and `motor_trim_offset_m1..m4` have been removed from the parameter registry and remain only as migration storage in `params_store_t`.
+
+`motor_min_start_m1..m4` defaults to 0 for first bring-up. That is only an initial value; the actual reliable start threshold must be measured with single-motor tests on the current battery, prop, wiring, and motor set.
 
 ## Current motor output implementation note
 

@@ -39,7 +39,7 @@
  *
  * @note 参数布局发生不兼容变化时应递增。
  */
-#define PARAMS_SCHEMA_VERSION 9u
+#define PARAMS_SCHEMA_VERSION 10u
 
 /**
  * @brief 参数值类型编号。
@@ -65,6 +65,12 @@ typedef union {
     float f32;    /**< 32 位浮点数。 */
 } param_value_t;
 
+typedef enum {
+    PARAM_RATE_PID_SOURCE_FIRMWARE_DEFAULT = 0,
+    PARAM_RATE_PID_SOURCE_NVS = 1,
+    PARAM_RATE_PID_SOURCE_RAM = 2,
+} params_rate_pid_source_t;
+
 /**
  * @brief 单个参数的描述信息。
  */
@@ -87,11 +93,11 @@ typedef struct {
     uint32_t motor_startup_boost_ms;  /**< 起转提升时长，单位为 ms；当前实现尚未消费该参数。 */
     float motor_slew_limit_per_tick;  /**< 每个控制周期允许的最大占空比变化量。 */
     float bringup_test_base_duty;     /**< 台架 bring-up 测试的基础油门，占空比范围为 `0.0f` 到 `1.0f`。 */
-    float udp_manual_max_pwm;         /**< Experimental UDP manual max duty/PWM fraction. */
-    float udp_takeoff_pwm;            /**< Experimental UDP takeoff target duty/PWM fraction. */
-    float udp_land_min_pwm;           /**< Experimental UDP landing and timeout safe duty floor. */
-    uint32_t udp_manual_timeout_ms;   /**< UDP manual watchdog timeout in ms. */
-    float udp_manual_axis_limit;      /**< UDP manual normalized command limit; yaw maps to rate PID while roll/pitch use attitude hold. */
+    float udp_manual_max_pwm;         /**< STABILIZE_MIN manual throttle max duty/PWM fraction. */
+    float udp_takeoff_pwm;            /**< STABILIZE_MIN takeoff target duty/PWM fraction. */
+    float udp_land_min_pwm;           /**< STABILIZE_MIN landing and timeout safe duty floor. */
+    uint32_t udp_manual_timeout_ms;   /**< STABILIZE_MIN setpoint watchdog timeout in ms. */
+    float udp_manual_axis_limit;      /**< STABILIZE_MIN normalized command limit; yaw maps to yaw-rate while roll/pitch map to angle targets. */
 
     uint32_t rc_timeout_ms;           /**< RC 超时阈值，单位为 ms；当前主循环尚未直接消费该参数。 */
     uint32_t imu_timeout_ms;          /**< IMU 超时阈值，单位为 ms。 */
@@ -169,8 +175,33 @@ typedef struct {
     uint32_t liftoff_verify_auto_disarm_ms;
     float liftoff_verify_ramp_duty_per_s;
     float liftoff_verify_att_trip_deg;
+
+    /*
+     * Deprecated migration-only storage. These fields keep the old schema
+     * layout readable, but motor_trim_scale_* / motor_trim_offset_* are no
+     * longer registered as tunable parameter names.
+     */
     float motor_trim_scale[4];
     float motor_trim_offset[4];
+
+    uint32_t motor_pwm_resolution_bits;
+    float motor_scale[4];
+    float motor_offset[4];
+    float motor_min_start[4];
+    float motor_deadband[4];
+    float motor_gamma[4];
+
+    /*
+     * Deprecated additive trim applied before gamma. Retained at default 0
+     * for schema 10; prefer motor_scale_* and motor_offset_* for new tuning.
+     */
+    float motor_trim[4];
+
+    float stabilize_min_max_angle_deg;
+    float stabilize_min_angle_kp_roll;
+    float stabilize_min_angle_kp_pitch;
+    float stabilize_min_max_rate_dps;
+    float stabilize_min_max_yaw_rate_dps;
 } params_store_t;
 
 /**
@@ -194,6 +225,12 @@ const params_store_t *params_get(void);
  * @note 该操作只修改 RAM 中的当前值，不会自动写回 NVS。
  */
 void params_reset_to_defaults(void);
+
+esp_err_t params_factory_reset_defaults(void);
+
+params_rate_pid_source_t params_get_rate_pid_source(void);
+
+const char *params_rate_pid_source_text(params_rate_pid_source_t source);
 
 /**
  * @brief 将当前参数保存到 NVS。
