@@ -105,10 +105,8 @@ TRANSLATIONS = {
         "checkbox.remember_password": "记住密码",
         "label.baud": "波特率",
         "label.udp_host": "UDP 主机",
+        "label.udp_host_sta": "无人机 STA IP",
         "label.udp_port": "UDP 端口",
-        "label.udp_mode": "连接模式",
-        "udp.mode.softap": "SoftAP",
-        "udp.mode.sta": "STA",
         "label.udp_mode": "连接模式",
         "udp.mode.softap": "SoftAP",
         "udp.mode.sta": "STA",
@@ -286,10 +284,8 @@ TRANSLATIONS = {
         "checkbox.remember_password": "Remember Password",
         "label.baud": "Baud",
         "label.udp_host": "UDP Host",
+        "label.udp_host_sta": "Drone STA IP",
         "label.udp_port": "UDP Port",
-        "label.udp_mode": "Connection Mode",
-        "udp.mode.softap": "SoftAP",
-        "udp.mode.sta": "STA",
         "label.udp_mode": "Connection Mode",
         "udp.mode.softap": "SoftAP",
         "udp.mode.sta": "STA",
@@ -454,6 +450,7 @@ TRANSLATIONS = {
         "label.serial_port": "串口",
         "label.baud": "波特率",
         "label.udp_host": "UDP 主机",
+        "label.udp_host_sta": "无人机 STA IP",
         "label.udp_port": "UDP 端口",
         "label.udp_mode": "连接模式",
         "udp.mode.softap": "SoftAP",
@@ -631,6 +628,7 @@ TRANSLATIONS = {
         "label.serial_port": "Serial Port",
         "label.baud": "Baud",
         "label.udp_host": "UDP Host",
+        "label.udp_host_sta": "Drone STA IP",
         "label.udp_port": "UDP Port",
         "label.udp_mode": "Connection Mode",
         "udp.mode.softap": "SoftAP",
@@ -3230,13 +3228,16 @@ class MainWindow(QMainWindow):
         current_host = self.udp_host_edit.text().strip()
         if mode == "softap":
             if current_host and current_host != "192.168.4.1":
-                self._last_sta_udp_host = current_host
+                self._settings.setValue("udp/sta_host", current_host)
             self.udp_host_edit.setText("192.168.4.1")
+            self.udp_host_label.setText(self._t("label.udp_host"))
             self.udp_transport_hint_label.setText(self._t("wifi.softap_conn_hint"))
-        elif current_host == "192.168.4.1" and self._last_sta_udp_host:
-            self.udp_host_edit.setText(self._last_sta_udp_host)
-            self.udp_transport_hint_label.setText(self._t("wifi.sta_conn_hint"))
         else:
+            saved_sta = self._settings.value("udp/sta_host", "192.168.31.244")
+            sta_host = str(saved_sta) if saved_sta else "192.168.31.244"
+            if current_host == "192.168.4.1" or not current_host:
+                self.udp_host_edit.setText(sta_host)
+            self.udp_host_label.setText(self._t("label.udp_host_sta"))
             self.udp_transport_hint_label.setText(self._t("wifi.sta_conn_hint"))
         self._save_settings()
 
@@ -3402,7 +3403,8 @@ class MainWindow(QMainWindow):
         self.serial_port_label.setText(self._t("label.serial_port"))
         self.baud_label.setText(self._t("label.baud"))
         self.udp_mode_label.setText(self._t("label.udp_mode"))
-        self.udp_host_label.setText(self._t("label.udp_host"))
+        is_sta = self._udp_mode_value() == "sta"
+        self.udp_host_label.setText(self._t("label.udp_host_sta" if is_sta else "label.udp_host"))
         self.udp_port_label.setText(self._t("label.udp_port"))
         self._refresh_udp_mode_combo_labels()
         self.udp_transport_hint_label.setText(self._t("udp.transport_hint"))
@@ -4607,6 +4609,8 @@ class MainWindow(QMainWindow):
         self._settings.setValue("serial/baudrate", self.baudrate_spin.value())
         self._settings.setValue("udp/mode", self._udp_mode_value())
         self._settings.setValue("udp/host", self.udp_host_edit.text())
+        if self._udp_mode_value() == "sta":
+            self._settings.setValue("udp/sta_host", self.udp_host_edit.text())
         self._settings.setValue("udp/port", self.udp_port_spin.value())
         self._settings.setValue("chart/window_index", self.chart_window_combo.currentIndex())
         self._settings.setValue("chart/group", self._current_chart_group)

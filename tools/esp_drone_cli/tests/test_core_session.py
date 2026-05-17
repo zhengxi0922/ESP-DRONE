@@ -3673,7 +3673,7 @@ def test_serial_transport_preserves_partial_packet_across_timeouts(monkeypatch):
 
 def test_gui_wifi_settings_qsettings_persistence(monkeypatch, tmp_path: Path):
     """WiFi settings fields round-trip through QSettings."""
-monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
     from PyQt5.QtCore import QSettings
     from PyQt5.QtWidgets import QApplication
@@ -3715,7 +3715,7 @@ monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
 def test_gui_wifi_write_order_matches_parameter_list(monkeypatch, tmp_path: Path):
     """Verify _write_wifi_config writes params in the correct order."""
-monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
     from PyQt5.QtCore import QSettings
     from PyQt5.QtWidgets import QApplication
@@ -3767,7 +3767,7 @@ monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
 def test_gui_wifi_mode_defaults_to_apsta(monkeypatch, tmp_path: Path):
     """WiFi mode combo defaults to AP+STA for safety."""
-monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
     from PyQt5.QtCore import QSettings
     from PyQt5.QtWidgets import QApplication
@@ -3784,7 +3784,7 @@ monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
 def test_gui_softap_default_connection_not_affected(monkeypatch, tmp_path: Path):
     """Confirm SoftAP default host/port are unchanged."""
-monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
     from PyQt5.QtCore import QSettings
     from PyQt5.QtWidgets import QApplication
