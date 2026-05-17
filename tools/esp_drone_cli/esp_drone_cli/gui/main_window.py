@@ -871,7 +871,7 @@ EXTRA_TRANSLATIONS = {
         "wifi.reboot_confirm_title": "确认保存并重启",
         "wifi.reboot_confirm_text": "将 WiFi 凭据保存到设备并重启，继续？",
         "wifi.reboot_log": "请等待无人机重启。若使用 STA/AP+STA，请从串口日志查看 sta connected ip=...，然后在 UDP Host 中填写该 IP；若配置失败，可连接 ESP-DRONE SoftAP 或使用 USB 串口恢复。",
-        "wifi.write_done": "WiFi 配置已写入。请点击"保存并重启"使配置生效。",
+        "wifi.write_done": "WiFi 配置已写入。请点击「保存并重启」使配置生效。",
         "wifi.require_connection": "需要先连接设备才能写入 WiFi 配置。",
         "wifi.config_written": "WiFi 配置已写入并校验通过：{summary}",
         "wifi.config_verify_failed": "WiFi 配置校验失败：{name} 期望={expected}，设备返回={actual}",
