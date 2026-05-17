@@ -221,8 +221,8 @@ static void params_apply_defaults(params_store_t *store)
 {
     memset(store, 0, sizeof(*store));
 
-    /* Coreless brushed defaults: conservative PWM and softer startup for bench bring-up. */
-    store->motor_pwm_freq_hz = 15000;
+    /* Coreless brushed defaults: quieter PWM and softer startup for bench bring-up. */
+    store->motor_pwm_freq_hz = 24000;
     store->motor_idle_duty = 0.03f;
     store->motor_max_duty = 0.95f;
     store->motor_startup_boost_duty = 0.05f;
@@ -370,9 +370,6 @@ static bool params_validate_motor_output_map(const params_store_t *store)
     bool seen[4] = {0};
     for (size_t i = 0; i < 4; ++i) {
         const uint8_t value = store->motor_output_map[i];
-        if (value == MOTOR_OUTPUT_MAP_UNSET) {
-            continue;
-        }
         if (value >= 4u || seen[value]) {
             return false;
         }

@@ -3397,7 +3397,7 @@ def test_firmware_registers_motor_trim_params_and_applies_before_motor_clamp():
     assert '"motor_offset_m3"' in params_c
     assert '"motor_deadband_m3"' in params_c
     assert '"motor_gamma_m3"' in params_c
-    assert "store->motor_pwm_freq_hz = 15000;" in params_c
+    assert "store->motor_pwm_freq_hz = 24000;" in params_c
     assert "store->motor_idle_duty = 0.03f;" in params_c
     assert "store->motor_startup_boost_duty = 0.05f;" in params_c
     assert "store->motor_slew_limit_per_tick = 0.02f;" in params_c
