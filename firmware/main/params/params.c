@@ -251,7 +251,7 @@ static void params_apply_defaults(params_store_t *store)
     store->wifi_ap_enable = true;
     store->wifi_ap_channel = 6;
     store->wifi_udp_port = 2391;
-    snprintf(store->wifi_mode, sizeof(store->wifi_mode), "softap");
+    snprintf(store->wifi_mode, sizeof(store->wifi_mode), "sta");
 
     store->imu_mode = IMU_MODE_DIRECT;
     store->imu_return_rate_code = 0x01;

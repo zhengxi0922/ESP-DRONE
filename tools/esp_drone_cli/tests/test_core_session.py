@@ -3964,11 +3964,11 @@ def test_firmware_wifi_config_log_present() -> None:
     assert '"sta_password", PARAM_TYPE_STRING' in params_c
 
 
-def test_firmware_params_defaults_softap() -> None:
-    """Firmware default wifi_mode is 'softap'."""
+def test_firmware_params_defaults_sta() -> None:
+    """Firmware default wifi_mode is 'sta' (falls back to SoftAP when sta_ssid empty)."""
     repo_root = Path(__file__).resolve().parents[3]
     params_c = (repo_root / "firmware" / "main" / "params" / "params.c").read_text(encoding="utf-8")
 
-    assert 'softap' in params_c
+    assert 'sta' in params_c
     assert 'PARAMS_SCHEMA_VERSION' in params_c
     assert 'PARAM_TYPE_STRING' in params_c

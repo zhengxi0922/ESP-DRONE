@@ -4,7 +4,7 @@ This is the network transport layer for the existing binary CLI/GUI protocol. It
 
 ## Defaults
 
-- WiFi mode: `softap`
+- WiFi mode: `sta` (falls back to SoftAP when `sta_ssid` is empty)
 - SoftAP SSID: `ESP-DRONE`
 - SoftAP password: `12345678`
 - AP IP: `192.168.4.1`
