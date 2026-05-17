@@ -76,6 +76,8 @@ wifi start failed at esp_wifi_start: ESP_FAIL
 
 ## GUI Connection Flow
 
+### SoftAP (Default)
+
 1. Power the ESP-DRONE board.
 2. Connect the PC Wi-Fi to SSID `ESP-DRONE` with password `12345678`.
 3. Open the Python GUI.
@@ -84,7 +86,27 @@ wifi start failed at esp_wifi_start: ESP_FAIL
 6. Click `Connect`.
 7. Confirm the GUI shows `Connected` plus device info.
 
-STA GUI flow:
+### 最简单 STA/AP+STA 配置流程 (Simplest STA/AP+STA Configuration)
+
+The GUI now provides a built-in **WiFi Settings** panel (left sidebar, below Safety Control) that eliminates manual parameter editing:
+
+1. Open the Python GUI.
+2. Connect via **Serial** to the drone's USB CDC port.
+3. In the **WiFi 设置** (WiFi Settings) section:
+   - Select WiFi mode: **AP+STA** (recommended) or **STA**.
+   - Enter your home WiFi **SSID** and **password**.
+   - Optionally fill static IP, gateway, and netmask.
+4. Click **写入 WiFi 配置** (Write WiFi Config) — the GUI writes `wifi_mode`, `sta_ssid`, `sta_password`, and optional static IP params in order, then verifies each.
+5. Click **保存并重启** (Save & Reboot) — confirm the dialog, the GUI saves params to NVS, reboots the drone, and disconnects.
+6. Wait for the drone to reboot. Check serial logs for `sta connected ip=...`.
+7. In the GUI, switch `Link` to **UDP**, set `Mode` to **STA**, enter the printed IP in `UDP Host`, keep port `2391`.
+8. Click `Connect`.
+
+> **Recovery note**: AP+STA keeps the SoftAP at `192.168.4.1` as a fallback. Pure STA mode flashes a warning — if STA config is wrong, recover via USB serial or the SoftAP fallback.
+
+### Legacy STA GUI Flow
+
+The manual parameter approach below still works but the WiFi Settings panel above is recommended:
 
 1. Set `wifi_mode=sta`, `sta_ssid`, and `sta_password` over serial or SoftAP; use RAM first and only save after confirming the values.
 2. Reboot or restart WiFi so the firmware joins the hotspot/router.

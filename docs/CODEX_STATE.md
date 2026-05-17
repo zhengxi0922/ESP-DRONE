@@ -26,6 +26,7 @@ This file is the short project memory for Codex. Keep it current and short. Do n
 - `CONSOLE_FEATURE_UDP_MANUAL_CONTROL` is bit `1 << 6`.
 - Current UDP manual command IDs are `13..18` for enable/disable/setpoint/takeoff/land/stop.
 - WiFi debug transport defaults remain SoftAP at `192.168.4.1:2391`. Optional `wifi_mode=sta` or `wifi_mode=apsta` uses `sta_ssid`, `sta_password`, and optional static IPv4 params to join a router/hotspot; STA success logs the acquired IP and STA failure falls back to SoftAP.
+- Python GUI now includes a **WiFi Settings** panel (left sidebar) for configuring STA/AP+STA credentials over serial without manual parameter table search. Writes `wifi_mode`, `sta_ssid`, `sta_password`, and optional static IP params in order with verification; Save & Reboot persists to NVS and disconnects. AP+STA is the recommended default to preserve the SoftAP recovery entry point. Passwords are not persisted to QSettings unless the user explicitly checks "Remember Password".
 - The binary UDP CLI/GUI protocol binds `INADDR_ANY` on `wifi_udp_port`, so the same command, telemetry, and parameter protocol works through SoftAP or the STA IP.
 - Current firmware default rate PID in `params.c` is `rate_kp_roll=0.0007`, `rate_kp_pitch=0.0007`, `rate_kp_yaw=0.0005`, and all rate I/D terms are `0`.
 - `motor.c` uses parameterized PWM resolution via `motor_pwm_resolution_bits`. Default is `10` (LEDC_TIMER_10_BIT). Supports 8/10/12 bits.

@@ -106,6 +106,24 @@ UDP 连接支持 SoftAP 和 STA：
 
 如果通信断开，GUI 会停止当前 UDP 手动控制/测试流程，固件也会清除活动电机/控制状态。WiFi 重连不会重新启动测试，也不会自动解锁。
 
+## WiFi 设置（STA/AP+STA 配置）
+
+左侧 **WiFi 设置** 面板（位于安全控制下方）提供一键配置无人机 WiFi 模式的功能，无需到参数表中搜索：
+
+- **WiFi 模式**：选择 `SoftAP`、`STA` 或 `AP+STA`（默认推荐 AP+STA）。
+- **WiFi 名称(SSID)**：家庭路由器或手机热点名称。
+- **WiFi 密码**：WiFi 密码（默认隐藏，可勾选显示）。
+- **静态 IP / 网关 / 子网掩码**：STA 模式的可选静态 IPv4 字段。
+
+按钮：
+
+- **写入 WiFi 配置**：按顺序将 `wifi_mode`、`sta_ssid`、`sta_password` 及可选静态 IP 参数写入设备 RAM，并逐一校验。需要当前已连接设备（串口或 UDP）。
+- **保存并重启**：弹窗确认后保存参数到 NVS，重启无人机，断开 GUI 连接。重启后查看串口日志 `sta connected ip=...`，将该 IP 填入 UDP Host。
+
+**最简单 STA/AP+STA 配置流程**：打开 GUI → 串口连接 → WiFi 设置（填写 SSID/密码）→ 写入 WiFi 配置 → 保存并重启 → UDP STA 连接（填入日志中的 IP）。
+
+> 密码安全：sta_password 默认不会保存到 QSettings（GUI 本地配置文件），除非用户明确勾选"记住密码"。其他 WiFi 字段（模式、SSID、静态 IP、网关、子网掩码）会在会话间自动记住。
+
 ## Debug Actions
 
 左侧 `Debug Actions` 现在同时覆盖原有 rate-test 路径和新的 bench-only 圆棍姿态外环路径。

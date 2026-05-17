@@ -131,6 +131,24 @@ Recommended networking:
 
 If communication drops, the GUI disables the active UDP manual/test flow and the firmware clears active motor/control state. Reconnecting WiFi does not restart a test or arm the vehicle.
 
+## WiFi Settings (STA/AP+STA Configuration)
+
+The left-side **WiFi Settings** panel (below Safety Control) provides a one-click way to configure the drone's WiFi mode without searching the parameter table:
+
+- **WiFi Mode**: select `SoftAP`, `STA`, or `AP+STA` (default: AP+STA).
+- **WiFi SSID**: your home router or phone hotspot name.
+- **WiFi Password**: your WiFi password (hidden by default; checkbox to show).
+- **Static IP / Gateway / Netmask**: optional static IPv4 fields for STA mode.
+
+Buttons:
+
+- **Write WiFi Config**: writes `wifi_mode`, `sta_ssid`, `sta_password`, and optional static IP params to device RAM in order, then verifies each. Requires an active Serial or UDP connection.
+- **Save & Reboot**: prompts for confirmation, saves params to NVS, reboots the drone, and disconnects the GUI session. After reboot, check serial logs for `sta connected ip=...` and use that IP in UDP host.
+
+**Simplest STA/AP+STA workflow**: Open GUI → Serial connect → WiFi Settings (fill SSID/password) → Write WiFi Config → Save & Reboot → UDP STA connect with the printed IP.
+
+> Password safety: sta_password is never saved to QSettings (the GUI's local config file) unless you explicitly check "Remember Password". All other WiFi fields (mode, ssid, static IP, gateway, netmask) are remembered between sessions.
+
 ## Debug Actions
 
 The left-side `Debug Actions` area covers rate-test, constrained-rig hang-attitude, flat-ground tune, attitude ground verify, low-risk liftoff verify, and UDP manual paths.

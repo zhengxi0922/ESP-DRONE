@@ -3665,3 +3665,136 @@ def test_serial_transport_preserves_partial_packet_across_timeouts(monkeypatch):
 
     assert frame.msg_type == MsgType.STREAM_CTRL
     assert frame.payload == b"\x01"
+
+
+# ---------------------------------------------------------------------------
+# GUI WiFi settings tests
+# ---------------------------------------------------------------------------
+
+def test_gui_wifi_settings_qsettings_persistence(monkeypatch, tmp_path: Path):
+    """WiFi settings fields round-trip through QSettings."""
+monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+    from esp_drone_cli.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "wifi_test.ini"), QSettings.IniFormat)
+    settings.setValue("wifi/mode", "apsta")
+    settings.setValue("wifi/ssid", "TestWiFi")
+    settings.setValue("wifi/static_ip", "192.168.1.100")
+    settings.setValue("wifi/gateway", "192.168.1.1")
+    settings.setValue("wifi/netmask", "255.255.255.0")
+    settings.setValue("wifi/remember_password", False)
+
+    window = MainWindow(settings=settings)
+    window._load_settings()
+    assert window._wifi_mode_value() == "apsta"
+    assert window.wifi_ssid_edit.text() == "TestWiFi"
+    assert window.wifi_static_ip_edit.text() == "192.168.1.100"
+    assert window.wifi_password_edit.text() == ""
+    assert not window.remember_password_check.isChecked()
+
+    window.wifi_ssid_edit.setText("NewWiFi")
+    window._save_settings()
+    assert settings.value("wifi/ssid") == "NewWiFi"
+    assert settings.value("wifi/password") is None
+
+    window.remember_password_check.setChecked(True)
+    window.wifi_password_edit.setText("secret123")
+    window._save_settings()
+    assert settings.value("wifi/password") == "secret123"
+
+    window.remember_password_check.setChecked(False)
+    window._save_settings()
+    assert settings.value("wifi/password") is None
+    window.close()
+    app.quit()
+
+
+def test_gui_wifi_write_order_matches_parameter_list(monkeypatch, tmp_path: Path):
+    """Verify _write_wifi_config writes params in the correct order."""
+monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+    from esp_drone_cli.gui.main_window import MainWindow
+    from esp_drone_cli.core.models import ParamValue
+
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "wifi_test2.ini"), QSettings.IniFormat)
+    written_params: list[tuple[str, str]] = []
+
+    class FakeSession:
+        connected = True
+        def set_param(self, name, type_id, value):
+            written_params.append((name, str(value)))
+            return ParamValue(name=name, type_id=type_id, value=value)
+
+    window = MainWindow(settings=settings)
+    window._session = FakeSession()
+    window.wifi_mode_combo.setCurrentIndex(2)
+    window.wifi_ssid_edit.setText("MyHomeWiFi")
+    window.wifi_password_edit.setText("pass123")
+    window.wifi_static_ip_edit.setText("10.0.0.50")
+    window.wifi_gateway_edit.setText("10.0.0.1")
+    window.wifi_netmask_edit.setText("255.0.0.0")
+
+    window._write_wifi_config()
+    assert len(written_params) >= 3
+    assert written_params[0] == ("wifi_mode", "apsta")
+    assert written_params[1] == ("sta_ssid", "MyHomeWiFi")
+    assert written_params[2] == ("sta_password", "pass123")
+    written_names = [p[0] for p in written_params]
+    assert "sta_static_ip" in written_names
+    assert "sta_gateway" in written_names
+    assert "sta_netmask" in written_names
+
+    written_params.clear()
+    window.wifi_static_ip_edit.setText("")
+    window.wifi_gateway_edit.setText("")
+    window.wifi_netmask_edit.setText("")
+    window._write_wifi_config()
+    written_names = [p[0] for p in written_params]
+    assert "sta_static_ip" not in written_names
+    assert "sta_gateway" not in written_names
+    assert "sta_netmask" not in written_names
+
+    window.close()
+    app.quit()
+
+
+def test_gui_wifi_mode_defaults_to_apsta(monkeypatch, tmp_path: Path):
+    """WiFi mode combo defaults to AP+STA for safety."""
+monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+    from esp_drone_cli.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "wifi_test3.ini"), QSettings.IniFormat)
+    window = MainWindow(settings=settings)
+    assert window._wifi_mode_value() == "apsta"
+    assert window.wifi_mode_combo.currentIndex() == 2
+    window.close()
+    app.quit()
+
+
+def test_gui_softap_default_connection_not_affected(monkeypatch, tmp_path: Path):
+    """Confirm SoftAP default host/port are unchanged."""
+monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+    from esp_drone_cli.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "wifi_test4.ini"), QSettings.IniFormat)
+    window = MainWindow(settings=settings)
+    assert window._udp_mode_value() == "softap"
+    assert window.udp_host_edit.text() == "192.168.4.1"
+    assert window.udp_port_spin.value() == 2391
+    window.close()
+    app.quit()
