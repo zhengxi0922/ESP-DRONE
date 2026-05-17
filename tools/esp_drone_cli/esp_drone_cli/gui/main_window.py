@@ -3343,7 +3343,14 @@ class MainWindow(QMainWindow):
         self._append_log(self._t("wifi.saved_and_reboot"))
 
         def _do_save_reboot_disconnect():
-            self._session.save_params()
+            try:
+                self._session.save_params()
+            except Exception:
+                try:
+                    self._session.disconnect()
+                except Exception:
+                    pass
+                raise
             try:
                 self._session.reboot()
             except Exception:

@@ -922,10 +922,18 @@ static void console_handle_message(uint8_t msg_type, const uint8_t *payload, siz
         }
         console_send_frame(MSG_PARAM_LIST_END, NULL, 0);
         break;
-    case MSG_PARAM_SAVE:
-        params_save();
+    case MSG_PARAM_SAVE: {
+        esp_err_t save_err = params_save();
+        if (save_err != ESP_OK) {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "param save NVS error 0x%lx", (unsigned long)save_err);
+            console_send_event_text(msg);
+        } else {
+            console_send_event_text("param save ok");
+        }
         console_send_frame(MSG_PARAM_SAVE, NULL, 0);
         break;
+    }
     case MSG_PARAM_RESET:
         params_reset_to_defaults();
         motor_reconfigure_from_params();

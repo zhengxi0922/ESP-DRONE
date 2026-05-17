@@ -846,10 +846,18 @@ static void udp_handle_message(int sock,
         }
         udp_send_frame_to(sock, addr, addr_len, MSG_PARAM_LIST_END, NULL, 0);
         break;
-    case MSG_PARAM_SAVE:
-        params_save();
+    case MSG_PARAM_SAVE: {
+        esp_err_t save_err = params_save();
+        if (save_err != ESP_OK) {
+            char msg[64];
+            snprintf(msg, sizeof(msg), "param save NVS error 0x%lx", (unsigned long)save_err);
+            console_send_event_text(msg);
+        } else {
+            console_send_event_text("param save ok");
+        }
         udp_send_frame_to(sock, addr, addr_len, MSG_PARAM_SAVE, NULL, 0);
         break;
+    }
     case MSG_PARAM_RESET:
         params_reset_to_defaults();
         motor_reconfigure_from_params();
