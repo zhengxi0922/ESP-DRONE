@@ -87,6 +87,9 @@ from esp_drone_cli.core.protocol.messages import CmdId, CmdStatus, CommandError,
 CONTROL_MODE_ATTITUDE_GROUND_TUNE = 6
 CONTROL_MODE_ALL_MOTOR_TEST = 7
 ARM_STATE_ARMED = 1
+DEFAULT_UDP_HOST = "192.168.4.1"
+DEFAULT_UDP_PORT = 2391
+DEFAULT_UDP_ENDPOINT = f"{DEFAULT_UDP_HOST}:{DEFAULT_UDP_PORT}"
 PID_SOURCE_TEXT = {0: "firmware_default", 1: "NVS", 2: "RAM"}
 GROUND_TUNE_SUBMODE_ATTITUDE_VERIFY = 1
 GROUND_TUNE_SUBMODE_LOW_RISK_LIFTOFF = 2
@@ -103,6 +106,23 @@ CMD_STATUS_NAMES = {
     for name in dir(CmdStatus)
     if name.isupper() and isinstance(getattr(CmdStatus, name), int)
 }
+
+
+class EspDroneArgumentParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.udp_default_commands: set[str] = set()
+
+    def parse_args(self, args=None, namespace=None):
+        rewritten = list(sys.argv[1:] if args is None else args)
+        for index, token in enumerate(rewritten):
+            if token == "--udp" and (
+                index + 1 >= len(rewritten) or rewritten[index + 1] in self.udp_default_commands
+            ):
+                rewritten.insert(index + 1, DEFAULT_UDP_ENDPOINT)
+                break
+        args = rewritten
+        return super().parse_args(args, namespace)
 GROUND_VERIFY_SAFE_PARAMS = (
     ("telemetry_usb_hz", 2, 50),
     ("ground_att_kp_roll", 4, 0.8),
@@ -1505,17 +1525,43 @@ def wait_for_one_sample(session: DeviceSession, timeout: float) -> TelemetrySamp
     raise TimeoutError("attitude-status did not receive telemetry within timeout")
 
 
+def _parse_udp_endpoint(endpoint: str, default_port: int = DEFAULT_UDP_PORT) -> tuple[str, int]:
+    endpoint = str(endpoint).strip()
+    if not endpoint:
+        raise ValueError("UDP endpoint host is empty")
+
+    host, sep, port_text = endpoint.partition(":")
+    if not sep:
+        return host, int(default_port)
+    if not host:
+        raise ValueError("UDP endpoint host is empty")
+    return host, int(port_text or default_port)
+
+
+def _udp_connect_timeout_hint(host: str, port: int, error: BaseException) -> str:
+    if host == DEFAULT_UDP_HOST:
+        return (
+            f"UDP timeout for SoftAP target {host}:{port}: {error}. "
+            "Connect the PC Wi-Fi to ESP-DRONE SoftAP, verify AP password/port, then retry."
+        )
+    return (
+        f"UDP timeout for STA/custom target {host}:{port}: {error}. "
+        "Verify the drone joined the same LAN, use the IP printed by the firmware, and check UDP reachability/port."
+    )
+
+
 def connect_session_from_args(args) -> DeviceSession:
     """根据命令行参数创建并连接设备会话。
 
     Args:
-        args: `argparse` 解析后的参数对象，需包含 `serial`、`udp` 和 `baudrate` 字段。
+        args: `argparse` 解析后的参数对象，需包含 `serial`、`udp`、`drone_ip`、`udp_port`
+            和 `baudrate` 字段。
 
     Returns:
         已建立连接的 `DeviceSession`。
 
     Raises:
-        SystemExit: 未提供 `--serial` 或 `--udp` 时抛出。
+        SystemExit: 未提供 `--serial`、`--udp` 或 `--host/--drone-ip` 时抛出。
         ValueError: UDP 端口无法转换为整数时抛出。
         RuntimeError: 设备连接或握手失败时由下层会话抛出。
     """
@@ -1523,11 +1569,20 @@ def connect_session_from_args(args) -> DeviceSession:
     session = DeviceSession()
     if args.serial:
         session.connect_serial(args.serial, baudrate=args.baudrate)
-    elif args.udp:
-        host, _, port = args.udp.partition(":")
-        session.connect_udp(host, int(port or "2391"))
+    elif args.udp or getattr(args, "drone_ip", None):
+        if args.udp:
+            host, port = _parse_udp_endpoint(args.udp)
+        else:
+            host = str(args.drone_ip).strip()
+            if not host:
+                raise ValueError("UDP host/drone IP is empty")
+            port = int(getattr(args, "udp_port", DEFAULT_UDP_PORT))
+        try:
+            session.connect_udp(host, port)
+        except TimeoutError as exc:
+            raise RuntimeError(_udp_connect_timeout_hint(host, port, exc)) from exc
     else:
-        raise SystemExit("one of --serial or --udp is required")
+        raise SystemExit("one of --serial, --udp, or --host/--drone-ip is required")
     return session
 
 
@@ -1543,7 +1598,19 @@ def add_common_transport_args(parser: argparse.ArgumentParser) -> None:
 
     parser.add_argument("--serial", help="Serial port, for example COM7")
     parser.add_argument("--baudrate", type=int, default=115200)
-    parser.add_argument("--udp", help="UDP endpoint host[:port], default port 2391")
+    parser.add_argument(
+        "--udp",
+        nargs="?",
+        const=DEFAULT_UDP_ENDPOINT,
+        help="UDP endpoint host[:port]. With no value, uses SoftAP 192.168.4.1:2391.",
+    )
+    parser.add_argument(
+        "--host",
+        "--drone-ip",
+        dest="drone_ip",
+        help="Drone UDP host/IP for STA mode, or an explicit SoftAP/custom target.",
+    )
+    parser.add_argument("--udp-port", type=int, default=DEFAULT_UDP_PORT, help="UDP port for --host/--drone-ip")
 
 
 def cmd_connect(session: DeviceSession, _args) -> int:
@@ -1815,7 +1882,7 @@ def cmd_set(session: DeviceSession, args) -> int:
         ValueError: 文本值无法转换为目标参数类型时抛出。
     """
 
-    type_id = {"bool": 0, "u8": 1, "u32": 2, "i32": 3, "float": 4}[args.type]
+    type_id = {"bool": 0, "u8": 1, "u32": 2, "i32": 3, "float": 4, "string": 5}[args.type]
     print(format_param_value(session.set_param(args.name, type_id, args.value)))
     if is_rate_pid_param(args.name):
         print(format_param_value(session.get_param("rate_pid_source")))
@@ -3287,7 +3354,7 @@ def build_parser() -> argparse.ArgumentParser:
         已配置全部子命令和连接参数的解析器对象。
     """
 
-    parser = argparse.ArgumentParser(prog="esp-drone-cli")
+    parser = EspDroneArgumentParser(prog="esp-drone-cli")
     add_common_transport_args(parser)
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -3303,7 +3370,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     set_p = sub.add_parser("set")
     set_p.add_argument("name")
-    set_p.add_argument("type", choices=["bool", "u8", "u32", "i32", "float"])
+    set_p.add_argument("type", choices=["bool", "u8", "u32", "i32", "float", "string"])
     set_p.add_argument("value")
 
     sub.add_parser("list")
@@ -3771,6 +3838,7 @@ def build_parser() -> argparse.ArgumentParser:
     roll_bench_p.add_argument("--orientation-note")
     roll_bench_p.add_argument("--save-params", action="store_true")
 
+    parser.udp_default_commands = set(sub.choices)
     return parser
 
 

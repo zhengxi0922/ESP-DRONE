@@ -92,6 +92,12 @@ TRANSLATIONS = {
         "label.baud": "波特率",
         "label.udp_host": "UDP 主机",
         "label.udp_port": "UDP 端口",
+        "label.udp_mode": "连接模式",
+        "udp.mode.softap": "SoftAP",
+        "udp.mode.sta": "STA",
+        "label.udp_mode": "连接模式",
+        "udp.mode.softap": "SoftAP",
+        "udp.mode.sta": "STA",
         "label.session": "会话信息",
         "label.last_conn_error": "最近连接错误",
         "label.target_hz": "目标频率",
@@ -253,6 +259,12 @@ TRANSLATIONS = {
         "label.baud": "Baud",
         "label.udp_host": "UDP Host",
         "label.udp_port": "UDP Port",
+        "label.udp_mode": "Connection Mode",
+        "udp.mode.softap": "SoftAP",
+        "udp.mode.sta": "STA",
+        "label.udp_mode": "Connection Mode",
+        "udp.mode.softap": "SoftAP",
+        "udp.mode.sta": "STA",
         "label.session": "Session",
         "label.last_conn_error": "Last Connection Error",
         "label.target_hz": "Target Hz",
@@ -415,6 +427,9 @@ TRANSLATIONS = {
         "label.baud": "波特率",
         "label.udp_host": "UDP 主机",
         "label.udp_port": "UDP 端口",
+        "label.udp_mode": "连接模式",
+        "udp.mode.softap": "SoftAP",
+        "udp.mode.sta": "STA",
         "label.session": "会话信息",
         "label.last_conn_error": "最近连接错误",
         "label.target_hz": "目标频率",
@@ -589,6 +604,9 @@ TRANSLATIONS = {
         "label.baud": "Baud",
         "label.udp_host": "UDP Host",
         "label.udp_port": "UDP Port",
+        "label.udp_mode": "Connection Mode",
+        "udp.mode.softap": "SoftAP",
+        "udp.mode.sta": "STA",
         "label.session": "Session",
         "label.last_conn_error": "Last Connection Error",
         "label.target_hz": "Target Hz",
@@ -817,8 +835,9 @@ EXTRA_TRANSLATIONS = {
         "udp.stopped": "STABILIZE_MIN 停止命令已发送",
         "udp.setpoint_sent": "stabilize-min 设定已发送：油门={throttle:.3f} 俯仰={pitch:.3f} 横滚={roll:.3f} 偏航={yaw:.3f}",
         "udp.watchdog_age": "距上一帧设定 {age_ms:.0f} ms",
-        "udp.transport_hint": "请先将电脑连接到 ESP-DRONE SoftAP。默认 AP IP 为 192.168.4.1，默认 UDP 端口为 2391。",
-        "udp.ap_info": "默认 SoftAP SSID：ESP-DRONE | 密码：12345678",
+        "udp.transport_hint": "SoftAP 默认目标为 192.168.4.1:2391；STA 模式请填写固件日志打印的无人机 IP，PC 与无人机必须在同一局域网。",
+        "udp.ap_info": "默认 SoftAP SSID：ESP-DRONE | 密码：12345678 | SoftAP 可作为 STA 配置失败后的兜底入口",
+        "udp.disconnect_stop": "通信断开，已停止 UDP 手动控制和测试流程。",
         "msg.udp_host_required": "需要填写 UDP 主机。",
     },
     "en": {
@@ -909,8 +928,9 @@ EXTRA_TRANSLATIONS = {
         "udp.stopped": "STABILIZE_MIN stop sent",
         "udp.setpoint_sent": "stabilize-min setpoint sent throttle={throttle:.3f} pitch={pitch:.3f} roll={roll:.3f} yaw={yaw:.3f}",
         "udp.watchdog_age": "{age_ms:.0f} ms since setpoint",
-        "udp.transport_hint": "Connect your PC to the ESP-DRONE SoftAP first. Default AP IP is 192.168.4.1. Default UDP port is 2391.",
-        "udp.ap_info": "Default SoftAP SSID: ESP-DRONE | Password: 12345678",
+        "udp.transport_hint": "SoftAP default target is 192.168.4.1:2391. For STA mode, enter the drone IP printed by firmware; PC and drone must be on the same LAN.",
+        "udp.ap_info": "Default SoftAP SSID: ESP-DRONE | Password: 12345678 | SoftAP remains the fallback configuration entry.",
+        "udp.disconnect_stop": "Communication disconnected; UDP manual control and active test flow were stopped.",
         "msg.udp_host_required": "UDP Host is required.",
     },
 }
@@ -1016,6 +1036,7 @@ TYPE_NAMES = {
     2: "u32",
     3: "i32",
     4: "float",
+    5: "string",
 }
 
 PID_SOURCE_TEXT = {0: "firmware_default", 1: "NVS", 2: "RAM"}
@@ -1433,6 +1454,12 @@ class MainWindow(QMainWindow):
         "wifi_ap_enable": "Enable ESP32 SoftAP on boot. USB CDC remains available if Wi-Fi fails.",
         "wifi_ap_channel": "ESP32 SoftAP channel, valid range 1..13. Default is 6.",
         "wifi_udp_port": "Binary CLI/GUI UDP protocol listening port. Default is 2391.",
+        "wifi_mode": "WiFi debug mode: softap, sta, or apsta. Default softap keeps the legacy 192.168.4.1 flow.",
+        "sta_ssid": "STA SSID for joining a router or phone hotspot. Empty value falls back to SoftAP in sta mode.",
+        "sta_password": "STA password. Leave empty only for an open test network.",
+        "sta_static_ip": "Optional STA static IPv4 address. Leave empty for DHCP.",
+        "sta_gateway": "Optional STA gateway used with sta_static_ip.",
+        "sta_netmask": "Optional STA netmask used with sta_static_ip.",
         "imu_mode": "0 = RAW, 1 = DIRECT. Bench validation is currently centered on DIRECT mode.",
         "imu_return_rate_code": "ATK-MS901M return-rate code. 0x00 is 250Hz, 0x01 is 200Hz.",
         "motor_idle_duty": "Brushed motor armed idle floor, normalized 0..1.",
@@ -1688,6 +1715,7 @@ class MainWindow(QMainWindow):
         self._udp_manual_enabled = False
         self._udp_manual_last_send_monotonic: float | None = None
         self._udp_manual_send_inflight = False
+        self._last_sta_udp_host = ""
         self._liftoff_readiness_samples: deque[TelemetrySample] = deque(maxlen=120)
 
         self._build_ui()
@@ -2054,6 +2082,7 @@ class MainWindow(QMainWindow):
         self.link_type_label = QLabel()
         self.serial_port_label = QLabel()
         self.baud_label = QLabel()
+        self.udp_mode_label = QLabel()
         self.udp_host_label = QLabel()
         self.udp_port_label = QLabel()
         self.session_title_label = QLabel()
@@ -2094,6 +2123,9 @@ class MainWindow(QMainWindow):
         udp_page = QWidget()
         udp_form = QGridLayout(udp_page)
         udp_form.setContentsMargins(0, 0, 0, 0)
+        self.udp_mode_combo = QComboBox()
+        self.udp_mode_combo.addItem("SoftAP", "softap")
+        self.udp_mode_combo.addItem("STA", "sta")
         self.udp_host_edit = QLineEdit("192.168.4.1")
         self.udp_port_spin = QSpinBox()
         self.udp_port_spin.setRange(1, 65535)
@@ -2105,12 +2137,14 @@ class MainWindow(QMainWindow):
         self.udp_ap_info_label.setWordWrap(True)
         self.udp_ap_info_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         udp_form.setColumnStretch(1, 1)
-        udp_form.addWidget(self.udp_host_label, 0, 0)
-        udp_form.addWidget(self.udp_host_edit, 0, 1)
-        udp_form.addWidget(self.udp_port_label, 1, 0)
-        udp_form.addWidget(self.udp_port_spin, 1, 1)
-        udp_form.addWidget(self.udp_transport_hint_label, 2, 0, 1, 2)
-        udp_form.addWidget(self.udp_ap_info_label, 3, 0, 1, 2)
+        udp_form.addWidget(self.udp_mode_label, 0, 0)
+        udp_form.addWidget(self.udp_mode_combo, 0, 1)
+        udp_form.addWidget(self.udp_host_label, 1, 0)
+        udp_form.addWidget(self.udp_host_edit, 1, 1)
+        udp_form.addWidget(self.udp_port_label, 2, 0)
+        udp_form.addWidget(self.udp_port_spin, 2, 1)
+        udp_form.addWidget(self.udp_transport_hint_label, 3, 0, 1, 2)
+        udp_form.addWidget(self.udp_ap_info_label, 4, 0, 1, 2)
         self.transport_stack.addWidget(udp_page)
 
         self.connect_button = QPushButton()
@@ -2833,6 +2867,7 @@ class MainWindow(QMainWindow):
     def _wire_signals(self) -> None:
         self.language_combo.currentIndexChanged.connect(self._change_language)
         self.link_type_combo.currentTextChanged.connect(self._update_link_inputs)
+        self.udp_mode_combo.currentIndexChanged.connect(self._handle_udp_mode_changed)
         self.main_splitter.splitterMoved.connect(lambda *_args: self._save_settings())
         self.center_splitter.splitterMoved.connect(lambda *_args: self._save_settings())
         self.right_splitter.splitterMoved.connect(lambda *_args: self._save_settings())
@@ -2957,6 +2992,12 @@ class MainWindow(QMainWindow):
         message = str(error)
         if message.startswith("Connect failed:"):
             return message
+        detail = self._connection_target_detail
+        if detail.startswith("udp ") and "timed out" in message.lower():
+            if "192.168.4.1" in detail:
+                message = f"{message}; SoftAP target unreachable. Connect PC Wi-Fi to ESP-DRONE SoftAP and verify UDP port."
+            else:
+                message = f"{message}; STA/custom target unreachable. Verify drone IP, same LAN, and UDP port."
         return self._t("msg.connect_failed", error=message)
 
     def _set_connection_info_text(self, text: str) -> None:
@@ -3022,6 +3063,34 @@ class MainWindow(QMainWindow):
         Path(output).write_text(self.event_log_edit.toPlainText(), encoding="utf-8")
         self._append_log(self._t("msg.saved_log", path=output))
 
+    def _udp_mode_value(self) -> str:
+        value = self._combo_data(self.udp_mode_combo) if self.udp_mode_combo.count() else "softap"
+        return str(value or "softap")
+
+    def _udp_mode_text(self) -> str:
+        return self._t("udp.mode.sta" if self._udp_mode_value() == "sta" else "udp.mode.softap")
+
+    def _refresh_udp_mode_combo_labels(self) -> None:
+        current_mode = self._udp_mode_value()
+        self.udp_mode_combo.blockSignals(True)
+        self.udp_mode_combo.clear()
+        self.udp_mode_combo.addItem(self._t("udp.mode.softap"), "softap")
+        self.udp_mode_combo.addItem(self._t("udp.mode.sta"), "sta")
+        index = self.udp_mode_combo.findData(current_mode)
+        self.udp_mode_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.udp_mode_combo.blockSignals(False)
+
+    def _handle_udp_mode_changed(self) -> None:
+        mode = self._udp_mode_value()
+        current_host = self.udp_host_edit.text().strip()
+        if mode == "softap":
+            if current_host and current_host != "192.168.4.1":
+                self._last_sta_udp_host = current_host
+            self.udp_host_edit.setText("192.168.4.1")
+        elif current_host == "192.168.4.1" and self._last_sta_udp_host:
+            self.udp_host_edit.setText(self._last_sta_udp_host)
+        self._save_settings()
+
     def _update_link_inputs(self) -> None:
         is_serial = self._combo_data(self.link_type_combo) == "serial"
         self.transport_stack.setCurrentIndex(0 if is_serial else 1)
@@ -3063,8 +3132,10 @@ class MainWindow(QMainWindow):
         self.link_type_label.setText(self._t("label.link"))
         self.serial_port_label.setText(self._t("label.serial_port"))
         self.baud_label.setText(self._t("label.baud"))
+        self.udp_mode_label.setText(self._t("label.udp_mode"))
         self.udp_host_label.setText(self._t("label.udp_host"))
         self.udp_port_label.setText(self._t("label.udp_port"))
+        self._refresh_udp_mode_combo_labels()
         self.udp_transport_hint_label.setText(self._t("udp.transport_hint"))
         self.udp_ap_info_label.setText(self._t("udp.ap_info"))
         self.session_title_label.setText(self._t("label.session"))
@@ -3344,7 +3415,8 @@ class MainWindow(QMainWindow):
             self._show_connect_failure(self._t("msg.udp_host_required"))
             return
         port = int(self.udp_port_spin.value())
-        self._set_connecting_state(f"udp {host}:{port}")
+        mode = self._udp_mode_value()
+        self._set_connecting_state(f"udp {mode} {host}:{port}")
         self._run_session_action(
             "connect_udp",
             lambda: self._session.connect_udp(host, port=port, timeout=1.0),
@@ -3948,6 +4020,7 @@ class MainWindow(QMainWindow):
             self._udp_manual_enabled = False
             if hasattr(self, "_udp_control_timer"):
                 self._udp_control_timer.stop()
+            self._append_log(self._t("udp.disconnect_stop"))
             _set_badge(self.connection_status_chip, self._t("status.disconnected"), "neutral" if not error else "warn")
             self._set_connection_info_text(self._t("status.no_session"))
             self._stream_enabled = False
@@ -4237,6 +4310,7 @@ class MainWindow(QMainWindow):
         self._settings.setValue("link/type", self.link_type_combo.currentData() or self.link_type_combo.currentText())
         self._settings.setValue("serial/port", self.serial_port_combo.currentText())
         self._settings.setValue("serial/baudrate", self.baudrate_spin.value())
+        self._settings.setValue("udp/mode", self._udp_mode_value())
         self._settings.setValue("udp/host", self.udp_host_edit.text())
         self._settings.setValue("udp/port", self.udp_port_spin.value())
         self._settings.setValue("chart/window_index", self.chart_window_combo.currentIndex())
@@ -4266,6 +4340,7 @@ class MainWindow(QMainWindow):
         link_type = self._settings.value("link/type", "serial")
         serial_port = self._settings.value("serial/port", "")
         baudrate = int(self._settings.value("serial/baudrate", 115200))
+        udp_mode = str(self._settings.value("udp/mode", "softap"))
         udp_host = self._settings.value("udp/host", "192.168.4.1")
         udp_port = int(self._settings.value("udp/port", 2391))
         chart_index = int(self._settings.value("chart/window_index", 1))
@@ -4280,6 +4355,8 @@ class MainWindow(QMainWindow):
         self.link_type_combo.setCurrentIndex(link_index if link_index >= 0 else 0)
         self.serial_port_combo.setCurrentText(str(serial_port))
         self.baudrate_spin.setValue(baudrate)
+        udp_mode_index = self.udp_mode_combo.findData(udp_mode)
+        self.udp_mode_combo.setCurrentIndex(udp_mode_index if udp_mode_index >= 0 else 0)
         self.udp_host_edit.setText(str(udp_host))
         self.udp_port_spin.setValue(udp_port)
         self.chart_window_combo.setCurrentIndex(max(0, min(chart_index, self.chart_window_combo.count() - 1)))

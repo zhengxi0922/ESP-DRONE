@@ -92,6 +92,20 @@ python -m esp_drone_cli.gui_main
 3. 波特率保持 `115200`。
 4. 点击 `Connect`。
 
+UDP 连接支持 SoftAP 和 STA：
+
+- SoftAP 是默认方式：`Mode = SoftAP`，`UDP Host = 192.168.4.1`，`UDP Port = 2391`。
+- STA 模式选择 `Mode = STA`，填写固件日志打印的无人机 IP，例如 `sta connected ip=192.168.50.42`。
+- 连接状态和日志会显示当前目标 IP 与通信模式。
+
+推荐联网方式：
+
+- 短期：PC 的 Wi-Fi 连无人机 SoftAP，同时用有线网或手机 USB 共享保持联网。
+- 长期：固件设置 `wifi_mode=sta`，让无人机加入手机热点或路由器；PC 与无人机保持同一局域网。
+- SoftAP 继续保留为配置失败后的兜底入口。
+
+如果通信断开，GUI 会停止当前 UDP 手动控制/测试流程，固件也会清除活动电机/控制状态。WiFi 重连不会重新启动测试，也不会自动解锁。
+
 ## Debug Actions
 
 左侧 `Debug Actions` 现在同时覆盖原有 rate-test 路径和新的 bench-only 圆棍姿态外环路径。

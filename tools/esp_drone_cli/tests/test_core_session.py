@@ -53,6 +53,8 @@ from esp_drone_cli.core.models import (
     TelemetrySample,
     UDP_MANUAL_SETPOINT_STRUCT,
     decode_device_info,
+    decode_param_value,
+    encode_param_value,
 )
 from esp_drone_cli.core.protocol.framing import decode_frame, encode_frame, encode_serial_packet
 from esp_drone_cli.core.protocol.messages import CmdId, CmdStatus, Frame, MsgType
@@ -247,6 +249,8 @@ class FakeSession:
             ParamValue("wifi_ap_enable", 0, True),
             ParamValue("wifi_ap_channel", 1, 6),
             ParamValue("wifi_udp_port", 2, 2391),
+            ParamValue("wifi_mode", 5, "softap"),
+            ParamValue("sta_ssid", 5, ""),
         ]
 
     def subscribe_telemetry(self, callback):
@@ -406,7 +410,12 @@ class FakeSession:
         self._record("set_param", name, type_id, value)
         for index, item in enumerate(self._params):
             if item.name == name:
-                cast_value = float(value) if type_id == 4 else int(value)
+                if type_id == 4:
+                    cast_value = float(value)
+                elif type_id == 5:
+                    cast_value = str(value)
+                else:
+                    cast_value = int(value)
                 self._params[index] = ParamValue(name, type_id, cast_value)
                 return self._params[index]
         item = ParamValue(name, type_id, value)
@@ -951,6 +960,23 @@ def test_device_session_param_value_must_match_requested_name():
 
     assert result.name == "target"
     assert result.value == pytest.approx(4.0)
+    session.disconnect()
+
+
+def test_param_string_value_round_trips_over_host_protocol():
+    payload = encode_param_payload("wifi_mode", 5, b"sta")
+    decoded = decode_param_value(payload)
+
+    assert decoded == ParamValue("wifi_mode", 5, "sta")
+    assert encode_param_value(5, "apsta") == b"apsta"
+
+    session = DeviceSession()
+    transport = MockTransport()
+    session.connect_transport(transport)
+
+    result = session.set_param("sta_ssid", 5, "bench-hotspot")
+
+    assert result == ParamValue("sta_ssid", 5, "bench-hotspot")
     session.disconnect()
 
 
@@ -1941,12 +1967,17 @@ def test_gui_actions_route_through_device_session(monkeypatch, tmp_path: Path):
     assert window.debug_action_tabs.tabText(2) == window._t("tab.hang_attitude")
     assert window.debug_action_tabs.tabText(3) == window._t("tab.udp_control")
     assert window.debug_action_tabs.currentIndex() == 0
-    assert window.params_table.rowCount() == 6
+    assert window.params_table.rowCount() == 8
     window.link_type_combo.setCurrentIndex(window.link_type_combo.findData("udp"))
     app.processEvents()
+    assert window.udp_mode_combo.currentData() == "softap"
     assert window.udp_host_edit.text() == "192.168.4.1"
     assert window.udp_port_spin.value() == 2391
     assert "ESP-DRONE" in window.udp_ap_info_label.text()
+    window.udp_mode_combo.setCurrentIndex(window.udp_mode_combo.findData("sta"))
+    window.udp_host_edit.setText("192.168.50.42")
+    assert window.udp_mode_combo.currentData() == "sta"
+    assert window.udp_host_edit.text() == "192.168.50.42"
     window.link_type_combo.setCurrentIndex(window.link_type_combo.findData("serial"))
     app.processEvents()
     session.calls.clear()
@@ -2276,6 +2307,42 @@ def test_gui_udp_empty_host_fails_without_worker(monkeypatch, tmp_path: Path):
 
 
 @pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
+def test_gui_sta_udp_mode_connects_selected_drone_ip(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+
+    from esp_drone_cli.gui.main_window import MainWindow, QtSessionBridge
+
+    class SyncBridge(QtSessionBridge):
+        def run_async(self, label: str, callback) -> None:
+            try:
+                result = callback()
+                self.command_finished.emit(label, result)
+            except Exception as exc:  # pragma: no cover - test should not hit
+                self.error_raised.emit(f"{label}: {exc}")
+
+    app = QApplication.instance() or QApplication([])
+    session = FakeSession()
+    settings = QSettings(str(tmp_path / "gui-sta-udp.ini"), QSettings.IniFormat)
+    window = MainWindow(session=session, bridge_cls=SyncBridge, serial_port_provider=lambda: [], settings=settings)
+
+    window.link_type_combo.setCurrentIndex(window.link_type_combo.findData("udp"))
+    window.udp_mode_combo.setCurrentIndex(window.udp_mode_combo.findData("sta"))
+    window.udp_host_edit.setText("192.168.50.42")
+    window.udp_port_spin.setValue(2391)
+    window.connect_button.click()
+    app.processEvents()
+
+    assert ("connect_udp", ("192.168.50.42", 2391, 1.0), {}) in session.calls
+    assert "udp sta 192.168.50.42:2391" in window.connection_info_label.text()
+
+    window.close()
+    app.processEvents()
+
+
+@pytest.mark.skipif(importlib.util.find_spec("PyQt5") is None or importlib.util.find_spec("pyqtgraph") is None, reason="PyQt5/pyqtgraph not installed")
 def test_gui_connect_watchdog_restores_ui_when_worker_never_returns(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
 
@@ -2365,6 +2432,13 @@ def test_cli_parser_compatibility_without_gui_dependency():
     assert udp_args.action == "setpoint"
     assert udp_args.throttle == pytest.approx(0.08)
     assert udp_args.pitch == pytest.approx(-0.02)
+
+    udp_default_args = build_parser().parse_args(["--udp", "connect"])
+    assert udp_default_args.udp == "192.168.4.1:2391"
+
+    sta_args = build_parser().parse_args(["--host", "192.168.50.42", "--udp-port", "2391", "connect"])
+    assert sta_args.drone_ip == "192.168.50.42"
+    assert sta_args.udp_port == 2391
 
     ground_log_args = build_parser().parse_args(["--serial", "COM7", "ground-log", "--duration", "2"])
     assert ground_log_args.command == "ground-log"
@@ -2466,6 +2540,42 @@ def test_cli_parser_compatibility_without_gui_dependency():
 
     short_hop_profile_args = build_parser().parse_args(["--serial", "COM7", "apply-short-hop-tuned-profile"])
     assert short_hop_profile_args.command == "apply-short-hop-tuned-profile"
+
+
+def test_cli_connect_session_uses_sta_drone_ip(monkeypatch):
+    from esp_drone_cli.cli import main as cli_main
+
+    class StubSession:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple, dict]] = []
+
+        def connect_udp(self, host: str, port: int = 2391, timeout: float = 1.0):
+            self.calls.append(("connect_udp", (host, port, timeout), {}))
+            return DeviceInfo(10, 1, 0, 0, 0)
+
+    session = StubSession()
+    monkeypatch.setattr(cli_main, "DeviceSession", lambda: session)
+    args = SimpleNamespace(serial=None, baudrate=115200, udp=None, drone_ip="192.168.50.42", udp_port=2391)
+
+    assert cli_main.connect_session_from_args(args) is session
+    assert session.calls == [("connect_udp", ("192.168.50.42", 2391, 1.0), {})]
+
+
+def test_cli_connect_session_reports_sta_timeout(monkeypatch):
+    from esp_drone_cli.cli import main as cli_main
+
+    class TimeoutSession:
+        def connect_udp(self, host: str, port: int = 2391, timeout: float = 1.0):
+            raise TimeoutError("hello timeout")
+
+    monkeypatch.setattr(cli_main, "DeviceSession", lambda: TimeoutSession())
+    args = SimpleNamespace(serial=None, baudrate=115200, udp=None, drone_ip="192.168.50.42", udp_port=2391)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        cli_main.connect_session_from_args(args)
+
+    assert "STA/custom target 192.168.50.42:2391" in str(excinfo.value)
+    assert "same LAN" in str(excinfo.value)
 
 
 def test_cli_import_does_not_require_pyqt5(monkeypatch):
@@ -3122,6 +3232,17 @@ def test_firmware_dispatch_registers_attitude_capture_ref():
     assert "CONSOLE_FEATURE_ATTITUDE_HANG_BENCH" in protocol
 
 
+def test_firmware_udp_protocol_covers_usb_console_commands():
+    repo_root = Path(__file__).resolve().parents[3]
+    dispatch = (repo_root / "firmware" / "main" / "console" / "console.c").read_text(encoding="utf-8")
+    udp_protocol = (repo_root / "firmware" / "main" / "udp_protocol" / "udp_protocol.c").read_text(encoding="utf-8")
+
+    usb_cases = set(re.findall(r"case\s+(CMD_[A-Z0-9_]+)\s*:", dispatch))
+    udp_cases = set(re.findall(r"case\s+(CMD_[A-Z0-9_]+)\s*:", udp_protocol))
+
+    assert usb_cases - udp_cases == set()
+
+
 def test_firmware_dispatch_registers_udp_manual_control():
     repo_root = Path(__file__).resolve().parents[3]
     protocol = (repo_root / "firmware" / "main" / "console" / "console_protocol.h").read_text(encoding="utf-8")
@@ -3217,12 +3338,40 @@ def test_firmware_registers_softap_udp_transport():
     assert "wifi_ap_enable" in params_h
     assert "wifi_ap_channel" in params_c
     assert "wifi_udp_port" in params_c
+    assert "wifi_mode" in params_h
+    assert "sta_ssid" in params_h
+    assert "PARAM_TYPE_STRING" in params_h
+    assert "store->wifi_mode" in params_c
     assert "esp_netif_create_default_wifi_ap" in wifi_ap
-    assert "esp_wifi_set_mode(WIFI_MODE_AP)" in wifi_ap
-    assert "softap started ssid=" in wifi_ap
+    assert "esp_netif_create_default_wifi_sta" in wifi_ap
+    assert "WIFI_MODE_STA" in wifi_ap
+    assert "WIFI_MODE_APSTA" in wifi_ap
+    assert "softap started" in wifi_ap
+    assert "ssid=%s" in wifi_ap
+    assert "sta connected ip=" in wifi_ap
+    assert "sta fallback softap started" in wifi_ap
+    assert "wifi link lost:" in wifi_ap
+    assert "motor_stop_all();" in wifi_ap
+    assert "safety_request_disarm();" in wifi_ap
     assert "WIFI_EVENT_AP_STACONNECTED" in wifi_ap
     assert "INADDR_ANY" in udp_protocol
     assert "params_get()->wifi_udp_port" in udp_protocol
+
+
+def test_docs_describe_softap_sta_udp_paths():
+    repo_root = Path(__file__).resolve().parents[3]
+    transport_doc = (repo_root / "docs" / "softap_udp_transport.md").read_text(encoding="utf-8")
+    cli_doc = (repo_root / "docs" / "python_cli_usage.md").read_text(encoding="utf-8")
+    gui_doc = (repo_root / "docs" / "python_gui_usage.md").read_text(encoding="utf-8")
+    protocol_doc = (repo_root / "docs" / "udp_manual_control_protocol.md").read_text(encoding="utf-8")
+
+    assert "`wifi_mode`: `softap`, `sta`, or `apsta`" in transport_doc
+    assert "sta connected ip=" in transport_doc
+    assert "SoftAP as the fallback" in transport_doc
+    assert "python -m esp_drone_cli --host 192.168.50.42 connect" in cli_doc
+    assert "`--host` and `--drone-ip` are aliases" in cli_doc
+    assert "`Mode = STA`" in gui_doc
+    assert "STA WiFi disconnect clears active motor tests/control state" in protocol_doc
 
 
 def test_firmware_registers_motor_trim_params_and_applies_before_motor_clamp():
@@ -3233,7 +3382,7 @@ def test_firmware_registers_motor_trim_params_and_applies_before_motor_clamp():
     mixer_c = (repo_root / "firmware" / "main" / "mixer" / "mixer.c").read_text(encoding="utf-8")
     app_main = (repo_root / "firmware" / "main" / "app_main.c").read_text(encoding="utf-8")
 
-    assert "#define PARAMS_SCHEMA_VERSION 10u" in params_h
+    assert "#define PARAMS_SCHEMA_VERSION 11u" in params_h
     assert "float motor_trim_scale[4];" in params_h
     assert "float motor_trim_offset[4];" in params_h
     assert "float motor_scale[4];" in params_h
@@ -3248,7 +3397,7 @@ def test_firmware_registers_motor_trim_params_and_applies_before_motor_clamp():
     assert '"motor_offset_m3"' in params_c
     assert '"motor_deadband_m3"' in params_c
     assert '"motor_gamma_m3"' in params_c
-    assert "store->motor_pwm_freq_hz = 24000;" in params_c
+    assert "store->motor_pwm_freq_hz = 15000;" in params_c
     assert "store->motor_idle_duty = 0.03f;" in params_c
     assert "store->motor_startup_boost_duty = 0.05f;" in params_c
     assert "store->motor_slew_limit_per_tick = 0.02f;" in params_c
@@ -3258,6 +3407,7 @@ def test_firmware_registers_motor_trim_params_and_applies_before_motor_clamp():
     assert "store->motor_gamma[i] = 1.0f;" in params_c
     assert "PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_TRIM 8u" in params_c
     assert "PARAMS_SCHEMA_VERSION_BEFORE_STABILIZE_MIN 9u" in params_c
+    assert "PARAMS_SCHEMA_VERSION_BEFORE_WIFI_STA 10u" in params_c
     assert "params_validate_pwm_freq_resolution" in params_c
     assert "freq_hz > 40000u" in params_c
     assert "<= 80000000ull" in params_c

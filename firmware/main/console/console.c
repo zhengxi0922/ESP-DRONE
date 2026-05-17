@@ -267,7 +267,7 @@ static bool console_decode_axis_request(uint8_t axis_id, float value, axis3f_t *
 
 static void console_send_param_value(const char *name)
 {
-    uint8_t payload[128];
+    uint8_t payload[192];
     param_value_t value = {0};
     param_type_t type = PARAM_TYPE_U8;
     if (!params_try_get(name, &value, &type)) {
@@ -301,6 +301,13 @@ static void console_send_param_value(const char *name)
     case PARAM_TYPE_FLOAT:
         memcpy(payload + offset, &value.f32, sizeof(value.f32));
         value_len = sizeof(value.f32);
+        break;
+    case PARAM_TYPE_STRING:
+        value_len = strlen(value.str);
+        if (offset + value_len > sizeof(payload)) {
+            return;
+        }
+        memcpy(payload + offset, value.str, value_len);
         break;
     }
 
@@ -841,6 +848,15 @@ static void console_handle_param_set(const uint8_t *payload, size_t len)
         }
         memcpy(&value.f32, value_ptr, sizeof(float));
         break;
+    case PARAM_TYPE_STRING: {
+        const size_t value_len = len - (2u + name_len);
+        if (value_len > PARAM_STRING_VALUE_MAX_LEN) {
+            return;
+        }
+        memcpy(value.str, value_ptr, value_len);
+        value.str[value_len] = '\0';
+        break;
+    }
     default:
         return;
     }

@@ -7,6 +7,7 @@
 
 #include <math.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "nvs.h"
@@ -43,6 +44,7 @@ static params_rate_pid_source_t s_rate_pid_source = PARAM_RATE_PID_SOURCE_FIRMWA
 #define PARAMS_SCHEMA_VERSION_BEFORE_ATTITUDE_VERIFY 7u
 #define PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_TRIM 8u
 #define PARAMS_SCHEMA_VERSION_BEFORE_STABILIZE_MIN 9u
+#define PARAMS_SCHEMA_VERSION_BEFORE_WIFI_STA 10u
 
 /* 参数系统采用“单 blob + schema_version + CRC32”保存策略。
  * 运行时所有参数写入都必须先过 params_try_set() 的合法性校验。 */
@@ -90,6 +92,12 @@ static const param_descriptor_t s_param_descs[] = {
     {"wifi_ap_enable", PARAM_TYPE_BOOL, offsetof(params_store_t, wifi_ap_enable)},
     {"wifi_ap_channel", PARAM_TYPE_U8, offsetof(params_store_t, wifi_ap_channel)},
     {"wifi_udp_port", PARAM_TYPE_U32, offsetof(params_store_t, wifi_udp_port)},
+    {"wifi_mode", PARAM_TYPE_STRING, offsetof(params_store_t, wifi_mode)},
+    {"sta_ssid", PARAM_TYPE_STRING, offsetof(params_store_t, sta_ssid)},
+    {"sta_password", PARAM_TYPE_STRING, offsetof(params_store_t, sta_password)},
+    {"sta_static_ip", PARAM_TYPE_STRING, offsetof(params_store_t, sta_static_ip)},
+    {"sta_gateway", PARAM_TYPE_STRING, offsetof(params_store_t, sta_gateway)},
+    {"sta_netmask", PARAM_TYPE_STRING, offsetof(params_store_t, sta_netmask)},
     {"imu_mode", PARAM_TYPE_I32, offsetof(params_store_t, imu_mode)},
     {"imu_return_rate_code", PARAM_TYPE_U32, offsetof(params_store_t, imu_return_rate_code)},
     {"imu_map_x", PARAM_TYPE_I32, offsetof(params_store_t, imu_map_x)},
@@ -213,8 +221,8 @@ static void params_apply_defaults(params_store_t *store)
 {
     memset(store, 0, sizeof(*store));
 
-    /* Coreless brushed defaults: quieter PWM and softer startup for bench bring-up. */
-    store->motor_pwm_freq_hz = 24000;
+    /* Coreless brushed defaults: conservative PWM and softer startup for bench bring-up. */
+    store->motor_pwm_freq_hz = 15000;
     store->motor_idle_duty = 0.03f;
     store->motor_max_duty = 0.95f;
     store->motor_startup_boost_duty = 0.05f;
@@ -243,6 +251,7 @@ static void params_apply_defaults(params_store_t *store)
     store->wifi_ap_enable = true;
     store->wifi_ap_channel = 6;
     store->wifi_udp_port = 2391;
+    snprintf(store->wifi_mode, sizeof(store->wifi_mode), "softap");
 
     store->imu_mode = IMU_MODE_DIRECT;
     store->imu_return_rate_code = 0x01;
@@ -415,12 +424,68 @@ static bool params_validate_telemetry_rates(const params_store_t *store)
            store->telemetry_udp_hz <= 100u;
 }
 
+static bool params_string_is_terminated(const char *value, size_t capacity)
+{
+    return value != NULL && capacity > 0u && memchr(value, '\0', capacity) != NULL;
+}
+
+static bool params_ipv4_text_is_valid(const char *value)
+{
+    unsigned int octet0 = 0;
+    unsigned int octet1 = 0;
+    unsigned int octet2 = 0;
+    unsigned int octet3 = 0;
+    char tail = '\0';
+
+    return value != NULL &&
+           value[0] != '\0' &&
+           sscanf(value, "%u.%u.%u.%u%c", &octet0, &octet1, &octet2, &octet3, &tail) == 4 &&
+           octet0 <= 255u &&
+           octet1 <= 255u &&
+           octet2 <= 255u &&
+           octet3 <= 255u;
+}
+
+static bool params_validate_wifi_strings(const params_store_t *store)
+{
+    if (!params_string_is_terminated(store->wifi_mode, sizeof(store->wifi_mode)) ||
+        !params_string_is_terminated(store->sta_ssid, sizeof(store->sta_ssid)) ||
+        !params_string_is_terminated(store->sta_password, sizeof(store->sta_password)) ||
+        !params_string_is_terminated(store->sta_static_ip, sizeof(store->sta_static_ip)) ||
+        !params_string_is_terminated(store->sta_gateway, sizeof(store->sta_gateway)) ||
+        !params_string_is_terminated(store->sta_netmask, sizeof(store->sta_netmask))) {
+        return false;
+    }
+
+    if (strcmp(store->wifi_mode, "softap") != 0 &&
+        strcmp(store->wifi_mode, "sta") != 0 &&
+        strcmp(store->wifi_mode, "apsta") != 0) {
+        return false;
+    }
+
+    if (store->sta_static_ip[0] != '\0' &&
+        (!params_ipv4_text_is_valid(store->sta_static_ip) ||
+         !params_ipv4_text_is_valid(store->sta_gateway) ||
+         !params_ipv4_text_is_valid(store->sta_netmask))) {
+        return false;
+    }
+    if (store->sta_gateway[0] != '\0' && !params_ipv4_text_is_valid(store->sta_gateway)) {
+        return false;
+    }
+    if (store->sta_netmask[0] != '\0' && !params_ipv4_text_is_valid(store->sta_netmask)) {
+        return false;
+    }
+
+    return true;
+}
+
 static bool params_validate_network(const params_store_t *store)
 {
     return store->wifi_ap_channel >= 1u &&
            store->wifi_ap_channel <= 13u &&
            store->wifi_udp_port >= 1u &&
-           store->wifi_udp_port <= 65535u;
+           store->wifi_udp_port <= 65535u &&
+           params_validate_wifi_strings(store);
 }
 
 static bool params_validate_battery_thresholds(const params_store_t *store)
@@ -665,9 +730,11 @@ static bool params_try_load_from_nvs(params_store_t *store)
         header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_TRIM;
     const bool pre_stabilize_min_schema =
         header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_STABILIZE_MIN;
+    const bool pre_wifi_sta_schema =
+        header.schema_version == PARAMS_SCHEMA_VERSION_BEFORE_WIFI_STA;
     const size_t payload_len = len - sizeof(header);
     if (header.magic != PARAMS_BLOB_MAGIC ||
-        (!current_schema && !pre_motor_remap_schema && !pre_ground_tune_schema && !pre_rate_first_ground_tune_schema && !pre_attitude_verify_schema && !pre_motor_trim_schema && !pre_stabilize_min_schema) ||
+        (!current_schema && !pre_motor_remap_schema && !pre_ground_tune_schema && !pre_rate_first_ground_tune_schema && !pre_attitude_verify_schema && !pre_motor_trim_schema && !pre_stabilize_min_schema && !pre_wifi_sta_schema) ||
         header.payload_len != payload_len ||
         header.payload_len > sizeof(params_store_t)) {
         return false;
@@ -805,6 +872,32 @@ static void *params_ptr_from_desc(const param_descriptor_t *desc)
     return ((uint8_t *)&s_params) + desc->offset;
 }
 
+static size_t params_string_capacity_from_desc(const param_descriptor_t *desc)
+{
+    if (desc == NULL || desc->type != PARAM_TYPE_STRING) {
+        return 0u;
+    }
+    if (strcmp(desc->name, "wifi_mode") == 0) {
+        return sizeof(s_params.wifi_mode);
+    }
+    if (strcmp(desc->name, "sta_ssid") == 0) {
+        return sizeof(s_params.sta_ssid);
+    }
+    if (strcmp(desc->name, "sta_password") == 0) {
+        return sizeof(s_params.sta_password);
+    }
+    if (strcmp(desc->name, "sta_static_ip") == 0) {
+        return sizeof(s_params.sta_static_ip);
+    }
+    if (strcmp(desc->name, "sta_gateway") == 0) {
+        return sizeof(s_params.sta_gateway);
+    }
+    if (strcmp(desc->name, "sta_netmask") == 0) {
+        return sizeof(s_params.sta_netmask);
+    }
+    return 0u;
+}
+
 bool params_try_get(const char *name, param_value_t *out_value, param_type_t *out_type)
 {
     if (name == NULL || out_value == NULL || out_type == NULL) {
@@ -851,6 +944,9 @@ bool params_try_get(const char *name, param_value_t *out_value, param_type_t *ou
             return true;
         case PARAM_TYPE_FLOAT:
             out_value->f32 = *(const float *)ptr;
+            return true;
+        case PARAM_TYPE_STRING:
+            snprintf(out_value->str, sizeof(out_value->str), "%s", (const char *)ptr);
             return true;
         }
     }
@@ -905,6 +1001,16 @@ bool params_try_set(const char *name, param_value_t value, param_type_t type)
         case PARAM_TYPE_FLOAT:
             *(float *)ptr = value.f32;
             break;
+        case PARAM_TYPE_STRING: {
+            const size_t capacity = params_string_capacity_from_desc(desc);
+            if (capacity == 0u ||
+                memchr(value.str, '\0', sizeof(value.str)) == NULL ||
+                strlen(value.str) >= capacity) {
+                return false;
+            }
+            snprintf((char *)ptr, capacity, "%s", value.str);
+            break;
+        }
         }
 
         if (!params_validate_store(&candidate)) {

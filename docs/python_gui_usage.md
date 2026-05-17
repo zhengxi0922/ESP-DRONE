@@ -117,6 +117,20 @@ Typical serial connection:
 3. Keep `115200` unless the firmware changes later.
 4. Click `Connect`.
 
+UDP connection supports both SoftAP and STA:
+
+- SoftAP is the default and uses `Mode = SoftAP`, `UDP Host = 192.168.4.1`, `UDP Port = 2391`.
+- STA mode uses `Mode = STA`; enter the drone IP printed by firmware, for example `sta connected ip=192.168.50.42`.
+- The connection status and log show the current target IP and communication mode.
+
+Recommended networking:
+
+- Short term: keep the PC Wi-Fi on the drone SoftAP and use wired Ethernet or phone USB tethering for internet.
+- Long term: set firmware `wifi_mode=sta` so the drone joins a phone hotspot/router, and keep PC and drone on the same LAN.
+- Keep SoftAP available as the fallback configuration entry.
+
+If communication drops, the GUI disables the active UDP manual/test flow and the firmware clears active motor/control state. Reconnecting WiFi does not restart a test or arm the vehicle.
+
 ## Debug Actions
 
 The left-side `Debug Actions` area covers rate-test, constrained-rig hang-attitude, flat-ground tune, attitude ground verify, low-risk liftoff verify, and UDP manual paths.

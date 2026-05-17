@@ -4,7 +4,7 @@ This feature is experimental bench/manual control only. It is not a mature free-
 
 ## Scope
 
-- Transport: binary CLI/GUI UDP protocol on port `2391`, reachable through the ESP32 SoftAP transport described in [softap_udp_transport.md](./softap_udp_transport.md).
+- Transport: binary CLI/GUI UDP protocol on port `2391`, reachable through either default SoftAP `192.168.4.1` or the STA IP printed by firmware. See [softap_udp_transport.md](./softap_udp_transport.md).
 - GUI: `UDP Control` tab in the Python GUI.
 - Firmware mode: `CONTROL_MODE_UDP_MANUAL`.
 - Control style: throttle is a collective/base duty target; roll/pitch use the flat-ground reference outer loop to generate rate setpoints, and yaw remains mapped through the existing rate PID before mixer output.
@@ -81,6 +81,7 @@ The GUI displays max duty as `Max PWM (%)`, but firmware stores normalized duty 
 - `UDP_MANUAL_STOP` and `UDP_MANUAL_DISABLE` clear setpoints, stop motors, leave manual mode, and request disarm.
 - Setpoints are finite-checked and clamped by firmware.
 - During `CONTROL_MODE_UDP_MANUAL`, throttle is the collective/base duty target.
+- STA WiFi disconnect clears active motor tests/control state, stops motors, disables UDP telemetry streaming, and requests disarm. A later WiFi reconnect does not restart UDP manual or arm the vehicle.
 
 Roll/pitch rate setpoints come from `ground_tune_compute()` using the captured flat-ground reference and then pass through the existing rate PID. Yaw keeps the manual normalized-input-to-rate-setpoint path before the same rate PID.
 

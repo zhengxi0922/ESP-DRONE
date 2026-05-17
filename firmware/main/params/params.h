@@ -39,7 +39,13 @@
  *
  * @note 参数布局发生不兼容变化时应递增。
  */
-#define PARAMS_SCHEMA_VERSION 10u
+#define PARAMS_SCHEMA_VERSION 11u
+
+#define PARAM_STRING_VALUE_MAX_LEN 64u
+#define WIFI_MODE_TEXT_MAX_LEN 8u
+#define WIFI_STA_SSID_MAX_LEN 32u
+#define WIFI_STA_PASSWORD_MAX_LEN 64u
+#define WIFI_IPV4_TEXT_MAX_LEN 15u
 
 /**
  * @brief 参数值类型编号。
@@ -52,6 +58,7 @@ typedef enum {
     PARAM_TYPE_U32 = 2,   /**< 32 位无符号整数。 */
     PARAM_TYPE_I32 = 3,   /**< 32 位有符号整数。 */
     PARAM_TYPE_FLOAT = 4, /**< 32 位浮点数。 */
+    PARAM_TYPE_STRING = 5, /**< UTF-8/NUL-terminated string value. */
 } param_type_t;
 
 /**
@@ -63,6 +70,7 @@ typedef union {
     uint32_t u32; /**< 32 位无符号整数。 */
     int32_t i32;  /**< 32 位有符号整数。 */
     float f32;    /**< 32 位浮点数。 */
+    char str[PARAM_STRING_VALUE_MAX_LEN + 1u]; /**< NUL-terminated string value. */
 } param_value_t;
 
 typedef enum {
@@ -202,6 +210,18 @@ typedef struct {
     float stabilize_min_angle_kp_pitch;
     float stabilize_min_max_rate_dps;
     float stabilize_min_max_yaw_rate_dps;
+
+    /*
+     * WiFi STA/APSTA debug parameters were appended after schema 10 fields so
+     * older NVS blobs can be copied over defaults without shifting existing
+     * offsets.
+     */
+    char wifi_mode[WIFI_MODE_TEXT_MAX_LEN + 1u];
+    char sta_ssid[WIFI_STA_SSID_MAX_LEN + 1u];
+    char sta_password[WIFI_STA_PASSWORD_MAX_LEN + 1u];
+    char sta_static_ip[WIFI_IPV4_TEXT_MAX_LEN + 1u];
+    char sta_gateway[WIFI_IPV4_TEXT_MAX_LEN + 1u];
+    char sta_netmask[WIFI_IPV4_TEXT_MAX_LEN + 1u];
 } params_store_t;
 
 /**

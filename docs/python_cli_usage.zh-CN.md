@@ -53,14 +53,25 @@ pip install -e .[gui]
 
 - `UART0` 保留给 `ATK-MS901M`
 - 下方串口示例使用 `--serial COMx`
-- UDP 示例使用 SoftAP binary protocol：`192.168.4.1:2391`
+- UDP 示例默认使用 SoftAP binary protocol：`192.168.4.1:2391`
+- STA 模式复用同一套 UDP 协议和端口；用 `--host` 或 `--drone-ip` 指定无人机 IP
+
+推荐联网方式：
+
+- 短期：PC 的 Wi-Fi 连无人机 SoftAP，同时用有线网或手机 USB 共享保持联网。
+- 长期：设置无人机 `wifi_mode=sta`，让它加入手机热点或路由器；PC 与无人机在同一局域网内通信。
+- SoftAP 继续作为配置失败后的兜底入口。
 
 通用连接示例：
 
 ```powershell
 python -m esp_drone_cli --serial COM7 connect
 python -m esp_drone_cli --udp 192.168.4.1:2391 connect
+python -m esp_drone_cli --udp connect
+python -m esp_drone_cli --host 192.168.50.42 connect
 ```
+
+`--udp` 不带地址时使用默认 SoftAP 目标。`--host` 与 `--drone-ip` 是 STA/自定义 UDP 目标的同义参数；`--udp-port` 默认 `2391`。
 
 ## 常用命令
 
@@ -77,11 +88,11 @@ python -m esp_drone_cli --serial COM7 log --timeout 3 --telemetry
 参数查看和修改：
 
 ```powershell
-python -m esp_drone_cli --serial COM7 param-list
-python -m esp_drone_cli --serial COM7 get-param rate_kp_roll
-python -m esp_drone_cli --serial COM7 set-param rate_kp_roll 0.0030
-python -m esp_drone_cli --serial COM7 save-params
-python -m esp_drone_cli --serial COM7 reset-params
+python -m esp_drone_cli --serial COM7 list
+python -m esp_drone_cli --serial COM7 get rate_kp_roll
+python -m esp_drone_cli --serial COM7 set rate_kp_roll float 0.0030
+python -m esp_drone_cli --serial COM7 save
+python -m esp_drone_cli --serial COM7 reset
 ```
 
 当前 GitHub 版本 `params.c` 中的固件默认 rate PID 是：
@@ -156,6 +167,17 @@ python -m esp_drone_cli --udp 192.168.4.1:2391 udp-manual enable
 python -m esp_drone_cli --udp 192.168.4.1:2391 udp-manual setpoint --throttle 0.05 --roll 0 --pitch 0 --yaw 0
 python -m esp_drone_cli --udp 192.168.4.1:2391 udp-manual stop
 ```
+
+固件日志显示 `sta connected ip=192.168.50.42` 后的 STA 示例：
+
+```powershell
+python -m esp_drone_cli --host 192.168.50.42 connect
+python -m esp_drone_cli --host 192.168.50.42 get wifi_mode
+python -m esp_drone_cli --host 192.168.50.42 udp-manual enable
+python -m esp_drone_cli --host 192.168.50.42 udp-manual stop
+```
+
+UDP 超时提示会区分默认 SoftAP 目标与 STA/自定义目标。`ACK timeout` 表示主机已使用 UDP 发送命令，但没有收到对应命令确认。
 
 ## 注意
 

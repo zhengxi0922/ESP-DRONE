@@ -16,6 +16,7 @@
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
 
+#include "attitude_bench.h"
 #include "console_protocol.h"
 #include "console.h"
 #include "controller.h"
@@ -32,6 +33,8 @@
 #define UDP_PROTOCOL_DEFAULT_PORT 2391
 #define UDP_PROTOCOL_RX_BUF_SIZE 512
 #define UDP_PROTOCOL_FRAME_BUF_SIZE 384
+#define UDP_AXIS_TEST_ABS_MAX 0.25f
+#define UDP_RATE_TEST_ABS_MAX_DPS 200.0f
 #define UDP_ALL_MOTOR_TEST_MAX_DUTY 0.35f
 #define UDP_ALL_MOTOR_TEST_MIN_DURATION_MS 100u
 #define UDP_ALL_MOTOR_TEST_MAX_DURATION_MS 5000u
@@ -51,6 +54,8 @@ static socklen_t s_stream_client_len;
 static bool s_stream_client_valid;
 static bool s_udp_stream_enabled;
 static uint16_t s_udp_tx_seq;
+
+static void udp_record_stream_client(const struct sockaddr_storage *addr, socklen_t addr_len, bool enabled);
 
 static uint16_t udp_protocol_port(void)
 {
@@ -133,7 +138,7 @@ static void udp_send_param_value_to(int sock,
                                     socklen_t addr_len,
                                     const char *name)
 {
-    uint8_t payload[128];
+    uint8_t payload[192];
     param_value_t value = {0};
     param_type_t type = PARAM_TYPE_U8;
     if (!params_try_get(name, &value, &type)) {
@@ -168,6 +173,13 @@ static void udp_send_param_value_to(int sock,
         memcpy(payload + offset, &value.f32, sizeof(value.f32));
         value_len = sizeof(value.f32);
         break;
+    case PARAM_TYPE_STRING:
+        value_len = strlen(value.str);
+        if (offset + value_len > sizeof(payload)) {
+            return;
+        }
+        memcpy(payload + offset, value.str, value_len);
+        break;
     }
 
     udp_send_frame_to(sock, addr, addr_len, MSG_PARAM_VALUE, payload, (uint16_t)(offset + value_len));
@@ -179,6 +191,80 @@ static bool udp_sample_supports_ground_ref(const imu_sample_t *sample)
            sample->health == IMU_HEALTH_OK &&
            sample->has_gyro_acc &&
            sample->has_quaternion;
+}
+
+static bool udp_has_active_motor_test(void)
+{
+    int logical_motor = -1;
+    float duty = 0.0f;
+    runtime_state_get_motor_test(&logical_motor, &duty);
+    return logical_motor >= 0 && duty > 0.0f;
+}
+
+static bool udp_value_is_finite_in_range(float value, float min_value, float max_value)
+{
+    return isfinite(value) && value >= min_value && value <= max_value;
+}
+
+static bool udp_axis_test_value_is_valid(float value)
+{
+    return udp_value_is_finite_in_range(value, -UDP_AXIS_TEST_ABS_MAX, UDP_AXIS_TEST_ABS_MAX);
+}
+
+static bool udp_rate_test_value_is_valid(float value_dps)
+{
+    return udp_value_is_finite_in_range(value_dps, -UDP_RATE_TEST_ABS_MAX_DPS, UDP_RATE_TEST_ABS_MAX_DPS);
+}
+
+static bool udp_decode_axis_request(uint8_t axis_id, float value, axis3f_t *out_axis)
+{
+    if (out_axis == NULL) {
+        return false;
+    }
+    *out_axis = (axis3f_t){0};
+    switch (axis_id) {
+    case 0:
+        out_axis->roll = value;
+        return true;
+    case 1:
+        out_axis->pitch = value;
+        return true;
+    case 2:
+        out_axis->yaw = value;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void udp_reset_attitude_state(bool clear_reference)
+{
+    if (clear_reference) {
+        attitude_bench_clear_reference();
+    } else {
+        attitude_bench_reset_status();
+    }
+}
+
+static void udp_reset_ground_state(bool clear_reference)
+{
+    if (clear_reference) {
+        ground_tune_clear_reference();
+    } else {
+        ground_tune_reset_status();
+    }
+}
+
+static void udp_stop_active_control(bool clear_attitude_reference)
+{
+    runtime_state_set_control_mode(CONTROL_MODE_IDLE);
+    runtime_state_clear_all_motor_test();
+    runtime_state_set_axis_test_request((axis3f_t){0});
+    runtime_state_set_rate_setpoint_request((axis3f_t){0});
+    udp_reset_attitude_state(clear_attitude_reference);
+    udp_reset_ground_state(false);
+    ground_tune_set_submode(GROUND_TUNE_SUBMODE_RATE_ONLY);
+    udp_manual_reset();
 }
 
 static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
@@ -200,20 +286,126 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
         safety_request_disarm();
         runtime_state_set_motor_test(-1, 0.0f);
         runtime_state_clear_all_motor_test();
-        runtime_state_set_axis_test_request((axis3f_t){0});
-        runtime_state_set_rate_setpoint_request((axis3f_t){0});
-        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
-        udp_manual_reset();
+        udp_stop_active_control(false);
         motor_stop_all();
         return CMD_STATUS_OK;
     case CMD_KILL:
         safety_request_kill();
         runtime_state_set_motor_test(-1, 0.0f);
         runtime_state_clear_all_motor_test();
+        udp_stop_active_control(false);
+        motor_stop_all();
+        return CMD_STATUS_OK;
+    case CMD_REBOOT:
+        udp_record_stream_client(NULL, 0, false);
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_clear_all_motor_test();
+        udp_stop_active_control(true);
+        motor_stop_all();
+        return CMD_STATUS_OK;
+    case CMD_MOTOR_TEST:
+        if (runtime_state_get_arm_state() != ARM_STATE_DISARMED) {
+            return CMD_STATUS_DISARM_REQUIRED;
+        }
+        if (req->arg_u8 >= MOTOR_COUNT) {
+            return CMD_STATUS_INVALID_ARGUMENT;
+        }
+        if (!udp_value_is_finite_in_range(req->arg_f32, 0.0f, 1.0f)) {
+            return CMD_STATUS_INVALID_ARGUMENT;
+        }
+        if (req->arg_f32 <= 0.0f) {
+            runtime_state_set_motor_test(-1, 0.0f);
+            motor_stop_all();
+        } else {
+            udp_stop_active_control(false);
+            runtime_state_set_motor_test(req->arg_u8, req->arg_f32);
+        }
+        return CMD_STATUS_OK;
+    case CMD_AXIS_TEST: {
+        axis3f_t request = {0};
+        if (runtime_state_get_arm_state() != ARM_STATE_DISARMED) {
+            return CMD_STATUS_DISARM_REQUIRED;
+        }
+        if (!udp_axis_test_value_is_valid(req->arg_f32)) {
+            return CMD_STATUS_INVALID_ARGUMENT;
+        }
+        if (!udp_decode_axis_request(req->arg_u8, req->arg_f32, &request)) {
+            return CMD_STATUS_INVALID_ARGUMENT;
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_rate_setpoint_request((axis3f_t){0});
+        udp_reset_attitude_state(false);
+        runtime_state_set_axis_test_request(request);
+        runtime_state_set_control_mode((req->arg_f32 == 0.0f) ? CONTROL_MODE_IDLE : CONTROL_MODE_AXIS_TEST);
+        return CMD_STATUS_OK;
+    }
+    case CMD_RATE_TEST: {
+        axis3f_t request = {0};
+        imu_sample_t sample = {0};
+
+        if (!udp_rate_test_value_is_valid(req->arg_f32)) {
+            return CMD_STATUS_INVALID_ARGUMENT;
+        }
+        if (!udp_decode_axis_request(req->arg_u8, req->arg_f32, &request)) {
+            return CMD_STATUS_INVALID_ARGUMENT;
+        }
+        if (req->arg_f32 != 0.0f && runtime_state_get_arm_state() != ARM_STATE_ARMED) {
+            return CMD_STATUS_ARM_REQUIRED;
+        }
+        if (req->arg_f32 != 0.0f &&
+            (!imu_get_latest(&sample, NULL) || sample.health != IMU_HEALTH_OK || !sample.has_gyro_acc)) {
+            return CMD_STATUS_IMU_NOT_READY;
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
+        runtime_state_set_axis_test_request((axis3f_t){0});
+        udp_reset_attitude_state(false);
+        runtime_state_set_rate_setpoint_request(request);
+        runtime_state_set_control_mode((req->arg_f32 == 0.0f) ? CONTROL_MODE_IDLE : CONTROL_MODE_RATE_TEST);
+        return CMD_STATUS_OK;
+    }
+    case CMD_ATTITUDE_CAPTURE_REF: {
+        imu_sample_t sample = {0};
+        const arm_state_t arm_state = runtime_state_get_arm_state();
+
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || udp_has_active_motor_test()) {
+            return CMD_STATUS_CONFLICT;
+        }
+        if (arm_state == ARM_STATE_FAILSAFE || arm_state == ARM_STATE_FAULT_LOCK) {
+            return CMD_STATUS_REJECTED;
+        }
+        if (!imu_get_latest(&sample, NULL) || !udp_sample_supports_ground_ref(&sample)) {
+            return CMD_STATUS_IMU_NOT_READY;
+        }
+        if (!attitude_bench_capture_reference(&sample)) {
+            return CMD_STATUS_IMU_NOT_READY;
+        }
+        return CMD_STATUS_OK;
+    }
+    case CMD_ATTITUDE_TEST_START: {
+        imu_sample_t sample = {0};
+
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || udp_has_active_motor_test()) {
+            return CMD_STATUS_CONFLICT;
+        }
+        if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
+            return CMD_STATUS_ARM_REQUIRED;
+        }
+        if (!runtime_state_get_attitude_hang_state().ref_valid) {
+            return CMD_STATUS_REF_REQUIRED;
+        }
+        if (!imu_get_latest(&sample, NULL) || !udp_sample_supports_ground_ref(&sample)) {
+            return CMD_STATUS_IMU_NOT_READY;
+        }
+        runtime_state_set_motor_test(-1, 0.0f);
         runtime_state_set_axis_test_request((axis3f_t){0});
         runtime_state_set_rate_setpoint_request((axis3f_t){0});
-        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
-        udp_manual_reset();
+        udp_reset_attitude_state(false);
+        runtime_state_set_control_mode(CONTROL_MODE_ATTITUDE_HANG_TEST);
+        return CMD_STATUS_OK;
+    }
+    case CMD_ATTITUDE_TEST_STOP:
+        runtime_state_set_motor_test(-1, 0.0f);
+        udp_stop_active_control(false);
         motor_stop_all();
         return CMD_STATUS_OK;
     case CMD_UDP_MANUAL_ENABLE:
@@ -230,7 +422,7 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
         imu_sample_t sample = {0};
         estimator_state_t estimator_state = {0};
         const arm_state_t arm_state = runtime_state_get_arm_state();
-        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE) {
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || udp_has_active_motor_test()) {
             return CMD_STATUS_CONFLICT;
         }
         if (arm_state == ARM_STATE_FAILSAFE || arm_state == ARM_STATE_FAULT_LOCK) {
@@ -252,7 +444,7 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
     case CMD_GROUND_TEST_START: {
         imu_sample_t sample = {0};
         estimator_state_t estimator_state = {0};
-        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE) {
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || udp_has_active_motor_test()) {
             return CMD_STATUS_CONFLICT;
         }
         if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
@@ -302,7 +494,7 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
     case CMD_ATTITUDE_GROUND_VERIFY_START: {
         imu_sample_t sample = {0};
         estimator_state_t estimator_state = {0};
-        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE) {
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || udp_has_active_motor_test()) {
             return CMD_STATUS_CONFLICT;
         }
         if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
@@ -350,7 +542,7 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
     case CMD_LIFTOFF_VERIFY_START: {
         imu_sample_t sample = {0};
         estimator_state_t estimator_state = {0};
-        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE) {
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || udp_has_active_motor_test()) {
             return CMD_STATUS_CONFLICT;
         }
         if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
@@ -405,7 +597,7 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
         return CMD_STATUS_OK;
     case CMD_ALL_MOTOR_TEST_START: {
         const uint32_t duration_ms = (uint32_t)req->arg_u8 * 100u;
-        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE) {
+        if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || udp_has_active_motor_test()) {
             return CMD_STATUS_CONFLICT;
         }
         if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
@@ -421,7 +613,8 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
         runtime_state_set_motor_test(-1, 0.0f);
         runtime_state_set_axis_test_request((axis3f_t){0});
         runtime_state_set_rate_setpoint_request((axis3f_t){0});
-        ground_tune_reset_status();
+        udp_reset_attitude_state(false);
+        udp_reset_ground_state(false);
         ground_tune_set_submode(GROUND_TUNE_SUBMODE_RATE_ONLY);
         controller_reset();
         runtime_state_set_all_motor_test(req->arg_f32, duration_ms, 0u);
@@ -449,12 +642,7 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
         if (runtime_state_get_arm_state() != ARM_STATE_DISARMED) {
             return CMD_STATUS_DISARM_REQUIRED;
         }
-        runtime_state_set_motor_test(-1, 0.0f);
-        runtime_state_clear_all_motor_test();
-        runtime_state_set_axis_test_request((axis3f_t){0});
-        runtime_state_set_rate_setpoint_request((axis3f_t){0});
-        runtime_state_set_control_mode(CONTROL_MODE_IDLE);
-        udp_manual_reset();
+        udp_stop_active_control(true);
         motor_stop_all();
         if (params_factory_reset_defaults() != ESP_OK) {
             return CMD_STATUS_STORAGE_ERROR;
@@ -467,6 +655,10 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
         return preflight_check_stabilize_min(PREFLIGHT_LINK_UDP, udp_preflight_report, NULL)
                    ? CMD_STATUS_OK
                    : CMD_STATUS_REJECTED;
+    case CMD_CALIB_GYRO:
+        return (imu_calibrate_gyro() == ESP_OK) ? CMD_STATUS_OK : CMD_STATUS_IMU_NOT_READY;
+    case CMD_CALIB_LEVEL:
+        return (imu_calibrate_level() == ESP_OK) ? CMD_STATUS_OK : CMD_STATUS_IMU_NOT_READY;
     default:
         return CMD_STATUS_UNSUPPORTED;
     }
@@ -570,6 +762,15 @@ static void udp_handle_param_set(int sock,
         }
         memcpy(&value.f32, value_ptr, sizeof(float));
         break;
+    case PARAM_TYPE_STRING: {
+        const size_t value_len = len - (2u + name_len);
+        if (value_len > PARAM_STRING_VALUE_MAX_LEN) {
+            return;
+        }
+        memcpy(value.str, value_ptr, value_len);
+        value.str[value_len] = '\0';
+        break;
+    }
     default:
         return;
     }

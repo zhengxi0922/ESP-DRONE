@@ -254,7 +254,7 @@ class DeviceSession:
         frame = self._recv_matching_response(
             matches,
             timeout=timeout,
-            timeout_message=f"timed out waiting for command response {cmd_id}",
+            timeout_message=f"ACK timeout: timed out waiting for command response {cmd_id}",
             drop_unmatched=drop_stale,
         )
         _response_cmd_id, status, _ = CMD_RESP_STRUCT.unpack(frame.payload)

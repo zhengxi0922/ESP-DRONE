@@ -25,9 +25,11 @@ This file is the short project memory for Codex. Keep it current and short. Do n
 - `CONSOLE_PROTOCOL_VERSION` in `firmware/main/console/console_protocol.h` is `0x0A`.
 - `CONSOLE_FEATURE_UDP_MANUAL_CONTROL` is bit `1 << 6`.
 - Current UDP manual command IDs are `13..18` for enable/disable/setpoint/takeoff/land/stop.
+- WiFi debug transport defaults remain SoftAP at `192.168.4.1:2391`. Optional `wifi_mode=sta` or `wifi_mode=apsta` uses `sta_ssid`, `sta_password`, and optional static IPv4 params to join a router/hotspot; STA success logs the acquired IP and STA failure falls back to SoftAP.
+- The binary UDP CLI/GUI protocol binds `INADDR_ANY` on `wifi_udp_port`, so the same command, telemetry, and parameter protocol works through SoftAP or the STA IP.
 - Current firmware default rate PID in `params.c` is `rate_kp_roll=0.0007`, `rate_kp_pitch=0.0007`, `rate_kp_yaw=0.0005`, and all rate I/D terms are `0`.
 - `motor.c` uses parameterized PWM resolution via `motor_pwm_resolution_bits`. Default is `10` (LEDC_TIMER_10_BIT). Supports 8/10/12 bits.
-- Coreless brushed motor defaults are `motor_pwm_freq_hz=24000`, `motor_pwm_resolution_bits=10`, `motor_idle_duty=0.03`, `motor_startup_boost_duty=0.05`, and `motor_slew_limit_per_tick=0.02`.
+- Coreless brushed motor defaults are `motor_pwm_freq_hz=15000`, `motor_pwm_resolution_bits=10`, `motor_idle_duty=0.03`, `motor_startup_boost_duty=0.05`, and `motor_slew_limit_per_tick=0.02`.
 - PWM parameter validation allows `motor_pwm_freq_hz` in `8000..40000` only when `freq_hz * 2^motor_pwm_resolution_bits <= 80000000`.
 - `motor_pwm_resolution_bits` is intended to be changed only while disarmed / on bench. Do not change during flight or while motors are actively driving.
 - Recommended per-motor compensation entries are `motor_scale_m1..m4` and `motor_offset_m1..m4`. Legacy `motor_trim_scale_*` / `motor_trim_offset_*` parameter aliases are removed from the registry.
@@ -50,6 +52,7 @@ This file is the short project memory for Codex. Keep it current and short. Do n
 - Ground tune / attitude ground verify diagnostics.
 - Low-risk liftoff verify diagnostics.
 - UDP manual experimental bench/manual control.
+- WiFi STA debug transport with SoftAP fallback.
 - All-motor test.
 - Params, telemetry, capability, and device-info style host tooling.
 - Host-side `analyze-vibration-log` CSV summary for static, all-motor, and single-motor vibration diagnostics.

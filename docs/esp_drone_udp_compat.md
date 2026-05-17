@@ -30,7 +30,7 @@ Compatibility is limited to the legacy control entry path. The rewrite does not 
 ## Replacement Strategy
 
 - `2390`: legacy compatibility layer for control ingress and basic downlink
-- `2391`: new binary CLI/GUI UDP protocol, reachable at `192.168.4.1:2391` after joining the default ESP32 SoftAP
+- `2391`: new binary CLI/GUI UDP protocol, reachable at `192.168.4.1:2391` on default SoftAP or at `<sta-ip>:2391` after `wifi_mode=sta` joins a router/hotspot
 - `USB CDC`: the same new binary protocol as `2391`
 - explicit `arm`, `disarm`, and `kill`: always available through the new CLI
 - the legacy control path can still arm or disarm through stick gestures and the safety state machine
@@ -45,4 +45,4 @@ takeoff, and land commands with firmware-side watchdog and max-duty clamps. It i
 a mature free-flight takeoff/land mode.
 
 See [udp_manual_control_protocol.md](./udp_manual_control_protocol.md).
-For SoftAP setup and GUI UDP transport connection steps, see [softap_udp_transport.md](./softap_udp_transport.md).
+For SoftAP/STA setup and GUI UDP transport connection steps, see [softap_udp_transport.md](./softap_udp_transport.md).

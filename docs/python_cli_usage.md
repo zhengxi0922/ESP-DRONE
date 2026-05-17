@@ -53,14 +53,25 @@ Bench bring-up is expected to use `USB CDC` first.
 
 - `UART0` remains reserved for `ATK-MS901M`
 - CLI examples below therefore use `--serial COMx`
-- UDP examples use the SoftAP binary protocol on `192.168.4.1:2391`
+- UDP examples default to the SoftAP binary protocol on `192.168.4.1:2391`
+- STA mode uses the same UDP protocol and port; pass the drone IP with `--host` or `--drone-ip`
+
+Recommended networking:
+
+- Short term: keep the PC Wi-Fi on the drone SoftAP and use wired Ethernet or phone USB tethering for internet.
+- Long term: configure the drone with `wifi_mode=sta` so it joins a phone hotspot/router, then run the PC and drone on the same LAN.
+- Keep SoftAP as the fallback configuration path.
 
 Generic connection examples:
 
 ```powershell
 python -m esp_drone_cli --serial COM7 connect
 python -m esp_drone_cli --udp 192.168.4.1:2391 connect
+python -m esp_drone_cli --udp connect
+python -m esp_drone_cli --host 192.168.50.42 connect
 ```
+
+`--udp` without an endpoint uses the default SoftAP target. `--host` and `--drone-ip` are aliases for STA/custom UDP targets; `--udp-port` defaults to `2391`.
 
 ## Common Commands
 
@@ -77,11 +88,11 @@ python -m esp_drone_cli --serial COM7 log --timeout 3 --telemetry
 Parameter inspection and editing:
 
 ```powershell
-python -m esp_drone_cli --serial COM7 param-list
-python -m esp_drone_cli --serial COM7 get-param rate_kp_roll
-python -m esp_drone_cli --serial COM7 set-param rate_kp_roll 0.0030
-python -m esp_drone_cli --serial COM7 save-params
-python -m esp_drone_cli --serial COM7 reset-params
+python -m esp_drone_cli --serial COM7 list
+python -m esp_drone_cli --serial COM7 get rate_kp_roll
+python -m esp_drone_cli --serial COM7 set rate_kp_roll float 0.0030
+python -m esp_drone_cli --serial COM7 save
+python -m esp_drone_cli --serial COM7 reset
 ```
 
 Current GitHub firmware default rate PID values in `params.c` are:
@@ -156,6 +167,17 @@ python -m esp_drone_cli --udp 192.168.4.1:2391 udp-manual enable
 python -m esp_drone_cli --udp 192.168.4.1:2391 udp-manual setpoint --throttle 0.05 --roll 0 --pitch 0 --yaw 0
 python -m esp_drone_cli --udp 192.168.4.1:2391 udp-manual stop
 ```
+
+STA examples after firmware logs `sta connected ip=192.168.50.42`:
+
+```powershell
+python -m esp_drone_cli --host 192.168.50.42 connect
+python -m esp_drone_cli --host 192.168.50.42 get wifi_mode
+python -m esp_drone_cli --host 192.168.50.42 udp-manual enable
+python -m esp_drone_cli --host 192.168.50.42 udp-manual stop
+```
+
+UDP timeout messages distinguish the default SoftAP target from STA/custom targets. `ACK timeout` means the host reached the UDP transport but did not receive the expected command acknowledgement.
 
 ## Notes
 

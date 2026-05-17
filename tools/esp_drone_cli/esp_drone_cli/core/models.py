@@ -687,6 +687,8 @@ def decode_param_value(payload: bytes) -> ParamValue:
         value = struct.unpack("<i", value_bytes)[0]
     elif type_id == 4:
         value = struct.unpack("<f", value_bytes)[0]
+    elif type_id == 5:
+        value = value_bytes.decode("utf-8", errors="replace")
     else:
         value = value_bytes
     return ParamValue(name=name, type_id=type_id, value=value)
@@ -739,6 +741,8 @@ def coerce_param_value(type_id: int, value: object) -> object:
         return int(value)
     if type_id == 4:
         return float(value)
+    if type_id == 5:
+        return str(value)
     raise ValueError(f"unsupported param type {type_id}")
 
 
@@ -753,4 +757,6 @@ def encode_param_value(type_id: int, value_text: str) -> bytes:
         return struct.pack("<i", int(value_text))
     if type_id == 4:
         return struct.pack("<f", float(value_text))
+    if type_id == 5:
+        return value_text.encode("utf-8")
     raise ValueError(f"unsupported param type {type_id}")
