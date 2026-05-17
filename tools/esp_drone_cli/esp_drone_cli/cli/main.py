@@ -1920,6 +1920,47 @@ def cmd_save(session: DeviceSession, _args) -> int:
     return 0
 
 
+def cmd_wifi_status(session: DeviceSession, _args) -> int:
+    """一键诊断 WiFi 配置（不打印明文密码）。
+
+    Args:
+        session: 已连接的设备会话。
+        _args: 当前命令未使用的参数对象。
+
+    Returns:
+        固定返回 ``0``。
+    """
+
+    fields = (
+        "wifi_mode",
+        "sta_ssid",
+        "sta_static_ip",
+        "sta_gateway",
+        "sta_netmask",
+        "wifi_udp_port",
+        "wifi_ap_enable",
+        "wifi_ap_channel",
+    )
+    for name in fields:
+        try:
+            pv = session.get_param(name)
+            if name == "sta_ssid":
+                print(f"{name}    set={0 if str(pv.value) == '' else 1}  len={len(str(pv.value))}")
+            else:
+                print(format_param_value(pv))
+        except Exception as exc:
+            print(f"{name}    error: {exc}")
+
+    try:
+        pv = session.get_param("sta_password")
+        pw_set = 0 if str(pv.value) == "" else 1
+        print(f"sta_password    set={pw_set}")
+    except Exception as exc:
+        print(f"sta_password    error: {exc}")
+
+    return 0
+
+
 def cmd_reset(session: DeviceSession, _args) -> int:
     """请求设备恢复默认参数。
 
@@ -3375,6 +3416,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("list")
     sub.add_parser("save")
+    sub.add_parser("wifi-status", help="read current WiFi params (no plaintext password)")
     sub.add_parser("reset")
     sub.add_parser("factory-reset", aliases=["factory-defaults"])
     sub.add_parser("preflight-check")
@@ -3878,6 +3920,7 @@ def main(argv: list[str] | None = None) -> int:
             "set": cmd_set,
             "list": cmd_list,
             "save": cmd_save,
+            "wifi-status": cmd_wifi_status,
             "reset": cmd_reset,
             "factory-reset": cmd_factory_reset,
             "factory-defaults": cmd_factory_reset,

@@ -346,6 +346,20 @@ esp_err_t wifi_ap_start(void)
     bool start_ap = mode == WIFI_DEBUG_MODE_SOFTAP || mode == WIFI_DEBUG_MODE_APSTA;
     bool start_sta = mode == WIFI_DEBUG_MODE_STA || mode == WIFI_DEBUG_MODE_APSTA;
 
+    /* Diagnostic: print WiFi configuration summary (no plaintext password). */
+    {
+        char diag_msg[192];
+        snprintf(diag_msg,
+                 sizeof(diag_msg),
+                 "wifi config: mode=%s sta_ssid_set=%d password_set=%d static_ip_set=%d udp_port=%lu",
+                 params->wifi_mode,
+                 params->sta_ssid[0] != '\0' ? 1 : 0,
+                 params->sta_password[0] != '\0' ? 1 : 0,
+                 params->sta_static_ip[0] != '\0' ? 1 : 0,
+                 (unsigned long)params->wifi_udp_port);
+        console_send_event_text(diag_msg);
+    }
+
     if (mode == WIFI_DEBUG_MODE_SOFTAP && !params->wifi_ap_enable) {
         wifi_ap_event_log("softap disabled by wifi_ap_enable=0");
         return ESP_OK;

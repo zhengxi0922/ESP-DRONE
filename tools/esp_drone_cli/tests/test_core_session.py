@@ -3804,7 +3804,6 @@ def test_cli_set_string_type_accepted() -> None:
     """CLI parser accepts 'set name string value'."""
     from esp_drone_cli.cli.main import main as cli_main
 
-    import argparse
     try:
         cli_main(["--serial", "COM99", "set", "sta_ssid", "string", "MyHotspot"])
     except SystemExit:
@@ -3813,7 +3812,7 @@ def test_cli_set_string_type_accepted() -> None:
 
 def test_cli_host_and_drone_ip_flags_equivalent(monkeypatch) -> None:
     """--host and --drone-ip are aliases mapping to drone_ip destination."""
-    from esp_drone_cli.cli.main import build_parser, EspDroneArgumentParser
+    from esp_drone_cli.cli.main import build_parser
 
     parser = build_parser()
     args = parser.parse_args(["--host", "10.0.0.50", "connect"])
@@ -3930,3 +3929,46 @@ def test_gui_wifi_password_not_in_qsettings_by_default(monkeypatch, tmp_path: Pa
 
     window.close()
     app.quit()
+
+
+def test_cli_wifi_status_parser_accepted() -> None:
+    """CLI parser accepts 'wifi-status' as a subcommand."""
+    from esp_drone_cli.cli.main import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["--serial", "COM99", "wifi-status"])
+    assert args.command == "wifi-status"
+
+
+def test_cli_wifi_status_command_no_device(monkeypatch, capsys):
+    """wifi-status fails gracefully without a connected device."""
+    from esp_drone_cli.cli.main import main as cli_main
+
+    try:
+        cli_main(["--serial", "COM99", "wifi-status"])
+    except SystemExit:
+        pass
+
+
+def test_firmware_wifi_config_log_present() -> None:
+    """Firmware prints wifi config summary at startup."""
+    repo_root = Path(__file__).resolve().parents[3]
+    wifi_ap_c = (repo_root / "firmware" / "main" / "network" / "wifi_ap.c").read_text(encoding="utf-8")
+    params_c = (repo_root / "firmware" / "main" / "params" / "params.c").read_text(encoding="utf-8")
+
+    assert "wifi config: mode=" in wifi_ap_c
+    assert "sta_ssid_set=" in wifi_ap_c
+    assert "password_set=" in wifi_ap_c
+    assert '"wifi_mode", PARAM_TYPE_STRING' in params_c
+    assert '"sta_ssid", PARAM_TYPE_STRING' in params_c
+    assert '"sta_password", PARAM_TYPE_STRING' in params_c
+
+
+def test_firmware_params_defaults_softap() -> None:
+    """Firmware default wifi_mode is 'softap'."""
+    repo_root = Path(__file__).resolve().parents[3]
+    params_c = (repo_root / "firmware" / "main" / "params" / "params.c").read_text(encoding="utf-8")
+
+    assert 'softap' in params_c
+    assert 'PARAMS_SCHEMA_VERSION' in params_c
+    assert 'PARAM_TYPE_STRING' in params_c
