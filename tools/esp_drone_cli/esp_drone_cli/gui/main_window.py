@@ -867,6 +867,7 @@ EXTRA_TRANSLATIONS = {
         "udp.ap_info": "默认 SoftAP SSID：ESP-DRONE | 密码：12345678 | SoftAP 可作为 STA 配置失败后的兜底入口",
         "udp.disconnect_stop": "通信断开，已停止 UDP 手动控制和测试流程。",
         "msg.udp_host_required": "需要填写 UDP 主机。",
+        "msg.sta_host_required": "STA 模式下需要填写无人机 IP。请查看串口日志中的 sta connected ip=...，将该 IP 填入 UDP Host。",
         "wifi.sta_warning": "注意：纯 STA 模式配置错误时需通过 USB 串口或连接 ESP-DRONE SoftAP 恢复。推荐选择 AP+STA 以保留恢复入口。",
         "wifi.reboot_confirm_title": "确认保存并重启",
         "wifi.reboot_confirm_text": "将 WiFi 凭据保存到设备并重启，继续？",
@@ -876,6 +877,8 @@ EXTRA_TRANSLATIONS = {
         "wifi.config_written": "WiFi 配置已写入并校验通过：{summary}",
         "wifi.config_verify_failed": "WiFi 配置校验失败：{name} 期望={expected}，设备返回={actual}",
         "wifi.saved_and_reboot": "已保存参数，正在重启设备...",
+        "wifi.auto_write_before_save": "检测到配置已变更，自动执行写入并校验...",
+        "wifi.save_blocked_write_failed": "写入/校验未通过，已阻止保存和重启。请检查串口连接和参数值后重试。",
         "wifi.sta_conn_hint": "STA/AP+STA 模式：请将 PC 与无人机连接到同一局域网，并在下方 UDP Host 填写无人机 sta connected ip。",
         "wifi.softap_conn_hint": "SoftAP 模式：请将 PC 连接到 ESP-DRONE WiFi（SSID: ESP-DRONE，密码: 12345678），Host=192.168.4.1，Port=2391。",
     },
@@ -971,6 +974,7 @@ EXTRA_TRANSLATIONS = {
         "udp.ap_info": "Default SoftAP SSID: ESP-DRONE | Password: 12345678 | SoftAP remains the fallback configuration entry.",
         "udp.disconnect_stop": "Communication disconnected; UDP manual control and active test flow were stopped.",
         "msg.udp_host_required": "UDP Host is required.",
+        "msg.sta_host_required": "STA mode requires the drone IP. Check serial logs for 'sta connected ip=...' and enter that IP in UDP Host.",
         "wifi.sta_warning": "Note: Pure STA mode errors require USB serial or SoftAP fallback recovery. AP+STA is recommended to preserve the recovery entry point.",
         "wifi.reboot_confirm_title": "Confirm Save & Reboot",
         "wifi.reboot_confirm_text": "Save WiFi credentials to device and reboot. Continue?",
@@ -980,6 +984,8 @@ EXTRA_TRANSLATIONS = {
         "wifi.config_written": "WiFi configuration written and verified: {summary}",
         "wifi.config_verify_failed": "WiFi config verify failed: {name} expected={expected}, device returned {actual}",
         "wifi.saved_and_reboot": "Parameters saved, rebooting device...",
+        "wifi.auto_write_before_save": "Config changed detected, auto-writing and verifying...",
+        "wifi.save_blocked_write_failed": "Write/verify failed; save and reboot blocked. Check serial connection and parameter values, then retry.",
         "wifi.sta_conn_hint": "STA/AP+STA mode: Connect PC and drone to the same LAN, then enter the drone's sta connected ip in UDP Host below.",
         "wifi.softap_conn_hint": "SoftAP mode: Connect PC to ESP-DRONE WiFi (SSID: ESP-DRONE, Password: 12345678), Host=192.168.4.1, Port=2391.",
     },
@@ -1768,6 +1774,9 @@ class MainWindow(QMainWindow):
         self._last_sta_udp_host = ""
         self._remember_wifi_password = False
         self._wifi_write_in_progress = False
+        self._wifi_config_dirty = False
+        self._last_wifi_write_ok = False
+        self._loading_wifi_settings = False
         self._liftoff_readiness_samples: deque[TelemetrySample] = deque(maxlen=120)
 
         self._build_ui()
@@ -3004,10 +3013,12 @@ class MainWindow(QMainWindow):
         self.wifi_mode_combo.currentIndexChanged.connect(self._handle_wifi_mode_changed)
         self.write_wifi_button.clicked.connect(self._write_wifi_config)
         self.save_reboot_wifi_button.clicked.connect(self._save_and_reboot_wifi)
-        self.wifi_ssid_edit.textChanged.connect(lambda *_args: self._save_settings())
-        self.wifi_static_ip_edit.textChanged.connect(lambda *_args: self._save_settings())
-        self.wifi_gateway_edit.textChanged.connect(lambda *_args: self._save_settings())
-        self.wifi_netmask_edit.textChanged.connect(lambda *_args: self._save_settings())
+        self.wifi_mode_combo.currentIndexChanged.connect(lambda *_args: (self._save_settings(), self._mark_wifi_dirty()))
+        self.wifi_ssid_edit.textChanged.connect(lambda *_args: (self._save_settings(), self._mark_wifi_dirty()))
+        self.wifi_password_edit.textChanged.connect(lambda *_args: self._mark_wifi_dirty())
+        self.wifi_static_ip_edit.textChanged.connect(lambda *_args: (self._save_settings(), self._mark_wifi_dirty()))
+        self.wifi_gateway_edit.textChanged.connect(lambda *_args: (self._save_settings(), self._mark_wifi_dirty()))
+        self.wifi_netmask_edit.textChanged.connect(lambda *_args: (self._save_settings(), self._mark_wifi_dirty()))
         self.debug_action_tabs.currentChanged.connect(lambda *_args: self._save_settings())
         self.refresh_ports_button.clicked.connect(self._refresh_serial_ports)
         self.connect_button.clicked.connect(self._connect_requested)
@@ -3296,9 +3307,21 @@ class MainWindow(QMainWindow):
         self._append_log(self._t("wifi.config_written", summary=summary))
         self._append_log(self._t("wifi.write_done"))
         self._wifi_write_in_progress = False
+        self._wifi_config_dirty = False
+        self._last_wifi_write_ok = True
+
+    def _mark_wifi_dirty(self) -> None:
+        if self._loading_wifi_settings:
+            return
+        self._wifi_config_dirty = True
+        self._last_wifi_write_ok = False
 
     def _save_and_reboot_wifi(self) -> None:
         from PyQt5.QtWidgets import QMessageBox
+
+        if not self._session.connected:
+            self._append_log(self._t("wifi.require_connection"))
+            return
 
         reply = QMessageBox.question(
             self,
@@ -3310,8 +3333,12 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
 
-        if not self._session.connected:
+        if self._wifi_config_dirty or not self._last_wifi_write_ok:
+            self._append_log(self._t("wifi.auto_write_before_save"))
             self._write_wifi_config()
+            if self._wifi_config_dirty or not self._last_wifi_write_ok:
+                self._append_log(self._t("wifi.save_blocked_write_failed"))
+                return
 
         self._append_log(self._t("wifi.saved_and_reboot"))
 
@@ -3667,7 +3694,11 @@ class MainWindow(QMainWindow):
 
         host = self.udp_host_edit.text().strip()
         if not host:
-            self._show_connect_failure(self._t("msg.udp_host_required"))
+            mode = self._udp_mode_value()
+            if mode == "sta":
+                self._show_connect_failure(self._t("msg.sta_host_required"))
+            else:
+                self._show_connect_failure(self._t("msg.udp_host_required"))
             return
         port = int(self.udp_port_spin.value())
         mode = self._udp_mode_value()
@@ -4644,16 +4675,20 @@ class MainWindow(QMainWindow):
         self.connection_section.set_expanded(section_connection)
         self.safety_section.set_expanded(section_safety)
         self.wifi_section.set_expanded(section_wifi)
-        wifi_mode_idx = self.wifi_mode_combo.findData(wifi_mode)
-        self.wifi_mode_combo.setCurrentIndex(wifi_mode_idx if wifi_mode_idx >= 0 else 2)
-        self.wifi_ssid_edit.setText(str(wifi_ssid))
-        self.wifi_static_ip_edit.setText(str(wifi_static_ip))
-        self.wifi_gateway_edit.setText(str(wifi_gateway))
-        self.wifi_netmask_edit.setText(str(wifi_netmask))
-        self._remember_wifi_password = remember_wifi_password
-        self.remember_password_check.setChecked(remember_wifi_password)
-        if remember_wifi_password:
-            self.wifi_password_edit.setText(str(wifi_password))
+        self._loading_wifi_settings = True
+        try:
+            wifi_mode_idx = self.wifi_mode_combo.findData(wifi_mode)
+            self.wifi_mode_combo.setCurrentIndex(wifi_mode_idx if wifi_mode_idx >= 0 else 2)
+            self.wifi_ssid_edit.setText(str(wifi_ssid))
+            self.wifi_static_ip_edit.setText(str(wifi_static_ip))
+            self.wifi_gateway_edit.setText(str(wifi_gateway))
+            self.wifi_netmask_edit.setText(str(wifi_netmask))
+            self._remember_wifi_password = remember_wifi_password
+            self.remember_password_check.setChecked(remember_wifi_password)
+            if remember_wifi_password:
+                self.wifi_password_edit.setText(str(wifi_password))
+        finally:
+            self._loading_wifi_settings = False
         self.debug_action_tabs.setCurrentIndex(max(0, min(debug_action_index, self.debug_action_tabs.count() - 1)))
         if main_splitter_state:
             self.main_splitter.restoreState(main_splitter_state)

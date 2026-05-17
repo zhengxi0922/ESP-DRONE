@@ -3798,3 +3798,135 @@ monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     assert window.udp_port_spin.value() == 2391
     window.close()
     app.quit()
+
+
+def test_cli_set_string_type_accepted() -> None:
+    """CLI parser accepts 'set name string value'."""
+    from esp_drone_cli.cli.main import main as cli_main
+
+    import argparse
+    try:
+        cli_main(["--serial", "COM99", "set", "sta_ssid", "string", "MyHotspot"])
+    except SystemExit:
+        pass
+
+
+def test_cli_host_and_drone_ip_flags_equivalent(monkeypatch) -> None:
+    """--host and --drone-ip are aliases mapping to drone_ip destination."""
+    from esp_drone_cli.cli.main import build_parser, EspDroneArgumentParser
+
+    parser = build_parser()
+    args = parser.parse_args(["--host", "10.0.0.50", "connect"])
+    assert args.drone_ip == "10.0.0.50"
+
+    args2 = parser.parse_args(["--drone-ip", "10.0.0.51", "connect"])
+    assert args2.drone_ip == "10.0.0.51"
+
+
+def test_gui_wifi_not_connected_save_reboot_does_not_call_save(monkeypatch, tmp_path: Path):
+    """When not connected, save&reboot only logs and returns; never calls save_params/reboot."""
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+    from esp_drone_cli.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "wifi_test_nc.ini"), QSettings.IniFormat)
+
+    save_called = []
+    reboot_called = []
+
+    class FakeSessionNotConnected:
+        connected = False
+
+        def set_param(self, name, type_id, value):
+            return type("ParamValue", (), {"name": name, "type_id": type_id, "value": value})()
+
+        def save_params(self):
+            save_called.append(True)
+
+        def reboot(self):
+            reboot_called.append(True)
+
+        def disconnect(self):
+            pass
+
+    window = MainWindow(settings=settings)
+    window._session = FakeSessionNotConnected()
+    window.show_password_check.setChecked(False)
+    window.remember_password_check.setChecked(False)
+
+    window._save_and_reboot_wifi()
+    assert not save_called
+    assert not reboot_called
+
+    window.close()
+    app.quit()
+
+
+def test_gui_wifi_write_order_correct_with_dirty_tracking(monkeypatch, tmp_path: Path):
+    """Write WiFi Config sets dirty=False and last_wifi_write_ok=True on success."""
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+    from esp_drone_cli.gui.main_window import MainWindow
+    from esp_drone_cli.core.models import ParamValue
+
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "wifi_dirty.ini"), QSettings.IniFormat)
+
+    class FakeSessionConnected:
+        connected = True
+
+        def set_param(self, name, type_id, value):
+            return ParamValue(name=name, type_id=type_id, value=value)
+
+    window = MainWindow(settings=settings)
+    window._session = FakeSessionConnected()
+    window.show_password_check.setChecked(False)
+    window.remember_password_check.setChecked(False)
+
+    window._mark_wifi_dirty()
+    assert window._wifi_config_dirty
+    assert not window._last_wifi_write_ok
+
+    window._write_wifi_config()
+    assert not window._wifi_config_dirty
+    assert window._last_wifi_write_ok
+
+    window.close()
+    app.quit()
+
+
+def test_gui_wifi_password_not_in_qsettings_by_default(monkeypatch, tmp_path: Path):
+    """Default: sta_password never written to QSettings unless remember is checked."""
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+    from esp_drone_cli.gui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    settings = QSettings(str(tmp_path / "wifi_nopass.ini"), QSettings.IniFormat)
+    settings.clear()
+
+    window = MainWindow(settings=settings)
+    window.show_password_check.setChecked(False)
+    window.remember_password_check.setChecked(False)
+    window.wifi_password_edit.setText("secret123")
+    window._save_settings()
+
+    assert settings.value("wifi/password") is None
+
+    window.remember_password_check.setChecked(True)
+    window._save_settings()
+    assert settings.value("wifi/password") == "secret123"
+
+    window.remember_password_check.setChecked(False)
+    window._save_settings()
+    assert settings.value("wifi/password") is None
+
+    window.close()
+    app.quit()
