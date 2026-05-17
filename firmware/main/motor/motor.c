@@ -107,6 +107,10 @@ esp_err_t motor_reconfigure_from_params(void)
 static void motor_write_single(int logical_motor, float normalized_duty)
 {
     const uint8_t physical_motor = params_get()->motor_output_map[logical_motor];
+    if (physical_motor >= MOTOR_COUNT) {
+        s_last_outputs[logical_motor] = 0.0f;
+        return;
+    }
     const uint32_t count = (uint32_t)(motor_clampf(normalized_duty, 0.0f, 1.0f) * (float)s_pwm_max_count);
     ledc_set_duty(LEDC_LOW_SPEED_MODE, s_channels[physical_motor], count);
     ledc_update_duty(LEDC_LOW_SPEED_MODE, s_channels[physical_motor]);

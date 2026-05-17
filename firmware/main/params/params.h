@@ -41,6 +41,11 @@
  */
 #define PARAMS_SCHEMA_VERSION 11u
 
+/** Sentinel value that allows a motor_output_map slot to be temporarily unassigned
+ *  during permutation swaps.  motor.c skips any logical motor whose mapped physical
+ *  channel equals this value. */
+#define MOTOR_OUTPUT_MAP_UNSET 0xFFu
+
 #define PARAM_STRING_VALUE_MAX_LEN 64u
 #define WIFI_MODE_TEXT_MAX_LEN 8u
 #define WIFI_STA_SSID_MAX_LEN 32u

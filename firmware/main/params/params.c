@@ -370,6 +370,9 @@ static bool params_validate_motor_output_map(const params_store_t *store)
     bool seen[4] = {0};
     for (size_t i = 0; i < 4; ++i) {
         const uint8_t value = store->motor_output_map[i];
+        if (value == MOTOR_OUTPUT_MAP_UNSET) {
+            continue;
+        }
         if (value >= 4u || seen[value]) {
             return false;
         }
