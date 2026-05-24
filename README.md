@@ -97,23 +97,48 @@ Motor output features:
 
 `motor_output_map` is channel mapping, not per-motor thrust compensation. Per-motor compensation is a separate layer in `motor_apply_compensation()`.
 
-## SoftAP UDP Transport
+## Network Connection
 
-Firmware starts an ESP32 SoftAP by default:
+Firmware starts an ESP32 SoftAP by default: SSID=`ESP-DRONE`, Password=`12345678`, IP=`192.168.4.1`, Port=`2391`. STA and AP+STA modes are also supported for joining a home router or phone hotspot.
 
-- SSID: `ESP-DRONE`
-- Password: `12345678`
-- AP IP: `192.168.4.1`
-- UDP protocol port: `2391`
+### Option A: SoftAP (Simplest)
 
-GUI connection order:
+No configuration needed. The drone boots as a WiFi hotspot.
 
 1. Connect the PC Wi-Fi to the `ESP-DRONE` SoftAP.
-2. Start the Python GUI and set `Link` to `UDP`.
-3. Use `UDP Host = 192.168.4.1` and `UDP Port = 2391`.
-4. Click `Connect`.
+2. Start the Python GUI, set `Link` to `UDP`, `Mode` = `SoftAP`, `Host` = `192.168.4.1`, `Port` = `2391`.
+3. Click `Connect`.
 
-Serial / USB CDC debugging is unchanged and should be used first if Wi-Fi or UDP startup fails. See [docs/softap_udp_transport.md](docs/softap_udp_transport.md).
+### Option B: GUI WiFi Settings (Recommended for STA/AP+STA)
+
+Use the built-in WiFi Settings panel — no manual parameter table search.
+
+1. Open the Python GUI and connect via **Serial** (USB CDC).
+2. In the left-side **WiFi Settings** panel:
+   - Select `AP+STA` (recommended) or `STA`.
+   - Enter your home **WiFi SSID** and **password**.
+3. Click **Write WiFi Config** → click **Save & Reboot** (confirm the dialog).
+4. After reboot, check serial logs for `sta connected ip=...`.
+5. In the GUI, switch `Link` to `UDP`, set `Mode` = `STA`, enter the printed IP in `UDP Host`, `Port` = `2391`.
+6. Click `Connect`.
+
+> AP+STA keeps the SoftAP at `192.168.4.1` as a recovery entry point.
+
+### Option C: CLI Manual (Advanced)
+
+For headless or scripted setups:
+
+```powershell
+python -m esp_drone_cli --serial COM4 set wifi_mode string apsta
+python -m esp_drone_cli --serial COM4 set sta_ssid string MyHotspot
+python -m esp_drone_cli --serial COM4 set sta_password string MyPassword
+python -m esp_drone_cli --serial COM4 save
+python -m esp_drone_cli --serial COM4 reboot
+# After reboot, connect via STA IP:
+python -m esp_drone_cli --host 192.168.x.x connect
+```
+
+Serial / USB CDC debugging is unchanged and should be used first if Wi-Fi or UDP startup fails. Full transport docs: [docs/softap_udp_transport.md](docs/softap_udp_transport.md).
 
 ## Build Firmware
 

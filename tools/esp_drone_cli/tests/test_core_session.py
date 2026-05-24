@@ -385,9 +385,13 @@ class FakeSession:
         self._record("kill")
         return 0
 
-    def reboot(self) -> int:
-        self._record("reboot")
+    def reboot(self, *, bootloader: bool = False) -> int:
+        self._record("reboot", bootloader=bootloader)
         return 0
+
+    def reboot_bootloader(self) -> int:
+        self._record("reboot_bootloader")
+        return self.reboot(bootloader=True)
 
     def start_stream(self, timeout: float = 1.0) -> None:
         self._record("start_stream", timeout)
@@ -837,6 +841,23 @@ def test_device_session_ground_capture_ref_waits_for_cmd_resp_not_param_value():
     assert arg_f32 == pytest.approx(0.0)
     assert MsgType.PARAM_GET not in [msg_type for msg_type, _payload in transport.sent]
     assert MsgType.PARAM_SET not in [msg_type for msg_type, _payload in transport.sent]
+    session.disconnect()
+
+
+def test_device_session_reboot_bootloader_sets_reboot_arg():
+    session = DeviceSession()
+    transport = MockTransport()
+    session.connect_transport(transport)
+    transport.sent.clear()
+
+    assert session.reboot() == 0
+    assert session.reboot_bootloader() == 0
+
+    cmd_frames = [payload for msg_type, payload in transport.sent if msg_type == MsgType.CMD_REQ]
+    decoded = [CMD_REQ_STRUCT.unpack(payload) for payload in cmd_frames]
+    assert [item[0] for item in decoded] == [CmdId.REBOOT, CmdId.REBOOT]
+    assert decoded[0][1] == 0
+    assert decoded[1][1] == 1
     session.disconnect()
 
 
@@ -3397,7 +3418,7 @@ def test_firmware_registers_motor_trim_params_and_applies_before_motor_clamp():
     assert '"motor_offset_m3"' in params_c
     assert '"motor_deadband_m3"' in params_c
     assert '"motor_gamma_m3"' in params_c
-    assert "store->motor_pwm_freq_hz = 24000;" in params_c
+    assert "store->motor_pwm_freq_hz = 15000;" in params_c
     assert "store->motor_idle_duty = 0.03f;" in params_c
     assert "store->motor_startup_boost_duty = 0.05f;" in params_c
     assert "store->motor_slew_limit_per_tick = 0.02f;" in params_c
@@ -3938,6 +3959,27 @@ def test_cli_wifi_status_parser_accepted() -> None:
     parser = build_parser()
     args = parser.parse_args(["--serial", "COM99", "wifi-status"])
     assert args.command == "wifi-status"
+
+
+def test_cli_reboot_bootloader_parser_accepted() -> None:
+    from esp_drone_cli.cli.main import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["--serial", "COM99", "reboot-bootloader"])
+    assert args.command == "reboot-bootloader"
+
+
+def test_cli_reboot_bootloader_sends_bootloader_reboot(monkeypatch) -> None:
+    from esp_drone_cli.cli import main as cli_main
+
+    session = FakeSession()
+    monkeypatch.setattr(cli_main, "connect_session_from_args", lambda args: session)
+
+    rc = cli_main.main(["--serial", "COM99", "reboot-bootloader"])
+
+    assert rc == 0
+    assert ("reboot_bootloader", (), {}) in session.calls
+    assert ("reboot", (), {"bootloader": True}) in session.calls
 
 
 def test_cli_wifi_status_command_no_device(monkeypatch, capsys):

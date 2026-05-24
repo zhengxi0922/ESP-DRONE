@@ -67,16 +67,13 @@ static esp_err_t motor_configure_timer(uint32_t freq_hz, uint32_t resolution_bit
     return err;
 }
 
-esp_err_t motor_init(void)
+static esp_err_t motor_configure_channels(void)
 {
-    const params_store_t *params = params_get();
-    esp_err_t err = motor_configure_timer(params->motor_pwm_freq_hz, params->motor_pwm_resolution_bits);
-    if (err != ESP_OK) {
-        return err;
-    }
-
     for (int i = 0; i < MOTOR_COUNT; ++i) {
         const board_motor_config_t *cfg = board_get_motor_config((board_motor_id_t)i);
+        if (cfg == NULL) {
+            return ESP_ERR_INVALID_ARG;
+        }
         const ledc_channel_config_t ch = {
             .gpio_num = cfg->gpio,
             .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -87,11 +84,28 @@ esp_err_t motor_init(void)
             .hpoint = 0,
             .flags.output_invert = 0,
         };
-        err = ledc_channel_config(&ch);
+        const esp_err_t err = ledc_channel_config(&ch);
         if (err != ESP_OK) {
             return err;
         }
         s_last_outputs[i] = 0.0f;
+    }
+    return ESP_OK;
+}
+
+esp_err_t motor_init(void)
+{
+    const params_store_t *params = params_get();
+    esp_err_t err = motor_configure_timer(params->motor_pwm_freq_hz, params->motor_pwm_resolution_bits);
+    if (err != ESP_OK) {
+        s_initialized = false;
+        return err;
+    }
+
+    err = motor_configure_channels();
+    if (err != ESP_OK) {
+        s_initialized = false;
+        return err;
     }
 
     s_initialized = true;
@@ -101,7 +115,21 @@ esp_err_t motor_init(void)
 esp_err_t motor_reconfigure_from_params(void)
 {
     const params_store_t *params = params_get();
-    return motor_configure_timer(params->motor_pwm_freq_hz, params->motor_pwm_resolution_bits);
+    const esp_err_t err = motor_configure_timer(params->motor_pwm_freq_hz, params->motor_pwm_resolution_bits);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (!s_initialized) {
+        const esp_err_t channel_err = motor_configure_channels();
+        s_initialized = channel_err == ESP_OK;
+        return channel_err;
+    }
+    return ESP_OK;
+}
+
+bool motor_is_initialized(void)
+{
+    return s_initialized;
 }
 
 static void motor_write_single(int logical_motor, float normalized_duty)

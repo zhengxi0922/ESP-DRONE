@@ -1096,7 +1096,7 @@ void app_main(void)
     board_battery_init();
     barometer_init();
     led_status_init();
-    motor_init();
+    const esp_err_t motor_init_err = motor_init();
     mixer_init();
     imu_init();
     console_init();
@@ -1108,6 +1108,11 @@ void app_main(void)
     runtime_state_set_rate_setpoint_request((axis3f_t){0});
     attitude_bench_clear_reference();
     ground_tune_clear_reference();
+    if (motor_init_err != ESP_OK) {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "motor init failed: 0x%lx", (unsigned long)motor_init_err);
+        console_send_event_text(msg);
+    }
     if (!mixer_self_test()) {
         runtime_state_set_arm_state(ARM_STATE_FAULT_LOCK);
         runtime_state_set_failsafe_reason(FAILSAFE_REASON_NONE);

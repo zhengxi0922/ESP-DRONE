@@ -32,6 +32,11 @@ esp_err_t motor_init(void);
 esp_err_t motor_reconfigure_from_params(void);
 
 /**
+ * @brief 返回电机 PWM 通道是否已成功初始化。
+ */
+bool motor_is_initialized(void);
+
+/**
  * @brief 输出闭环控制电机命令。
  *
  * @param[in] normalized 四路归一化输出，范围建议为 `0.0f` 到 `1.0f`；

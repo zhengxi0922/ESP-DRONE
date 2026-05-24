@@ -46,7 +46,7 @@ Current implemented output controls include:
 - global `motor_slew_limit_per_tick`
 - parameterized `motor_pwm_freq_hz`
 
-`motor.c` uses parameterized PWM resolution via `motor_pwm_resolution_bits`. The current coreless brushed default is 24kHz + 10-bit (`motor_pwm_freq_hz=24000`, `motor_pwm_resolution_bits=10`). Supported resolutions are 8-bit, 10-bit, and 12-bit.
+`motor.c` uses parameterized PWM resolution via `motor_pwm_resolution_bits`. The current coreless brushed default is 15kHz + 10-bit (`motor_pwm_freq_hz=15000`, `motor_pwm_resolution_bits=10`). Supported resolutions are 8-bit, 10-bit, and 12-bit.
 
 PWM validation allows `motor_pwm_freq_hz` from 8000Hz to 40000Hz only when the selected frequency/resolution pair fits the conservative LEDC clock check:
 

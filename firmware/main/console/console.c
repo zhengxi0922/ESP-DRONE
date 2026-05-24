@@ -18,6 +18,8 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_vfs_cdcacm.h"
+#include "soc/rtc_cntl_reg.h"
+#include "soc/soc.h"
 
 #include "attitude_bench.h"
 #include "console_protocol.h"
@@ -234,6 +236,25 @@ static bool console_value_is_finite_in_range(float value, float min_value, float
     return isfinite(value) && value >= min_value && value <= max_value;
 }
 
+static void console_report_motor_reconfigure_result(esp_err_t err)
+{
+    if (err == ESP_OK) {
+        return;
+    }
+    char msg[96];
+    snprintf(msg, sizeof(msg), "motor pwm reconfigure failed: 0x%lx", (unsigned long)err);
+    console_send_event_text(msg);
+}
+
+static bool console_motor_ready_or_report(void)
+{
+    if (motor_is_initialized()) {
+        return true;
+    }
+    console_send_event_text("motor command rejected: PWM driver is not initialized");
+    return false;
+}
+
 static bool console_axis_test_value_is_valid(float value)
 {
     return console_value_is_finite_in_range(value, -CONSOLE_AXIS_TEST_ABS_MAX, CONSOLE_AXIS_TEST_ABS_MAX);
@@ -356,6 +377,16 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         runtime_state_clear_all_motor_test();
         console_stop_active_control(true);
         motor_stop_all();
+        if (req.arg_u8 != 0u) {
+            console_send_event_text("rebooting to ROM bootloader");
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+            fflush(stdout);
+            fsync(fileno(stdout));
+            vTaskDelay(pdMS_TO_TICKS(100));
+            REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+            esp_restart();
+            break;
+        }
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
         fflush(stdout);
         /* 软件重启前保留一个短 USB 帧窗口，让主机先收到 ACK。 */
@@ -373,6 +404,10 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
         }
         if (!console_value_is_finite_in_range(req.arg_f32, 0.0f, 1.0f)) {
             console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
+            break;
+        }
+        if (req.arg_f32 > 0.0f && !console_motor_ready_or_report()) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_REJECTED);
             break;
         }
         if (req.arg_f32 <= 0.0f) {
@@ -463,6 +498,10 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
 
         if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || console_has_active_motor_test()) {
             console_send_cmd_resp(req.cmd_id, CMD_STATUS_CONFLICT);
+            break;
+        }
+        if (!console_motor_ready_or_report()) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_REJECTED);
             break;
         }
         if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
@@ -761,7 +800,7 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
             console_send_cmd_resp(req.cmd_id, CMD_STATUS_STORAGE_ERROR);
             break;
         }
-        motor_reconfigure_from_params();
+        console_report_motor_reconfigure_result(motor_reconfigure_from_params());
         imu_reconfigure_from_params();
         console_send_event_text("factory defaults restored and NVS parameter blob erased");
         console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
@@ -871,7 +910,7 @@ static void console_handle_param_set(const uint8_t *payload, size_t len)
 
     if (strcmp(name, "motor_pwm_freq_hz") == 0 ||
         strcmp(name, "motor_pwm_resolution_bits") == 0) {
-        motor_reconfigure_from_params();
+        console_report_motor_reconfigure_result(motor_reconfigure_from_params());
     }
     if (strcmp(name, "imu_mode") == 0 ||
         strcmp(name, "imu_return_rate_code") == 0 ||
@@ -936,7 +975,7 @@ static void console_handle_message(uint8_t msg_type, const uint8_t *payload, siz
     }
     case MSG_PARAM_RESET:
         params_reset_to_defaults();
-        motor_reconfigure_from_params();
+        console_report_motor_reconfigure_result(motor_reconfigure_from_params());
         imu_reconfigure_from_params();
         console_send_frame(MSG_PARAM_RESET, NULL, 0);
         break;

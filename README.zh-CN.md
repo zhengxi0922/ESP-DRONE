@@ -92,23 +92,48 @@ hang-attitude 路径是受限诊断路径：
 
 `motor_output_map` 是通道映射，不是每电机推力补偿。每电机补偿由 `motor_apply_compensation()` 提供。
 
-## SoftAP UDP Transport
+## 网络连接
 
-固件默认启动 ESP32 SoftAP：
+固件默认启动 ESP32 SoftAP：SSID=`ESP-DRONE`，密码=`12345678`，IP=`192.168.4.1`，端口=`2391`。也可配置 STA 或 AP+STA 模式接入家庭路由器或手机热点。
 
-- SSID: `ESP-DRONE`
-- Password: `12345678`
-- AP IP: `192.168.4.1`
-- UDP protocol port: `2391`
+### 方案 A：SoftAP（最简单）
 
-GUI 连接顺序：
+无需任何配置，无人机上电即为热点。
 
 1. 电脑 Wi-Fi 连接 `ESP-DRONE` SoftAP。
-2. 启动 Python GUI，把 `Link` 设为 `UDP`。
-3. 使用 `UDP Host = 192.168.4.1`、`UDP Port = 2391`。
-4. 点击 `Connect`。
+2. 启动 Python GUI，`Link` 设为 `UDP`，`Mode` = `SoftAP`，`Host` = `192.168.4.1`，`Port` = `2391`。
+3. 点击 `Connect`。
 
-Wi-Fi 或 UDP 启动失败时，仍应优先使用 Serial / USB CDC 调试。见 [docs/softap_udp_transport.md](docs/softap_udp_transport.md)。
+### 方案 B：GUI WiFi 设置（推荐，用于 STA/AP+STA）
+
+使用 GUI 内置的 WiFi 设置面板，无需在参数表中搜索。
+
+1. 打开 Python GUI，通过 **Serial**（USB CDC）连接无人机。
+2. 在左侧 **WiFi 设置** 面板中：
+   - 选择 `AP+STA`（推荐）或 `STA`。
+   - 输入家里的 **WiFi 名称(SSID)** 和 **密码**。
+3. 点击 **写入 WiFi 配置** → 点击 **保存并重启**（确认弹窗）。
+4. 重启后查看串口日志 `sta connected ip=...`。
+5. GUI 中切换 `Link` 为 `UDP`，`Mode` 设为 `STA`，`UDP Host` 填入日志中打印的 IP，`Port` = `2391`。
+6. 点击 `Connect`。
+
+> AP+STA 会保留 SoftAP `192.168.4.1` 作为配置失败后的恢复入口。
+
+### 方案 C：CLI 手动配置（高级）
+
+适合无头或脚本化场景：
+
+```powershell
+python -m esp_drone_cli --serial COM4 set wifi_mode string apsta
+python -m esp_drone_cli --serial COM4 set sta_ssid string MyHotspot
+python -m esp_drone_cli --serial COM4 set sta_password string MyPassword
+python -m esp_drone_cli --serial COM4 save
+python -m esp_drone_cli --serial COM4 reboot
+# 重启后通过 STA IP 连接：
+python -m esp_drone_cli --host 192.168.x.x connect
+```
+
+Wi-Fi 或 UDP 启动失败时，仍应优先使用 Serial / USB CDC 调试。详见 [docs/softap_udp_transport.md](docs/softap_udp_transport.md)。
 
 ## 固件构建
 

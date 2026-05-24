@@ -659,10 +659,15 @@ class DeviceSession:
 
         return self.command(CmdId.KILL)
 
-    def reboot(self) -> int:
+    def reboot(self, *, bootloader: bool = False) -> int:
         """请求设备重启。"""
 
-        return self.command(CmdId.REBOOT)
+        return self.command(CmdId.REBOOT, arg_u8=1 if bootloader else 0)
+
+    def reboot_bootloader(self) -> int:
+        """Ask firmware to restart into the ROM serial bootloader."""
+
+        return self.reboot(bootloader=True)
 
     def motor_test(self, motor_index: int, duty: float) -> int:
         """执行单电机点动测试。

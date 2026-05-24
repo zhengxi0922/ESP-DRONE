@@ -30,7 +30,10 @@ This file is the short project memory for Codex. Keep it current and short. Do n
 - The binary UDP CLI/GUI protocol binds `INADDR_ANY` on `wifi_udp_port`, so the same command, telemetry, and parameter protocol works through SoftAP or the STA IP.
 - Current firmware default rate PID in `params.c` is `rate_kp_roll=0.0007`, `rate_kp_pitch=0.0007`, `rate_kp_yaw=0.0005`, and all rate I/D terms are `0`.
 - `motor.c` uses parameterized PWM resolution via `motor_pwm_resolution_bits`. Default is `10` (LEDC_TIMER_10_BIT). Supports 8/10/12 bits.
-- Coreless brushed motor defaults are `motor_pwm_freq_hz=24000`, `motor_pwm_resolution_bits=10`, `motor_idle_duty=0.03`, `motor_startup_boost_duty=0.05`, and `motor_slew_limit_per_tick=0.02`.
+- Coreless brushed motor defaults are `motor_pwm_freq_hz=15000`, `motor_pwm_resolution_bits=10`, `motor_idle_duty=0.03`, `motor_startup_boost_duty=0.05`, and `motor_slew_limit_per_tick=0.02`.
+- Motor-test commands require the PWM driver to be initialized; firmware reports and rejects motor commands if LEDC init failed instead of returning OK with zero output.
+- Changing `motor_pwm_freq_hz` or `motor_pwm_resolution_bits` reconfigures the LEDC timer and can finish channel setup if the original boot-time motor init failed.
+- USB/serial CLI supports `reboot-bootloader`, encoded as `CMD_REBOOT` with `arg_u8=1`, so updated firmware can restart into the ROM serial bootloader before flashing.
 - PWM parameter validation allows `motor_pwm_freq_hz` in `8000..40000` only when `freq_hz * 2^motor_pwm_resolution_bits <= 80000000`.
 - `motor_pwm_resolution_bits` is intended to be changed only while disarmed / on bench. Do not change during flight or while motors are actively driving.
 - Recommended per-motor compensation entries are `motor_scale_m1..m4` and `motor_offset_m1..m4`. Legacy `motor_trim_scale_*` / `motor_trim_offset_*` parameter aliases are removed from the registry.

@@ -206,6 +206,25 @@ static bool udp_value_is_finite_in_range(float value, float min_value, float max
     return isfinite(value) && value >= min_value && value <= max_value;
 }
 
+static void udp_report_motor_reconfigure_result(esp_err_t err)
+{
+    if (err == ESP_OK) {
+        return;
+    }
+    char msg[96];
+    snprintf(msg, sizeof(msg), "motor pwm reconfigure failed: 0x%lx", (unsigned long)err);
+    console_send_event_text(msg);
+}
+
+static bool udp_motor_ready_or_report(void)
+{
+    if (motor_is_initialized()) {
+        return true;
+    }
+    console_send_event_text("motor command rejected: PWM driver is not initialized");
+    return false;
+}
+
 static bool udp_axis_test_value_is_valid(float value)
 {
     return udp_value_is_finite_in_range(value, -UDP_AXIS_TEST_ABS_MAX, UDP_AXIS_TEST_ABS_MAX);
@@ -313,6 +332,9 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
         if (!udp_value_is_finite_in_range(req->arg_f32, 0.0f, 1.0f)) {
             return CMD_STATUS_INVALID_ARGUMENT;
         }
+        if (req->arg_f32 > 0.0f && !udp_motor_ready_or_report()) {
+            return CMD_STATUS_REJECTED;
+        }
         if (req->arg_f32 <= 0.0f) {
             runtime_state_set_motor_test(-1, 0.0f);
             motor_stop_all();
@@ -386,6 +408,9 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
 
         if (runtime_state_get_control_mode() != CONTROL_MODE_IDLE || udp_has_active_motor_test()) {
             return CMD_STATUS_CONFLICT;
+        }
+        if (!udp_motor_ready_or_report()) {
+            return CMD_STATUS_REJECTED;
         }
         if (runtime_state_get_arm_state() != ARM_STATE_ARMED) {
             return CMD_STATUS_ARM_REQUIRED;
@@ -647,7 +672,7 @@ static console_cmd_status_t udp_handle_command(const console_cmd_req_t *req)
         if (params_factory_reset_defaults() != ESP_OK) {
             return CMD_STATUS_STORAGE_ERROR;
         }
-        motor_reconfigure_from_params();
+        udp_report_motor_reconfigure_result(motor_reconfigure_from_params());
         imu_reconfigure_from_params();
         console_send_event_text("factory defaults restored and NVS parameter blob erased");
         return CMD_STATUS_OK;
@@ -778,7 +803,7 @@ static void udp_handle_param_set(int sock,
     if (params_try_set(name, value, type)) {
         if (strcmp(name, "motor_pwm_freq_hz") == 0 ||
             strcmp(name, "motor_pwm_resolution_bits") == 0) {
-            motor_reconfigure_from_params();
+            udp_report_motor_reconfigure_result(motor_reconfigure_from_params());
         }
         if (strcmp(name, "imu_mode") == 0 ||
             strcmp(name, "imu_return_rate_code") == 0 ||
@@ -860,7 +885,7 @@ static void udp_handle_message(int sock,
     }
     case MSG_PARAM_RESET:
         params_reset_to_defaults();
-        motor_reconfigure_from_params();
+        udp_report_motor_reconfigure_result(motor_reconfigure_from_params());
         imu_reconfigure_from_params();
         udp_send_frame_to(sock, addr, addr_len, MSG_PARAM_RESET, NULL, 0);
         break;

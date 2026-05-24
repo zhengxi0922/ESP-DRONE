@@ -221,8 +221,8 @@ static void params_apply_defaults(params_store_t *store)
 {
     memset(store, 0, sizeof(*store));
 
-    /* Coreless brushed defaults: quieter PWM and softer startup for bench bring-up. */
-    store->motor_pwm_freq_hz = 24000;
+    /* Coreless brushed defaults: conservative PWM and softer startup for bench bring-up. */
+    store->motor_pwm_freq_hz = 15000;
     store->motor_idle_duty = 0.03f;
     store->motor_max_duty = 0.95f;
     store->motor_startup_boost_duty = 0.05f;

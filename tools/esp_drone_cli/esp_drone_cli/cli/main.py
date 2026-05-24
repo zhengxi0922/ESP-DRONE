@@ -1852,6 +1852,13 @@ def cmd_reboot(session: DeviceSession, _args) -> int:
     return 0
 
 
+def cmd_reboot_bootloader(session: DeviceSession, _args) -> int:
+    """Ask firmware to reboot into the ROM serial bootloader."""
+
+    ensure_command_ok(CmdId.REBOOT, session.reboot_bootloader())
+    return 0
+
+
 def cmd_get(session: DeviceSession, args) -> int:
     """读取并打印单个参数。
 
@@ -3405,6 +3412,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("disarm")
     sub.add_parser("kill")
     sub.add_parser("reboot")
+    sub.add_parser("reboot-bootloader")
 
     get_p = sub.add_parser("get")
     get_p.add_argument("name")
@@ -3916,6 +3924,7 @@ def main(argv: list[str] | None = None) -> int:
             "disarm": cmd_disarm,
             "kill": cmd_kill,
             "reboot": cmd_reboot,
+            "reboot-bootloader": cmd_reboot_bootloader,
             "get": cmd_get,
             "set": cmd_set,
             "list": cmd_list,
