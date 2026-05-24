@@ -669,6 +669,25 @@ class DeviceSession:
 
         return self.reboot(bootloader=True)
 
+    def ota_update(self, port: int = 8000) -> int:
+        """Trigger an OTA firmware update via HTTP download.
+
+        The drone will construct the firmware URL from the sender's IP
+        and the given port: ``http://<sender_ip>:<port>/esp_drone_rewrite.bin``.
+        A local HTTP server must be serving the firmware binary before
+        this command is sent.
+        """
+
+        with self._command_lock:
+            payload = CMD_REQ_STRUCT.pack(
+                CmdId.OTA_UPDATE,
+                port & 0xFF,
+                (port >> 8) & 0xFF,
+                0.0,
+            )
+            self._send_message(MsgType.CMD_REQ, payload)
+            return self._recv_command_response(CmdId.OTA_UPDATE)
+
     def motor_test(self, motor_index: int, duty: float) -> int:
         """执行单电机点动测试。
 

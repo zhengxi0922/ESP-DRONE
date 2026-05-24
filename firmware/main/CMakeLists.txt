@@ -51,6 +51,8 @@ idf_component_register(
         esp_netif
         esp_event
         lwip
+        esp_http_client
+        app_update
 )
 
 execute_process(

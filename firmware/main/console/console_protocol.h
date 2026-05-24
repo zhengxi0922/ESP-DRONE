@@ -86,6 +86,7 @@ typedef enum {
     CMD_ALL_MOTOR_TEST_STOP = 28,
     CMD_PARAM_FACTORY_RESET = 29,
     CMD_PREFLIGHT_CHECK = 30,
+    CMD_OTA_UPDATE = 31,
 } console_cmd_id_t;
 
 typedef enum {

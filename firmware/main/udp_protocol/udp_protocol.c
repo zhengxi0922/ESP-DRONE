@@ -841,6 +841,28 @@ static void udp_handle_message(int sock,
         }
         console_cmd_req_t req = {0};
         memcpy(&req, payload, sizeof(req));
+        if (req.cmd_id == CMD_OTA_UPDATE) {
+            char *ota_url = malloc(128);
+            if (ota_url == NULL) {
+                udp_send_cmd_resp_to(sock, addr, addr_len, req.cmd_id, CMD_STATUS_REJECTED);
+                break;
+            }
+            char sender_ip[32] = {0};
+            if (addr->ss_family == AF_INET) {
+                const struct sockaddr_in *sin = (const struct sockaddr_in *)addr;
+                snprintf(sender_ip, sizeof(sender_ip), "%d.%d.%d.%d",
+                         (int)((sin->sin_addr.s_addr >> 0) & 0xFF),
+                         (int)((sin->sin_addr.s_addr >> 8) & 0xFF),
+                         (int)((sin->sin_addr.s_addr >> 16) & 0xFF),
+                         (int)((sin->sin_addr.s_addr >> 24) & 0xFF));
+            }
+            uint16_t port = (uint16_t)req.arg_u8 | ((uint16_t)req.reserved << 8);
+            if (port == 0) { port = 8000; }
+            snprintf(ota_url, 128, "http://%s:%u/esp_drone_rewrite.bin", sender_ip, port);
+            udp_send_cmd_resp_to(sock, addr, addr_len, req.cmd_id, CMD_STATUS_OK);
+            xTaskCreate(console_ota_task, "ota_task", 8192, ota_url, tskIDLE_PRIORITY + 2, NULL);
+            break;
+        }
         const console_cmd_status_t status = udp_handle_command(&req);
         udp_send_cmd_resp_to(sock, addr, addr_len, req.cmd_id, status);
         if (req.cmd_id == CMD_REBOOT && status == CMD_STATUS_OK) {

@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
 
+#include "biquad.h"
 #include "params.h"
 
 #define ESTIMATOR_DEG_PER_RAD 57.29577951308232f
@@ -27,6 +28,10 @@ typedef struct {
     bool filters_initialized;
     estimator_kalman_axis_t kalman_roll;
     estimator_kalman_axis_t kalman_pitch;
+    biquad_filter_t notch_gyro_x;
+    biquad_filter_t notch_gyro_y;
+    biquad_filter_t notch_gyro_z;
+    bool notch_initialized;
 } estimator_internal_state_t;
 
 static portMUX_TYPE s_estimator_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -78,7 +83,7 @@ static axis3f_t estimator_lpf_axis3(axis3f_t prev, axis3f_t raw, float alpha)
 static bool estimator_acc_tilt_from_filtered_acc(vec3f_t acc, float *out_roll_deg, float *out_pitch_deg)
 {
     const float norm = sqrtf(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
-    if (!isfinite(norm) || norm < 0.60f || norm > 1.40f || acc.z < 0.20f) {
+    if (!isfinite(norm) || norm < 0.40f || norm > 3.00f || acc.z < 0.05f) {
         return false;
     }
 
@@ -206,6 +211,14 @@ bool estimator_get_control_attitude(const estimator_state_t *state,
 void estimator_init(void)
 {
     estimator_reset();
+    /* 初始化 biquad notch 滤波器: 18 Hz 机架共振, 8 Hz 带宽 */
+    biquad_init(&s_state.notch_gyro_x);
+    biquad_init(&s_state.notch_gyro_y);
+    biquad_init(&s_state.notch_gyro_z);
+    biquad_design_notch(&s_state.notch_gyro_x, 18.0f, 8.0f, 1000.0f);
+    biquad_design_notch(&s_state.notch_gyro_y, 18.0f, 8.0f, 1000.0f);
+    biquad_design_notch(&s_state.notch_gyro_z, 18.0f, 8.0f, 1000.0f);
+    s_state.notch_initialized = true;
 }
 
 void estimator_reset(void)
@@ -251,7 +264,15 @@ void estimator_update_from_imu(const imu_sample_t *sample, estimator_state_t *ou
     next.timestamp_us = sample->timestamp_us;
     next.raw_gyro_body_xyz_dps = sample->gyro_xyz_dps;
     next.raw_acc_body_xyz_g = sample->acc_xyz_g;
-    next.raw_rate_rpy_dps = estimator_project_rates_from_body_gyro(sample->gyro_xyz_dps);
+
+    /* biquad notch 滤波: 18 Hz 机架共振 */
+    if (s_state.notch_initialized) {
+        next.raw_gyro_body_xyz_dps.x = biquad_update(&s_state.notch_gyro_x, next.raw_gyro_body_xyz_dps.x);
+        next.raw_gyro_body_xyz_dps.y = biquad_update(&s_state.notch_gyro_y, next.raw_gyro_body_xyz_dps.y);
+        next.raw_gyro_body_xyz_dps.z = biquad_update(&s_state.notch_gyro_z, next.raw_gyro_body_xyz_dps.z);
+    }
+
+    next.raw_rate_rpy_dps = estimator_project_rates_from_body_gyro(next.raw_gyro_body_xyz_dps);
     next.raw_attitude_rpy_deg = sample->roll_pitch_yaw_deg;
     next.raw_quat_body_to_world = sample->quat_wxyz;
     next.attitude_valid = sample->has_attitude && sample->has_quaternion;

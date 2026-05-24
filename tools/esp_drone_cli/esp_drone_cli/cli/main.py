@@ -1859,6 +1859,57 @@ def cmd_reboot_bootloader(session: DeviceSession, _args) -> int:
     return 0
 
 
+def cmd_ota_update(session: DeviceSession, args) -> int:
+    """Start an HTTP server and trigger OTA firmware update on the drone."""
+
+    import http.server
+    import os
+    import socket
+    import threading
+    import time
+
+    # Navigate from cli/main.py up to repo root, then to firmware/build/
+    _cli_dir = os.path.dirname(os.path.abspath(__file__))
+    firmware_bin = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(_cli_dir)))),
+        "firmware", "build", "esp_drone_rewrite.bin")
+    if not os.path.isfile(firmware_bin):
+        print(f"Firmware binary not found: {firmware_bin}")
+        print("Run 'idf.py build' first.")
+        return 1
+
+    port = getattr(args, "port", 8000) or 8000
+
+    class OTAHandler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=os.path.dirname(firmware_bin), **kw)
+
+        def log_message(self, fmt, *a):
+            print(f"  HTTP: {fmt % a}")
+
+    server = http.server.HTTPServer(("0.0.0.0", port), OTAHandler)
+    server.timeout = 2
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    local_ip = socket.gethostbyname(socket.gethostname())
+    print(f"HTTP server started at http://{local_ip}:{port}")
+    print(f"Serving: {firmware_bin}")
+    print("Triggering OTA update on drone...")
+
+    try:
+        ensure_command_ok(CmdId.OTA_UPDATE, session.ota_update(port=port))
+        print("OTA: drone acknowledged. Waiting for download and reboot (up to 60s)...")
+        # Keep HTTP server alive while drone downloads + flashes + reboots
+        time.sleep(35)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    return 0
+
+
 def cmd_get(session: DeviceSession, args) -> int:
     """读取并打印单个参数。
 
@@ -3414,6 +3465,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("reboot")
     sub.add_parser("reboot-bootloader")
 
+    ota_p = sub.add_parser("ota-update")
+    ota_p.add_argument("--port", type=int, default=8000)
+
     get_p = sub.add_parser("get")
     get_p.add_argument("name")
 
@@ -3925,6 +3979,7 @@ def main(argv: list[str] | None = None) -> int:
             "kill": cmd_kill,
             "reboot": cmd_reboot,
             "reboot-bootloader": cmd_reboot_bootloader,
+            "ota-update": cmd_ota_update,
             "get": cmd_get,
             "set": cmd_set,
             "list": cmd_list,

@@ -57,6 +57,7 @@ class CmdId:
     ALL_MOTOR_TEST_STOP = 28
     PARAM_FACTORY_RESET = 29
     PREFLIGHT_CHECK = 30
+    OTA_UPDATE = 31
 
 
 class CmdStatus:
@@ -103,6 +104,7 @@ CMD_NAMES = {
     CmdId.ALL_MOTOR_TEST_STOP: "all-motor-test stop",
     CmdId.PARAM_FACTORY_RESET: "factory-reset",
     CmdId.PREFLIGHT_CHECK: "preflight-check",
+    CmdId.OTA_UPDATE: "ota-update",
 }
 
 CMD_STATUS_TEXT = {

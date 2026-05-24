@@ -15,6 +15,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
+#include "esp_http_client.h"
+#include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_vfs_cdcacm.h"
@@ -812,6 +814,25 @@ static void console_handle_cmd_req(const uint8_t *payload, size_t len)
                 ? CMD_STATUS_OK
                 : CMD_STATUS_REJECTED);
         break;
+    case CMD_OTA_UPDATE: {
+        const size_t hdr_len = sizeof(console_cmd_req_t);
+        const size_t url_len = (len > hdr_len) ? (len - hdr_len) : 0;
+        if (url_len == 0 || url_len > 256) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_INVALID_ARGUMENT);
+            break;
+        }
+        char *url = malloc(url_len + 1);
+        if (url == NULL) {
+            console_send_cmd_resp(req.cmd_id, CMD_STATUS_REJECTED);
+            break;
+        }
+        memcpy(url, payload + hdr_len, url_len);
+        url[url_len] = '\0';
+        console_send_cmd_resp(req.cmd_id, CMD_STATUS_OK);
+        fflush(stdout);
+        xTaskCreate(console_ota_task, "ota_task", 8192, url, tskIDLE_PRIORITY + 2, NULL);
+        break;
+    }
     case CMD_UDP_MANUAL_ENABLE:
         console_send_cmd_resp(req.cmd_id, udp_manual_enable());
         break;
@@ -1256,4 +1277,125 @@ void console_send_telemetry(const imu_sample_t *imu_sample,
     };
 
     console_send_frame(MSG_TELEMETRY_SAMPLE, &sample, sizeof(sample));
+}
+
+void console_ota_task(void *arg)
+{
+    char *url = (char *)arg;
+    console_ota_update(url);
+    free(url);
+    vTaskDelete(NULL);
+}
+
+esp_err_t console_ota_update(const char *url)
+{
+    if (url == NULL || url[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    console_send_event_text("OTA: starting firmware download");
+    char msg[128];
+    snprintf(msg, sizeof(msg), "OTA: downloading from %s", url);
+    console_send_event_text(msg);
+
+    esp_http_client_config_t http_config = {
+        .url = url,
+        .timeout_ms = 30000,
+        .buffer_size = 2048,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&http_config);
+    if (client == NULL) {
+        console_send_event_text("OTA failed: http client init error");
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        snprintf(msg, sizeof(msg), "OTA failed: http open error 0x%lx", (unsigned long)err);
+        console_send_event_text(msg);
+        esp_http_client_cleanup(client);
+        return err;
+    }
+
+    int content_length = esp_http_client_fetch_headers(client);
+    if (content_length <= 0) {
+        console_send_event_text("OTA failed: invalid content length");
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
+
+    snprintf(msg, sizeof(msg), "OTA: firmware size %d bytes", content_length);
+    console_send_event_text(msg);
+
+    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+    if (update_partition == NULL) {
+        console_send_event_text("OTA failed: no OTA partition");
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
+
+    esp_ota_handle_t ota_handle = 0;
+    err = esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES, &ota_handle);
+    if (err != ESP_OK) {
+        snprintf(msg, sizeof(msg), "OTA failed: ota begin error 0x%lx", (unsigned long)err);
+        console_send_event_text(msg);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return err;
+    }
+
+    uint8_t buffer[2048];
+    int total_read = 0;
+    int last_pct = -1;
+
+    while (total_read < content_length) {
+        int read_len = esp_http_client_read(client, (char *)buffer, sizeof(buffer));
+        if (read_len <= 0) {
+            break;
+        }
+        err = esp_ota_write(ota_handle, buffer, read_len);
+        if (err != ESP_OK) {
+            snprintf(msg, sizeof(msg), "OTA failed: write error 0x%lx", (unsigned long)err);
+            console_send_event_text(msg);
+            esp_ota_abort(ota_handle);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return err;
+        }
+        total_read += read_len;
+        int pct = (int)((long long)total_read * 100 / content_length);
+        if (pct != last_pct && pct % 20 == 0) {
+            snprintf(msg, sizeof(msg), "OTA progress: %d%%", pct);
+            console_send_event_text(msg);
+            last_pct = pct;
+        }
+    }
+
+    err = esp_ota_end(ota_handle);
+    if (err != ESP_OK) {
+        snprintf(msg, sizeof(msg), "OTA failed: ota end error 0x%lx", (unsigned long)err);
+        console_send_event_text(msg);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return err;
+    }
+
+    err = esp_ota_set_boot_partition(update_partition);
+    if (err != ESP_OK) {
+        snprintf(msg, sizeof(msg), "OTA failed: set boot partition error 0x%lx", (unsigned long)err);
+        console_send_event_text(msg);
+    } else {
+        console_send_event_text("OTA: update complete, rebooting");
+    }
+
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    fflush(stdout);
+    fsync(fileno(stdout));
+    vTaskDelay(pdMS_TO_TICKS(500));
+    esp_restart();
+    return ESP_OK;
 }
