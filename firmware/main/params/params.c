@@ -29,13 +29,13 @@ typedef struct {
 static params_store_t s_params;
 static params_rate_pid_source_t s_rate_pid_source = PARAM_RATE_PID_SOURCE_FIRMWARE_DEFAULT;
 
-#define PARAMS_RATE_KP_ROLL_DEFAULT 0.000700f
+#define PARAMS_RATE_KP_ROLL_DEFAULT 0.000120f
 #define PARAMS_RATE_KI_ROLL_DEFAULT 0.0f
 #define PARAMS_RATE_KD_ROLL_DEFAULT 0.0f
-#define PARAMS_RATE_KP_PITCH_DEFAULT 0.000700f
+#define PARAMS_RATE_KP_PITCH_DEFAULT 0.000120f
 #define PARAMS_RATE_KI_PITCH_DEFAULT 0.0f
 #define PARAMS_RATE_KD_PITCH_DEFAULT 0.0f
-#define PARAMS_RATE_KP_YAW_DEFAULT 0.0005f
+#define PARAMS_RATE_KP_YAW_DEFAULT 0.001500f
 #define PARAMS_RATE_KI_YAW_DEFAULT 0.0f
 #define PARAMS_RATE_KD_YAW_DEFAULT 0.0f
 #define PARAMS_SCHEMA_VERSION_BEFORE_MOTOR_REMAP 4u
@@ -225,9 +225,9 @@ static void params_apply_defaults(params_store_t *store)
     store->motor_pwm_freq_hz = 15000;
     store->motor_idle_duty = 0.03f;
     store->motor_max_duty = 0.95f;
-    store->motor_startup_boost_duty = 0.05f;
+    store->motor_startup_boost_duty = 0.08f;
     store->motor_startup_boost_ms = 25;
-    store->motor_slew_limit_per_tick = 0.02f;
+    store->motor_slew_limit_per_tick = 0.005f;
     store->bringup_test_base_duty = 0.15f;
     store->udp_manual_max_pwm = 0.12f;
     store->udp_takeoff_pwm = 0.10f;
@@ -290,7 +290,7 @@ static void params_apply_defaults(params_store_t *store)
 
     store->gyro_lpf_hz = 40.0f;
     store->accel_lpf_hz = 20.0f;
-    store->rate_lpf_hz = 30.0f;
+    store->rate_lpf_hz = 20.0f;
     store->kalman_enable = true;
     /* Gentle 1D angle Kalman defaults for low-throttle ground tuning. */
     store->kalman_q_angle = 0.0025f;
